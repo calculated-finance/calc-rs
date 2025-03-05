@@ -1,0 +1,28 @@
+[workspace]
+members = ["packages/*", "contracts/*"]
+resolver = "1"
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = 'abort'
+incremental = false
+overflow-checks = true
+
+[workspace.dependencies]
+cosmwasm-storage = "1.5.2"
+cw-utils = "2.0.0"
+cosmwasm-schema = "2.2.0"
+cosmwasm-std = { version = "2.2.1", features = ["cosmwasm_2_1"] }
+cw-storage-plus = "2.0.0"
+cw2 = "2.0.0"
+schemars = "0.8.16"
+serde = { version = "1.0.197", default-features = false, features = ["derive"] }
+thiserror = { version = "1.0.58" }
+rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "acdbaa19836bb9cfa2e62ada6e8a2227373fe9df" }
+cw-multi-test = "2.0.0"
+calc-rs = { path = "packages/calc-rs" }
