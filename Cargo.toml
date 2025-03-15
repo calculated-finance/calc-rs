@@ -17,7 +17,7 @@ overflow-checks = true
 cosmwasm-storage = "1.5.2"
 cw-utils = "2.0.0"
 cosmwasm-schema = "2.2.0"
-cosmwasm-std = { version = "2.2.1", features = ["cosmwasm_2_1"] }
+cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1"] }
 cw-storage-plus = "2.0.0"
 cw2 = "2.0.0"
 schemars = "0.8.16"

@@ -14,3 +14,4 @@ cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }
 cw-utils = { workspace = true }
 rujira-rs = { workspace = true }
+thiserror = { workspace = true }

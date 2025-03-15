@@ -1,16 +1,16 @@
 use calc_rs::types::StrategyStatus;
+use cosmwasm_schema::cw_serde;
+use cosmwasm_std::Addr;
 
+#[cw_serde]
 pub struct Config {
-    valid_code_ids: Vec<u64>,
+    pub vault_code_id: u64,
 }
 
+#[cw_serde]
 pub struct StrategyIndexItem {
     pub owner: Addr,
     pub contract: Addr,
     pub status: StrategyStatus,
     pub updated_at: u64,
 }
-
-// Fetch all vaults that are ready to be checked
-// Fetch all vaults for an owner
-// Fetch all (active | paused | archived) vaults for an owner

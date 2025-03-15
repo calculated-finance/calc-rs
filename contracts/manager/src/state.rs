@@ -1,13 +1,25 @@
 use calc_rs::types::StrategyStatus;
+use cosmwasm_std::{Addr, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, UniqueIndex};
 
-use crate::types::StrategyIndexItem;
+use crate::types::{Config, StrategyIndexItem};
 
-const STRATEGY_COUNTER: Item<u64> = Item::new("strategy_counter_v1");
+const CONFIG: Item<Config> = Item::new("config");
+
+pub fn get_config(store: &dyn Storage) -> StdResult<Config> {
+    CONFIG.load(store)
+}
+
+pub fn update_config(store: &mut dyn Storage, config: Config) -> StdResult<Config> {
+    CONFIG.save(store, &config)?;
+    Ok(config)
+}
+
+const STRATEGY_COUNTER: Item<u64> = Item::new("strategy_counter");
 
 struct StrategyIndexes<'a> {
-    pub owner: UniqueIndex<'a, (Addr, u64, Addr), StrategyIndexItem, Addr>,
-    pub owner_status: UniqueIndex<'a, (Addr, u8, u64, Addr), StrategyIndexItem, Addr>,
+    pub owner: UniqueIndex<'a, (Addr, Addr), StrategyIndexItem, Addr>,
+    pub owner_status: UniqueIndex<'a, (Addr, u8, Addr), StrategyIndexItem, Addr>,
 }
 
 impl<'a> IndexList<StrategyIndexItem> for StrategyIndexes<'a> {
@@ -17,23 +29,16 @@ impl<'a> IndexList<StrategyIndexItem> for StrategyIndexes<'a> {
     }
 }
 
-fn strategy_store<'a>() -> IndexedMap<'a, Addr, StrategyIndexItem, StrategyIndexes<'a>> {
+fn strategy_store<'a>() -> IndexedMap<Addr, StrategyIndexItem, StrategyIndexes<'a>> {
     IndexedMap::new(
         "strategies_v1",
         StrategyIndexes {
             owner: UniqueIndex::new(
-                |s| (s.owner.clone(), s.updated_at, s.contract.into()),
+                |s| (s.owner.clone(), s.contract.clone()),
                 "strategies_v1__owner_status",
             ),
             owner_status: UniqueIndex::new(
-                |s| {
-                    (
-                        s.owner.clone(),
-                        s.status.clone() as u8,
-                        s.updated_at,
-                        s.contract.into(),
-                    )
-                },
+                |s| (s.owner.clone(), s.status.clone() as u8, s.contract.clone()),
                 "strategies_v1__owner_status",
             ),
         },
@@ -44,10 +49,8 @@ pub fn add_strategy_index_item(
     store: &mut dyn Storage,
     strategy_index_item: StrategyIndexItem,
 ) -> StdResult<()> {
-    counter.save(
-        STRATEGY_COUNTER,
-        counter.may_load(STRATEGY_COUNTER)?.unwrap_or_default(),
-    )?;
+    let total = STRATEGY_COUNTER.may_load(store)?.unwrap_or_default() + 1;
+    STRATEGY_COUNTER.save(store, &total)?;
     update_strategy_index_item(store, strategy_index_item)
 }
 
@@ -57,9 +60,10 @@ pub fn update_strategy_index_item(
 ) -> StdResult<()> {
     strategy_store().save(
         store,
-        strategy_index_item.contract.into(),
+        strategy_index_item.contract.clone().into(),
         &strategy_index_item.clone().into(),
     )?;
+    Ok(())
 }
 
 pub fn get_strategy_index_items(
@@ -83,6 +87,6 @@ pub fn get_strategy_index_items(
         cosmwasm_std::Order::Ascending,
     )
     .take(limit.unwrap_or(10) as usize)
-    .flatten()
+    .flat_map(|result| result.map(|(_, strategy)| strategy))
     .collect::<Vec<StrategyIndexItem>>())
 }

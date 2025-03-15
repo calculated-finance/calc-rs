@@ -1,5 +1,5 @@
 [package]
-name = "calc-vault"
+name = "vault"
 version = "0.1.0"
 authors = ["jamesgaddum"]
 edition = "2021"
@@ -31,7 +31,6 @@ rujira-rs = { workspace = true }
 calc-rs = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 cw-multi-test = { workspace = true }
