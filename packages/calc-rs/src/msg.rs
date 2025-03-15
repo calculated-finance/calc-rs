@@ -14,7 +14,11 @@ pub enum FactoryExecuteMsg {
         label: String,
         config: StrategyConfig,
     },
-    Update {
+    CreateIndex {
+        owner: Addr,
+        status: StrategyStatus,
+    },
+    UpdateIndex {
         status: Option<StrategyStatus>,
     },
 }

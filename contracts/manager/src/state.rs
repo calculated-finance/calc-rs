@@ -34,36 +34,71 @@ fn strategy_store<'a>() -> IndexedMap<Addr, StrategyIndexItem, StrategyIndexes<'
         "strategies_v1",
         StrategyIndexes {
             owner: UniqueIndex::new(
-                |s| (s.owner.clone(), s.contract.clone()),
+                |s| (s.owner.clone(), s.contract_address.clone()),
                 "strategies_v1__owner_status",
             ),
             owner_status: UniqueIndex::new(
-                |s| (s.owner.clone(), s.status.clone() as u8, s.contract.clone()),
+                |s| {
+                    (
+                        s.owner.clone(),
+                        s.status.clone() as u8,
+                        s.contract_address.clone(),
+                    )
+                },
                 "strategies_v1__owner_status",
             ),
         },
     )
 }
 
+pub struct AddStrategyIndexCommand {
+    pub owner: Addr,
+    pub contract_address: Addr,
+    pub status: StrategyStatus,
+    pub updated_at: u64,
+}
+
+impl From<AddStrategyIndexCommand> for StrategyIndexItem {
+    fn from(cmd: AddStrategyIndexCommand) -> Self {
+        StrategyIndexItem {
+            owner: cmd.owner,
+            contract_address: cmd.contract_address,
+            status: cmd.status,
+            updated_at: cmd.updated_at,
+        }
+    }
+}
+
+pub struct UpdateStrategyIndexCommand {
+    pub status: Option<StrategyStatus>,
+    pub updated_at: u64,
+}
+
 pub fn add_strategy_index_item(
     store: &mut dyn Storage,
-    strategy_index_item: StrategyIndexItem,
+    command: AddStrategyIndexCommand,
 ) -> StdResult<()> {
     let total = STRATEGY_COUNTER.may_load(store)?.unwrap_or_default() + 1;
     STRATEGY_COUNTER.save(store, &total)?;
-    update_strategy_index_item(store, strategy_index_item)
+    strategy_store().save(store, command.contract_address.clone(), &command.into())
 }
 
 pub fn update_strategy_index_item(
     store: &mut dyn Storage,
-    strategy_index_item: StrategyIndexItem,
+    contract_address: Addr,
+    command: UpdateStrategyIndexCommand,
 ) -> StdResult<()> {
+    let strategies = strategy_store();
+    let item = strategies.load(store, contract_address.clone())?;
     strategy_store().save(
         store,
-        strategy_index_item.contract.clone().into(),
-        &strategy_index_item.clone().into(),
-    )?;
-    Ok(())
+        contract_address,
+        &StrategyIndexItem {
+            status: command.status.unwrap_or(item.status),
+            updated_at: command.updated_at,
+            ..item
+        },
+    )
 }
 
 pub fn get_strategy_index_items(

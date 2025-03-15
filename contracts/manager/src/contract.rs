@@ -10,7 +10,10 @@ use cosmwasm_std::{
 // use cw2::set_contract_version;
 
 use crate::{
-    state::{get_config, update_config},
+    state::{
+        add_strategy_index_item, get_config, update_config, update_strategy_index_item,
+        AddStrategyIndexCommand, UpdateStrategyIndexCommand,
+    },
     types::Config,
 };
 
@@ -20,7 +23,7 @@ const CONTRACT_NAME: &str = "crates.io:factory";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 */
 
-#[cfg_attr(not(feature = "library"), entry_point)]
+#[entry_point]
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
@@ -36,10 +39,10 @@ pub fn instantiate(
     Ok(Response::default())
 }
 
-#[cfg_attr(not(feature = "library"), entry_point)]
+#[entry_point]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: FactoryExecuteMsg,
 ) -> ContractResult {
@@ -54,13 +57,33 @@ pub fn execute(
                 funds: info.funds,
             }))
         }
-        FactoryExecuteMsg::Update { .. } => {
-            unimplemented!()
+        FactoryExecuteMsg::CreateIndex { owner, status } => {
+            add_strategy_index_item(
+                deps.storage,
+                AddStrategyIndexCommand {
+                    owner,
+                    contract_address: info.sender,
+                    status,
+                    updated_at: env.block.time.seconds(),
+                },
+            )?;
+            Ok(Response::default())
+        }
+        FactoryExecuteMsg::UpdateIndex { status } => {
+            update_strategy_index_item(
+                deps.storage,
+                info.sender,
+                UpdateStrategyIndexCommand {
+                    status,
+                    updated_at: env.block.time.seconds(),
+                },
+            )?;
+            Ok(Response::default())
         }
     }
 }
 
-#[cfg_attr(not(feature = "library"), entry_point)]
+#[entry_point]
 pub fn query(_deps: Deps, _env: Env, msg: FactoryQueryMsg) -> StdResult<Binary> {
     match msg {
         FactoryQueryMsg::Strategy { .. } => {

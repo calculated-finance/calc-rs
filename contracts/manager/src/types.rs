@@ -10,7 +10,7 @@ pub struct Config {
 #[cw_serde]
 pub struct StrategyIndexItem {
     pub owner: Addr,
-    pub contract: Addr,
+    pub contract_address: Addr,
     pub status: StrategyStatus,
     pub updated_at: u64,
 }

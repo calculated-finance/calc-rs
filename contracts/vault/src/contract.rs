@@ -14,7 +14,7 @@ const CONTRACT_NAME: &str = "crates.io:vault";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 */
 
-#[cfg_attr(not(feature = "library"), entry_point)]
+#[entry_point]
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
@@ -25,7 +25,7 @@ pub fn instantiate(
     Ok(Response::default())
 }
 
-#[cfg_attr(not(feature = "library"), entry_point)]
+#[entry_point]
 pub fn execute(
     _deps: DepsMut,
     _env: Env,
@@ -42,7 +42,7 @@ pub fn execute(
     }
 }
 
-#[cfg_attr(not(feature = "library"), entry_point)]
+#[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: VaultQueryMsg) -> StdResult<Binary> {
     to_json_binary(&match msg {
         VaultQueryMsg::Config {} => get_config(deps.storage),
