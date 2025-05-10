@@ -8,7 +8,7 @@ pub trait Validate {
 impl Validate for StrategyConfig {
     fn validate(&self, deps: Deps, info: MessageInfo) -> Result<(), ContractError> {
         match self {
-            StrategyConfig::Regular { owner, .. } => {
+            StrategyConfig::DCA { owner, .. } => {
                 deps.api
                     .addr_validate(&owner.clone().into_string())
                     .map_err(|_err| return ContractError::Unauthorized {})?;
@@ -19,6 +19,7 @@ impl Validate for StrategyConfig {
 
                 Ok(())
             }
+            StrategyConfig::New {} => Ok(()),
         }
     }
 }

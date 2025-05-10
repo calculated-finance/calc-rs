@@ -10,15 +10,15 @@ pub struct FactoryInstantiateMsg {
 
 #[cw_serde]
 pub enum FactoryExecuteMsg {
-    Create {
+    CreateStrategy {
         label: String,
         config: StrategyConfig,
     },
-    CreateIndex {
+    CreateHandle {
         owner: Addr,
         status: StrategyStatus,
     },
-    UpdateIndex {
+    UpdateHandle {
         status: Option<StrategyStatus>,
     },
 }
@@ -38,19 +38,21 @@ pub enum FactoryQueryMsg {
 }
 
 #[cw_serde]
-pub struct VaultInstantiateMsg {
+pub struct StrategyInstantiateMsg {
     pub config: StrategyConfig,
 }
 
 #[cw_serde]
-pub enum VaultExecuteMsg {
+pub enum StrategyExecuteMsg {
     Execute {},
-    Withdraw {},
+    Withdraw { assets: Vec<String> },
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
-pub enum VaultQueryMsg {
+pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
     Config {},
+    #[returns(bool)]
+    CanExecute {},
 }

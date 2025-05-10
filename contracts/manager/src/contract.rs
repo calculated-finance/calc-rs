@@ -1,5 +1,5 @@
 use calc_rs::{
-    msg::{FactoryExecuteMsg, FactoryInstantiateMsg, FactoryQueryMsg, VaultInstantiateMsg},
+    msg::{FactoryExecuteMsg, FactoryInstantiateMsg, FactoryQueryMsg, StrategyInstantiateMsg},
     types::ContractResult,
 };
 #[cfg(not(feature = "library"))]
@@ -11,8 +11,8 @@ use cosmwasm_std::{
 
 use crate::{
     state::{
-        add_strategy_index_item, get_config, update_config, update_strategy_index_item,
-        AddStrategyIndexCommand, UpdateStrategyIndexCommand,
+        create_strategy_handle, get_config, update_config, update_strategy_handle,
+        AddStrategyHandleCommand, UpdateStrategyHandleCommand,
     },
     types::Config,
 };
@@ -48,19 +48,19 @@ pub fn execute(
 ) -> ContractResult {
     let local_config = get_config(deps.storage)?;
     match msg {
-        FactoryExecuteMsg::Create { label, config } => {
+        FactoryExecuteMsg::CreateStrategy { label, config } => {
             Ok(Response::default().add_message(WasmMsg::Instantiate {
                 admin: None,
                 code_id: local_config.vault_code_id,
                 label,
-                msg: to_json_binary(&VaultInstantiateMsg { config })?,
+                msg: to_json_binary(&StrategyInstantiateMsg { config })?,
                 funds: info.funds,
             }))
         }
-        FactoryExecuteMsg::CreateIndex { owner, status } => {
-            add_strategy_index_item(
+        FactoryExecuteMsg::CreateHandle { owner, status } => {
+            create_strategy_handle(
                 deps.storage,
-                AddStrategyIndexCommand {
+                AddStrategyHandleCommand {
                     owner,
                     contract_address: info.sender,
                     status,
@@ -69,11 +69,11 @@ pub fn execute(
             )?;
             Ok(Response::default())
         }
-        FactoryExecuteMsg::UpdateIndex { status } => {
-            update_strategy_index_item(
+        FactoryExecuteMsg::UpdateHandle { status } => {
+            update_strategy_handle(
                 deps.storage,
-                info.sender,
-                UpdateStrategyIndexCommand {
+                UpdateStrategyHandleCommand {
+                    contract_address: info.sender,
                     status,
                     updated_at: env.block.time.seconds(),
                 },

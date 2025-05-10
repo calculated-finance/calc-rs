@@ -14,15 +14,16 @@ incremental = false
 overflow-checks = true
 
 [workspace.dependencies]
-cosmwasm-storage = "1.5.2"
-cw-utils = "2.0.0"
+calc-rs = { path = "packages/calc-rs" }
 cosmwasm-schema = "2.2.0"
 cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1"] }
+cosmwasm-storage = "1.5.2"
+cw-multi-test = "2.0.0"
 cw-storage-plus = "2.0.0"
+cw-utils = "2.0.0"
 cw2 = "2.0.0"
+rand = "0.9.1"
+rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "acdbaa19836bb9cfa2e62ada6e8a2227373fe9df" }
 schemars = "0.8.16"
 serde = { version = "1.0.197", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.58" }
-rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "acdbaa19836bb9cfa2e62ada6e8a2227373fe9df" }
-cw-multi-test = "2.0.0"
-calc-rs = { path = "packages/calc-rs" }

@@ -8,7 +8,7 @@ pub struct Config {
 }
 
 #[cw_serde]
-pub struct StrategyIndexItem {
+pub struct StrategyHandle {
     pub owner: Addr,
     pub contract_address: Addr,
     pub status: StrategyStatus,

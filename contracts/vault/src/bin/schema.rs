@@ -1,10 +1,10 @@
-use calc_rs::msg::{VaultExecuteMsg, VaultInstantiateMsg, VaultQueryMsg};
+use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {
     write_api! {
-        instantiate: VaultInstantiateMsg,
-        execute: VaultExecuteMsg,
-        query: VaultQueryMsg,
+        instantiate: StrategyInstantiateMsg,
+        execute: StrategyExecuteMsg,
+        query: StrategyQueryMsg,
     }
 }

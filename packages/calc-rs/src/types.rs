@@ -1,6 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Uint256};
-use cosmwasm_std::{Response, StdError};
+use cosmwasm_std::{Addr, Coin, Response, StdError, Uint256};
 use cw_utils::{Duration, Expiration};
 use rujira_rs::Asset;
 use thiserror::Error;
@@ -27,7 +26,7 @@ pub enum Schedule {
 #[derive()]
 #[cw_serde]
 pub enum StrategyConfig {
-    Regular {
+    DCA {
         owner: Addr,
         swap_amount: Coin,
         target_denom: Asset,
@@ -35,6 +34,7 @@ pub enum StrategyConfig {
         minimum_receive_amount: Option<String>,
         route: Option<String>,
     },
+    New {},
 }
 
 #[cw_serde]
