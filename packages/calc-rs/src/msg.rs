@@ -1,5 +1,6 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, Binary, Coin};
+use rujira_rs::CallbackData;
 
 use crate::types::{Strategy, StrategyConfig, StrategyStatus};
 
@@ -55,4 +56,31 @@ pub enum StrategyQueryMsg {
     Config {},
     #[returns(bool)]
     CanExecute {},
+}
+
+#[cw_serde]
+pub enum ExchangeExecuteMsg {
+    Swap {
+        minimum_receive_amount: Coin,
+        route: Option<Binary>,
+        callback: CallbackData,
+    },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum ExchangeQueryMsg {
+    #[returns(cosmwasm_std::Decimal)]
+    GetSpotPrice {
+        swap_denom: String,
+        target_denom: String,
+        period: u64,
+        route: Option<Binary>,
+    },
+    #[returns(Coin)]
+    GetExpectedReceiveAmount {
+        swap_amount: Coin,
+        target_denom: String,
+        route: Option<Binary>,
+    },
 }

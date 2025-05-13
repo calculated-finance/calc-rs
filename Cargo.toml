@@ -23,7 +23,7 @@ cw-storage-plus = "2.0.0"
 cw-utils = "2.0.0"
 cw2 = "2.0.0"
 rand = "0.9.1"
-rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "acdbaa19836bb9cfa2e62ada6e8a2227373fe9df" }
+rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "bde18fdb02b9b0213e43308c7ebf5b865886ac97" }
 schemars = "0.8.16"
 serde = { version = "1.0.197", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.58" }

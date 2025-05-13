@@ -9,7 +9,7 @@ use cosmwasm_std::{
 
 use crate::events::DomainEvent;
 use crate::state::{get_config, update_config};
-use crate::validation::Validate;
+use crate::strategies::{Executable, Validatable};
 
 /*
 // version info for migration info
@@ -34,14 +34,20 @@ pub fn instantiate(
 
 #[entry_point]
 pub fn execute(
-    _deps: DepsMut,
-    _env: Env,
-    _info: MessageInfo,
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
     msg: StrategyExecuteMsg,
 ) -> ContractResult {
     match msg {
         StrategyExecuteMsg::Execute {} => {
-            unimplemented!()
+            let config = get_config(deps.storage)?;
+            if config.can_execute(deps.as_ref(), &info) {
+                return config.execute(deps, env, info);
+            }
+            Err(ContractError::Std(StdError::generic_err(
+                "Strategy cannot be executed",
+            )))
         }
         StrategyExecuteMsg::Withdraw { assets: _ } => {
             unimplemented!()
