@@ -1,14 +1,13 @@
 use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
-use calc_rs::types::{ContractError, ContractResult};
+use calc_rs::types::{ContractResult, DomainEvent};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult,
+    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdResult,
 };
 // use cw2::set_contract_version;
 
-use crate::events::DomainEvent;
-use crate::state::{get_config, update_config};
+use crate::state::{CONFIG, FACTORY};
 use crate::strategies::{Executable, Validatable};
 
 /*
@@ -24,8 +23,9 @@ pub fn instantiate(
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
+    FACTORY.save(deps.storage, &info.sender)?;
     msg.config.validate(deps.as_ref(), info)?;
-    update_config(deps.storage, msg.config.clone())?;
+    CONFIG.save(deps.storage, &msg.config)?;
     Ok(Response::default().add_event(DomainEvent::StrategyCreated {
         contract_address: _env.contract.address,
         config: msg.config,
@@ -36,18 +36,21 @@ pub fn instantiate(
 pub fn execute(
     deps: DepsMut,
     env: Env,
-    info: MessageInfo,
+    _info: MessageInfo,
     msg: StrategyExecuteMsg,
 ) -> ContractResult {
     match msg {
         StrategyExecuteMsg::Execute {} => {
-            let config = get_config(deps.storage)?;
-            if config.can_execute(deps.as_ref(), &info) {
-                return config.execute(deps, env, info);
+            let config = CONFIG.load(deps.storage)?;
+            match config.can_execute(deps.as_ref(), env.clone()) {
+                Ok(_) => config.execute(),
+                Err(reason) => Ok(
+                    Response::default().add_event(DomainEvent::ExecutionSkipped {
+                        contract_address: env.contract.address,
+                        reason,
+                    }),
+                ),
             }
-            Err(ContractError::Std(StdError::generic_err(
-                "Strategy cannot be executed",
-            )))
         }
         StrategyExecuteMsg::Withdraw { assets: _ } => {
             unimplemented!()
@@ -56,19 +59,15 @@ pub fn execute(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
-    match reply.id {
-        id => Err(ContractError::Std(StdError::generic_err(format!(
-            "unhandled DCA contract reply id: {}",
-            id
-        )))),
-    }
+pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
+    let config = CONFIG.load(deps.storage)?;
+    config.handle_result(deps, env, reply)
 }
 
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     match msg {
-        StrategyQueryMsg::Config {} => to_json_binary(&get_config(deps.storage)?),
+        StrategyQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         StrategyQueryMsg::CanExecute {} => to_json_binary(&true),
     }
 }

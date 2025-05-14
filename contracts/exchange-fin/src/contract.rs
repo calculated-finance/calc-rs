@@ -67,7 +67,7 @@ pub fn execute(
                 to_json_binary(&FinExecuteMsg::Swap(SwapRequest {
                     min_return: Some(minimum_receive_amount.amount),
                     to: Some(info.sender.to_string()),
-                    callback: Some(callback),
+                    callback,
                 }))?,
                 info.funds,
             )?))

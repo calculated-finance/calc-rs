@@ -63,7 +63,7 @@ pub enum ExchangeExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
         route: Option<Binary>,
-        callback: CallbackData,
+        callback: Option<CallbackData>,
     },
 }
 
