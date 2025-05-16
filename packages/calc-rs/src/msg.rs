@@ -1,8 +1,8 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin};
+use cosmwasm_std::{Addr, Binary, Coin, Decimal};
 use rujira_rs::CallbackData;
 
-use crate::types::{Strategy, StrategyConfig, StrategyStatus};
+use crate::types::{Condition, Strategy, StrategyConfig, StrategyStatus};
 
 #[cw_serde]
 pub struct FactoryInstantiateMsg {
@@ -70,7 +70,7 @@ pub enum ExchangeExecuteMsg {
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum ExchangeQueryMsg {
-    #[returns(cosmwasm_std::Decimal)]
+    #[returns(Decimal)]
     GetSpotPrice {
         swap_denom: String,
         target_denom: String,
@@ -83,4 +83,16 @@ pub enum ExchangeQueryMsg {
         target_denom: String,
         route: Option<Binary>,
     },
+}
+
+#[cw_serde]
+pub enum SchedulerExecuteMsg {
+    Create { condition: Condition, msg: Binary },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum SchedulerQueryMsg {
+    #[returns(Vec<Addr>)]
+    Met { limit: Option<u32> },
 }

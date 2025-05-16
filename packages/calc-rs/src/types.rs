@@ -1,5 +1,8 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Binary, Coin, CosmosMsg, Event, Response, StdError, StdResult, WasmMsg};
+use cosmwasm_std::{
+    Addr, Binary, Coin, CosmosMsg, Decimal, Event, Response, StdError, StdResult, Timestamp,
+    WasmMsg,
+};
 use cw_utils::{Duration, Expiration};
 use thiserror::Error;
 
@@ -13,6 +16,13 @@ pub enum ContractError {
 }
 
 pub type ContractResult = core::result::Result<Response, ContractError>;
+
+#[cw_serde]
+pub enum Condition {
+    Time { timestamp: Timestamp },
+    Block { height: u64 },
+    LimitOrder { order_id: String },
+}
 
 #[cw_serde]
 pub enum Schedule {
