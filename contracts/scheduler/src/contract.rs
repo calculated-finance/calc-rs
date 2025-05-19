@@ -1,21 +1,14 @@
-use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg};
-use calc_rs::types::{Contract, ContractError, ContractResult};
+use calc_rs::msg::{SchedulerExecuteMsg, SchedulerQueryMsg};
+use calc_rs::types::{Condition, ConditionFilter, ContractResult};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError, StdResult,
+    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response, StdResult,
 };
-use rujira_rs::fin::{ExecuteMsg as FinExecuteMsg, SwapRequest};
+use cw_storage_plus::Bound;
 
-use crate::state::find_pair;
-// use cw2::set_contract_version;
-
-/*
-// version info for migration info
-const CONTRACT_NAME: &str = "crates.io:vault";
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
-*/
+use crate::state::{save_trigger, triggers};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -35,55 +28,57 @@ pub fn execute(
     deps: DepsMut,
     _env: Env,
     info: MessageInfo,
-    msg: ExchangeExecuteMsg,
+    msg: SchedulerExecuteMsg,
 ) -> ContractResult {
     match msg {
-        ExchangeExecuteMsg::Swap {
-            minimum_receive_amount,
+        SchedulerExecuteMsg::Create {
+            condition,
+            to,
             callback,
-            ..
         } => {
-            if info.funds.len() != 1 {
-                return Err(ContractError::Std(StdError::generic_err(
-                    "Must provide exactly one coin to swap",
-                )));
-            }
-
-            if info.funds[0].amount.is_zero() {
-                return Err(ContractError::Std(StdError::generic_err(
-                    "Must provide a non-zero amount to swap",
-                )));
-            }
-
-            let pair = find_pair(
-                deps.storage,
-                [
-                    info.funds[0].denom.clone(),
-                    minimum_receive_amount.denom.clone(),
-                ],
-            )?;
-
-            Ok(Response::new().add_message(Contract(pair.address).call(
-                to_json_binary(&FinExecuteMsg::Swap(SwapRequest {
-                    min_return: Some(minimum_receive_amount.amount),
-                    to: Some(info.sender.to_string()),
-                    callback,
-                }))?,
-                info.funds,
-            )?))
+            save_trigger(deps.storage, info.sender, condition, callback, to)?;
+            Ok(Response::default())
         }
     }
 }
 
 #[entry_point]
-pub fn query(_deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, _env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
-        ExchangeQueryMsg::GetExpectedReceiveAmount { .. } => {
-            unimplemented!()
-        }
-        ExchangeQueryMsg::GetSpotPrice { .. } => {
-            unimplemented!()
-        }
+        SchedulerQueryMsg::Get { filter, limit } => to_json_binary(
+            &(match filter {
+                ConditionFilter::Owner { address } => match address {
+                    Some(addr) => triggers().idx.owner.prefix(addr).range(
+                        deps.storage,
+                        None,
+                        None,
+                        Order::Ascending,
+                    ),
+                    None => triggers().range(deps.storage, None, None, Order::Ascending),
+                },
+                ConditionFilter::Timestamp { start, end } => triggers().idx.timestamp.range(
+                    deps.storage,
+                    start.map(|s| Bound::inclusive((s.seconds(), u64::MAX))),
+                    end.map(|e| Bound::inclusive((e.seconds(), u64::MAX))),
+                    Order::Ascending,
+                ),
+                ConditionFilter::BlockHeight { start, end } => triggers().idx.block_height.range(
+                    deps.storage,
+                    start.map(|s| Bound::inclusive((s, u64::MAX))),
+                    end.map(|e| Bound::inclusive((e, u64::MAX))),
+                    Order::Ascending,
+                ),
+                ConditionFilter::LimitOrder {} => {
+                    triggers()
+                        .idx
+                        .limit_order_id
+                        .range(deps.storage, None, None, Order::Ascending)
+                }
+            })
+            .take(limit.unwrap_or(30))
+            .flat_map(|r| r.map(|(_, v)| v.condition))
+            .collect::<Vec<Condition>>(),
+        ),
     }
 }
 

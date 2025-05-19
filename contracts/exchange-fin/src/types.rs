@@ -1,5 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin};
+use cosmwasm_std::Addr;
 use cw_utils::NativeBalance;
 
 #[cw_serde]

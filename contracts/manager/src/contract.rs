@@ -1,27 +1,24 @@
 use calc_rs::{
-    msg::{FactoryExecuteMsg, FactoryInstantiateMsg, FactoryQueryMsg, StrategyInstantiateMsg},
-    types::ContractResult,
+    msg::{
+        FactoryExecuteMsg, FactoryInstantiateMsg, FactoryQueryMsg, StrategyExecuteMsg,
+        StrategyInstantiateMsg,
+    },
+    types::{ContractError, ContractResult, DomainEvent, Status},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult, WasmMsg,
+    instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response,
+    StdError, StdResult, WasmMsg,
 };
-// use cw2::set_contract_version;
 
 use crate::{
     state::{
-        create_strategy_handle, get_config, update_config, update_strategy_handle,
-        AddStrategyHandleCommand, UpdateStrategyHandleCommand,
+        create_strategy_handle, get_config, update_strategy_status, CreateStrategyHandleCommand,
+        UpdateStrategyStatusCommand, CONFIG, STRATEGY_COUNTER,
     },
     types::Config,
 };
-
-/*
-// version info for migration info
-const CONTRACT_NAME: &str = "crates.io:factory";
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
-*/
 
 #[entry_point]
 pub fn instantiate(
@@ -30,10 +27,11 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: FactoryInstantiateMsg,
 ) -> ContractResult {
-    update_config(
+    CONFIG.save(
         deps.storage,
-        Config {
-            vault_code_id: msg.vault_code_id,
+        &Config {
+            checksum: msg.checksum,
+            code_id: msg.code_id,
         },
     )?;
     Ok(Response::default())
@@ -46,39 +44,75 @@ pub fn execute(
     info: MessageInfo,
     msg: FactoryExecuteMsg,
 ) -> ContractResult {
-    let local_config = get_config(deps.storage)?;
-    match msg {
-        FactoryExecuteMsg::CreateStrategy { label, config } => {
-            Ok(Response::default().add_message(WasmMsg::Instantiate {
-                admin: None,
-                code_id: local_config.vault_code_id,
+    match msg.clone() {
+        FactoryExecuteMsg::InstantiateStrategy {
+            owner,
+            label,
+            strategy,
+        } => {
+            let config = get_config(deps.storage)?;
+
+            let salt = to_json_binary(&(
+                env.block.time.seconds(),
+                owner.clone(),
+                msg.clone(),
+                STRATEGY_COUNTER.load(deps.storage)?,
+            ))?;
+
+            create_strategy_handle(
+                deps.storage,
+                CreateStrategyHandleCommand {
+                    owner: owner.clone(),
+                    contract_address: deps.api.addr_humanize(&instantiate2_address(
+                        &config.checksum,
+                        &deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                        &salt,
+                    )?)?,
+                    status: Status::Active,
+                    updated_at: env.block.time.seconds(),
+                },
+            )?;
+
+            Ok(Response::default().add_message(WasmMsg::Instantiate2 {
+                admin: Some(owner.to_string()),
+                code_id: config.code_id,
                 label,
-                msg: to_json_binary(&StrategyInstantiateMsg { config })?,
+                msg: to_json_binary(&StrategyInstantiateMsg { strategy })?,
+                funds: info.funds,
+                salt,
+            }))
+        }
+        FactoryExecuteMsg::Execute { contract_address } => {
+            Ok(Response::default().add_message(WasmMsg::Execute {
+                contract_addr: contract_address.to_string(),
+                msg: to_json_binary(&StrategyExecuteMsg::Execute {})?,
                 funds: info.funds,
             }))
         }
-        FactoryExecuteMsg::CreateHandle { owner, status } => {
-            create_strategy_handle(
+        FactoryExecuteMsg::UpdateStatus { status, reason } => {
+            update_strategy_status(
                 deps.storage,
-                AddStrategyHandleCommand {
-                    owner,
-                    contract_address: info.sender,
-                    status,
+                UpdateStrategyStatusCommand {
+                    contract_address: info.sender.clone(),
+                    status: status.clone(),
                     updated_at: env.block.time.seconds(),
                 },
             )?;
-            Ok(Response::default())
-        }
-        FactoryExecuteMsg::UpdateHandle { status } => {
-            update_strategy_handle(
-                deps.storage,
-                UpdateStrategyHandleCommand {
+
+            Ok(Response::default().add_event(match status {
+                Status::Active => DomainEvent::StrategyResumed {
                     contract_address: info.sender,
-                    status,
-                    updated_at: env.block.time.seconds(),
                 },
-            )?;
-            Ok(Response::default())
+                Status::Paused => DomainEvent::StrategyPaused {
+                    contract_address: info.sender,
+                    reason,
+                },
+                _ => {
+                    return Err(ContractError::Std(StdError::generic_err(
+                        "Strategies cannot mark themselves as archived",
+                    )))
+                }
+            }))
         }
     }
 }

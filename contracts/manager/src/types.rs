@@ -1,16 +1,17 @@
-use calc_rs::types::StrategyStatus;
+use calc_rs::types::Status;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, HexBinary};
 
 #[cw_serde]
 pub struct Config {
-    pub vault_code_id: u64,
+    pub checksum: HexBinary,
+    pub code_id: u64,
 }
 
 #[cw_serde]
 pub struct StrategyHandle {
     pub owner: Addr,
     pub contract_address: Addr,
-    pub status: StrategyStatus,
+    pub status: Status,
     pub updated_at: u64,
 }

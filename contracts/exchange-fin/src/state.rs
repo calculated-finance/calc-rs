@@ -1,11 +1,11 @@
 use std::any::type_name;
 
-use cosmwasm_std::{Order, StdError, StdResult, Storage};
+use cosmwasm_std::{Addr, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Bound, Item, Map};
 
-use crate::types::{Pair, SwapCache};
+use crate::types::Pair;
 
-pub const SWAP_CACHE: Item<SwapCache> = Item::new("swap_cache_v1");
+pub const ADMIN: Item<Addr> = Item::new("admin");
 
 const PAIRS: Map<String, Pair> = Map::new("pairs_v1");
 

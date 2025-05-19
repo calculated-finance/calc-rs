@@ -1,26 +1,28 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin, Decimal};
+use cosmwasm_std::{Addr, Binary, Coin, Decimal, HexBinary};
 use rujira_rs::CallbackData;
 
-use crate::types::{Condition, Strategy, StrategyConfig, StrategyStatus};
+use crate::types::{Condition, ConditionFilter, Status, Strategy, StrategyConfig};
 
 #[cw_serde]
 pub struct FactoryInstantiateMsg {
-    pub vault_code_id: u64,
+    pub checksum: HexBinary,
+    pub code_id: u64,
 }
 
 #[cw_serde]
 pub enum FactoryExecuteMsg {
-    CreateStrategy {
-        label: String,
-        config: StrategyConfig,
-    },
-    CreateHandle {
+    InstantiateStrategy {
         owner: Addr,
-        status: StrategyStatus,
+        label: String,
+        strategy: StrategyConfig,
     },
-    UpdateHandle {
-        status: Option<StrategyStatus>,
+    Execute {
+        contract_address: Addr,
+    },
+    UpdateStatus {
+        status: Status,
+        reason: String,
     },
 }
 
@@ -32,7 +34,7 @@ pub enum FactoryQueryMsg {
     #[returns(Vec<Strategy>)]
     Strategies {
         owner: Option<Addr>,
-        status: Option<StrategyStatus>,
+        status: Option<Status>,
         start_after: Option<Addr>,
         limit: Option<u32>,
     },
@@ -40,13 +42,14 @@ pub enum FactoryQueryMsg {
 
 #[cw_serde]
 pub struct StrategyInstantiateMsg {
-    pub config: StrategyConfig,
+    pub strategy: StrategyConfig,
 }
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
     Execute {},
-    Withdraw { assets: Vec<String> },
+    Schedule {},
+    Withdraw { denoms: Vec<String> },
 }
 
 #[cw_serde]
@@ -65,6 +68,7 @@ pub enum ExchangeExecuteMsg {
         route: Option<Binary>,
         callback: Option<CallbackData>,
     },
+    Custom(Binary),
 }
 
 #[cw_serde]
@@ -87,12 +91,19 @@ pub enum ExchangeQueryMsg {
 
 #[cw_serde]
 pub enum SchedulerExecuteMsg {
-    Create { condition: Condition, msg: Binary },
+    Create {
+        condition: Condition,
+        to: Addr,
+        callback: CallbackData,
+    },
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum SchedulerQueryMsg {
-    #[returns(Vec<Addr>)]
-    Met { limit: Option<u32> },
+    #[returns(Vec<Condition>)]
+    Get {
+        filter: ConditionFilter,
+        limit: Option<usize>,
+    },
 }
