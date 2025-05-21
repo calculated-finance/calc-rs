@@ -1,6 +1,6 @@
-use calc_rs::types::{Condition, Trigger};
-use cosmwasm_std::{Addr, StdError, Uint64};
-use cw_storage_plus::{Index, IndexList, IndexedMap, Item, MultiIndex};
+use calc_rs::types::{Condition, ConditionFilter, Trigger};
+use cosmwasm_std::{Addr, Deps, Order, StdError, StdResult, Storage, Uint64};
+use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 use rujira_rs::CallbackData;
 
 const TRIGGER_COUNTER: Item<u64> = Item::new("condition_counter");
@@ -58,12 +58,12 @@ pub fn triggers<'a>() -> IndexedMap<u64, Trigger, TriggerIndexes<'a>> {
 }
 
 pub fn save_trigger(
-    storage: &mut dyn cosmwasm_std::Storage,
+    storage: &mut dyn Storage,
     owner: Addr,
     condition: Condition,
     callback: CallbackData,
     to: Addr,
-) -> cosmwasm_std::StdResult<()> {
+) -> StdResult<()> {
     let id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
     triggers().save(
         storage,
@@ -76,4 +76,41 @@ pub fn save_trigger(
             to,
         },
     )
+}
+
+pub fn fetch_triggers(deps: Deps, filter: ConditionFilter, limit: Option<usize>) -> Vec<Trigger> {
+    match filter {
+        ConditionFilter::Owner { address } => {
+            triggers()
+                .idx
+                .owner
+                .prefix(address)
+                .range(deps.storage, None, None, Order::Ascending)
+        }
+        ConditionFilter::Timestamp { start, end } => triggers().idx.timestamp.range(
+            deps.storage,
+            start.map(|s| Bound::inclusive((s.seconds(), u64::MAX))),
+            end.map(|e| Bound::inclusive((e.seconds(), u64::MAX))),
+            Order::Ascending,
+        ),
+        ConditionFilter::BlockHeight { start, end } => triggers().idx.block_height.range(
+            deps.storage,
+            start.map(|s| Bound::inclusive((s, u64::MAX))),
+            end.map(|e| Bound::inclusive((e, u64::MAX))),
+            Order::Ascending,
+        ),
+        ConditionFilter::LimitOrder {} => {
+            triggers()
+                .idx
+                .limit_order_id
+                .range(deps.storage, None, None, Order::Ascending)
+        }
+    }
+    .take(limit.unwrap_or(30))
+    .flat_map(|r| r.map(|(_, v)| v))
+    .collect::<Vec<Trigger>>()
+}
+
+pub fn delete_trigger(storage: &mut dyn Storage, id: u64) -> StdResult<()> {
+    triggers().remove(storage, id)
 }

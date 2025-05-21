@@ -37,7 +37,7 @@ pub enum Condition {
 #[cw_serde]
 pub enum ConditionFilter {
     Owner {
-        address: Option<Addr>,
+        address: Addr,
     },
     Timestamp {
         start: Option<Timestamp>,

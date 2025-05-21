@@ -83,6 +83,7 @@ pub fn execute(
             }))
         }
         FactoryExecuteMsg::Execute { contract_address } => {
+            // TODO: Handle reply and publish appropriate events here
             Ok(Response::default().add_message(WasmMsg::Execute {
                 contract_addr: contract_address.to_string(),
                 msg: to_json_binary(&StrategyExecuteMsg::Execute {})?,

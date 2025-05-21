@@ -6,14 +6,14 @@ use calc_rs::{
     },
 };
 use cosmwasm_std::{
-    to_json_binary, BankMsg, CosmosMsg, Deps, DepsMut, Env, Event, MessageInfo, Reply, Response,
-    StdError, StdResult, SubMsg, SubMsgResult, WasmMsg,
+    to_json_binary, BankMsg, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError,
+    StdResult, SubMsg, SubMsgResult, WasmMsg,
 };
 use rujira_rs::CallbackData;
 
 use crate::{
     state::{FACTORY, STRATEGY},
-    types::{Executable, Schedulable, Validatable, Withdrawable},
+    types::{Executable, Pausable, Schedulable, Validatable, Withdrawable},
 };
 
 impl Validatable for DcaStrategy {
@@ -59,7 +59,7 @@ impl Executable for DcaStrategy {
 
         match self.can_execute(deps, env.clone()) {
             Ok(_) => {
-                sub_messages.push(SubMsg::reply_always(
+                let swap_msg = SubMsg::reply_always(
                     Contract(self.exchange_contract.clone()).call(
                         to_json_binary(&ExchangeExecuteMsg::Swap {
                             minimum_receive_amount: self.minimum_receive_amount.clone(),
@@ -69,13 +69,17 @@ impl Executable for DcaStrategy {
                         vec![self.swap_amount.clone()],
                     )?,
                     0,
-                ));
+                );
 
-                messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                sub_messages.push(swap_msg);
+
+                let schedule_msg = CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: env.contract.address.to_string(),
                     msg: to_json_binary(&StrategyExecuteMsg::Schedule {})?,
                     funds: vec![],
-                }));
+                });
+
+                messages.push(schedule_msg);
             }
             Err(reason) => {
                 events.push(DomainEvent::ExecutionSkipped {
@@ -135,13 +139,12 @@ impl Schedulable for DcaStrategy {
 
     fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult {
         let mut messages: Vec<CosmosMsg> = vec![];
-        let mut events: Vec<Event> = vec![];
 
         match self.can_schedule(deps.as_ref(), env.clone()) {
             Ok(_) => {
-                messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                let create_trigger_msg = CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: self.scheduler_contract.to_string(),
-                    msg: to_json_binary(&SchedulerExecuteMsg::Create {
+                    msg: to_json_binary(&SchedulerExecuteMsg::CreateTrigger {
                         condition: Condition::BlockHeight {
                             height: env.block.height + self.interval_blocks,
                         },
@@ -149,7 +152,9 @@ impl Schedulable for DcaStrategy {
                         callback: CallbackData(to_json_binary(&StrategyExecuteMsg::Execute {})?),
                     })?,
                     funds: vec![],
-                }));
+                });
+
+                messages.push(create_trigger_msg);
             }
             Err(reason) => {
                 STRATEGY.save(
@@ -160,53 +165,64 @@ impl Schedulable for DcaStrategy {
                     }),
                 )?;
 
-                messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                let pause_strategy_msg = CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: FACTORY.load(deps.storage)?.into_string(),
                     msg: to_json_binary(&FactoryExecuteMsg::UpdateStatus {
                         status: Status::Paused,
                         reason: reason.clone(),
                     })?,
                     funds: vec![],
-                }));
+                });
 
-                events.push(
-                    DomainEvent::StrategyPaused {
-                        contract_address: env.contract.address,
-                        reason,
-                    }
-                    .into(),
-                )
+                messages.push(pause_strategy_msg);
             }
         };
 
-        Ok(Response::new().add_messages(messages).add_events(events))
+        Ok(Response::new().add_messages(messages))
     }
 }
 
 impl Withdrawable for DcaStrategy {
     fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult {
-        Ok(Response::default()
-            .add_message(CosmosMsg::Bank(BankMsg::Send {
-                to_address: STRATEGY.load(deps.storage)?.owner().to_string(),
-                amount: denoms
-                    .iter()
-                    .map(|denom| {
-                        deps.querier
-                            .query_balance(env.contract.address.clone(), denom.clone())
-                    })
-                    .collect::<StdResult<Vec<_>>>()?,
-            }))
-            .add_message(CosmosMsg::Wasm(WasmMsg::Execute {
-                contract_addr: FACTORY.load(deps.storage)?.into_string(),
-                msg: to_json_binary(&FactoryExecuteMsg::UpdateStatus {
-                    status: Status::Paused,
-                    reason: "User requested withdrawal".into(),
-                })?,
-                funds: vec![],
-            }))
-            .add_event(DomainEvent::StrategyPaused {
-                contract_address: env.contract.address,
+        let send_assets_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: STRATEGY.load(deps.storage)?.owner().to_string(),
+            amount: denoms
+                .iter()
+                .map(|denom| {
+                    deps.querier
+                        .query_balance(env.contract.address.clone(), denom.clone())
+                })
+                .collect::<StdResult<Vec<_>>>()?,
+        });
+
+        let pause_strategy_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: FACTORY.load(deps.storage)?.into_string(),
+            msg: to_json_binary(&FactoryExecuteMsg::UpdateStatus {
+                status: Status::Paused,
                 reason: "User requested withdrawal".into(),
-            }))
+            })?,
+            funds: vec![],
+        });
+
+        Ok(Response::default()
+            .add_message(send_assets_msg)
+            .add_message(pause_strategy_msg))
+    }
+}
+
+impl Pausable for DcaStrategy {
+    fn pause(&self, deps: Deps, env: Env) -> ContractResult {
+        // delete triggers
+
+        let pause_strategy_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: FACTORY.load(deps.storage)?.into_string(),
+            msg: to_json_binary(&FactoryExecuteMsg::UpdateStatus {
+                status: Status::Paused,
+                reason: "User requested pause".into(),
+            })?,
+            funds: vec![],
+        });
+
+        Ok(Response::default().add_message(pause_strategy_msg))
     }
 }

@@ -2,7 +2,7 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Decimal, HexBinary};
 use rujira_rs::CallbackData;
 
-use crate::types::{Condition, ConditionFilter, Status, Strategy, StrategyConfig};
+use crate::types::{Condition, ConditionFilter, Status, Strategy, StrategyConfig, Trigger};
 
 #[cw_serde]
 pub struct FactoryInstantiateMsg {
@@ -50,6 +50,7 @@ pub enum StrategyExecuteMsg {
     Execute {},
     Schedule {},
     Withdraw { denoms: Vec<String> },
+    Pause {},
 }
 
 #[cw_serde]
@@ -91,17 +92,20 @@ pub enum ExchangeQueryMsg {
 
 #[cw_serde]
 pub enum SchedulerExecuteMsg {
-    Create {
+    CreateTrigger {
         condition: Condition,
         to: Addr,
         callback: CallbackData,
+    },
+    DeleteTriggers {
+        owner: Addr,
     },
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum SchedulerQueryMsg {
-    #[returns(Vec<Condition>)]
+    #[returns(Vec<Trigger>)]
     Get {
         filter: ConditionFilter,
         limit: Option<usize>,

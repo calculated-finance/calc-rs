@@ -7,7 +7,7 @@ use cosmwasm_std::{
 };
 
 use crate::state::{FACTORY, STRATEGY};
-use crate::types::{Executable, Schedulable, Validatable, Withdrawable};
+use crate::types::{Executable, Pausable, Schedulable, Validatable, Withdrawable};
 
 #[entry_point]
 pub fn instantiate(
@@ -42,6 +42,7 @@ pub fn execute(
         StrategyExecuteMsg::Execute {} => strategy.execute(deps.as_ref(), env),
         StrategyExecuteMsg::Schedule {} => strategy.schedule(deps, env),
         StrategyExecuteMsg::Withdraw { denoms } => strategy.withdraw(deps.as_ref(), env, denoms),
+        StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), env),
     }
 }
 

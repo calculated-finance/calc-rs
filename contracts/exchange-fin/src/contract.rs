@@ -11,7 +11,7 @@ use rujira_rs::fin::{
     BookResponse, ExecuteMsg as FinExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
 };
 
-use crate::state::{find_pair, save_pair, ADMIN};
+use crate::state::{delete_pair, find_pair, save_pair, ADMIN};
 use crate::types::{Pair, PositionType};
 
 #[cw_serde]
@@ -34,6 +34,7 @@ pub fn instantiate(
 #[cw_serde]
 enum CustomMsg {
     CreatePairs { pairs: Vec<Pair> },
+    DeletePairs { pairs: Vec<Pair> },
 }
 
 #[entry_point]
@@ -50,15 +51,11 @@ pub fn execute(
             ..
         } => {
             if info.funds.len() != 1 {
-                return Err(ContractError::Std(StdError::generic_err(
-                    "Must provide exactly one coin to swap",
-                )));
+                return Err(StdError::generic_err("Must provide exactly one coin to swap").into());
             }
 
             if info.funds[0].amount.is_zero() {
-                return Err(ContractError::Std(StdError::generic_err(
-                    "Must provide a non-zero amount to swap",
-                )));
+                return Err(StdError::generic_err("Must provide a non-zero amount to swap").into());
             }
 
             match find_pair(
@@ -88,6 +85,12 @@ pub fn execute(
                 CustomMsg::CreatePairs { pairs } => {
                     for pair in pairs {
                         save_pair(deps.storage, &pair)?;
+                    }
+                    Ok(Response::default())
+                }
+                CustomMsg::DeletePairs { pairs } => {
+                    for pair in pairs {
+                        delete_pair(deps.storage, &pair);
                     }
                     Ok(Response::default())
                 }

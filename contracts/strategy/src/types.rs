@@ -84,3 +84,18 @@ impl Withdrawable for StrategyConfig {
         }
     }
 }
+
+pub trait Pausable {
+    fn pause(&self, deps: Deps, env: Env) -> ContractResult;
+}
+
+impl Pausable for StrategyConfig {
+    fn pause(&self, deps: Deps, env: Env) -> ContractResult {
+        match self {
+            StrategyConfig::Dca(s) => s.pause(deps, env),
+            StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
+                StdError::generic_err("New strategy not implemented"),
+            )),
+        }
+    }
+}

@@ -8,7 +8,7 @@ use cosmwasm_std::{
 };
 use cw_storage_plus::Bound;
 
-use crate::state::{save_trigger, triggers};
+use crate::state::{delete_trigger, fetch_triggers, save_trigger, triggers};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -31,12 +31,28 @@ pub fn execute(
     msg: SchedulerExecuteMsg,
 ) -> ContractResult {
     match msg {
-        SchedulerExecuteMsg::Create {
+        SchedulerExecuteMsg::CreateTrigger {
             condition,
             to,
             callback,
         } => {
             save_trigger(deps.storage, info.sender, condition, callback, to)?;
+            Ok(Response::default())
+        }
+        SchedulerExecuteMsg::DeleteTriggers { owner } => {
+            let triggers = fetch_triggers(
+                deps.as_ref(),
+                ConditionFilter::Owner { address: owner },
+                None,
+            );
+
+            triggers
+                .iter()
+                .map(|trigger| {
+                    delete_trigger(deps.storage, trigger.id);
+                })
+                .collect::<Vec<_>>();
+
             Ok(Response::default())
         }
     }
@@ -45,40 +61,9 @@ pub fn execute(
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
-        SchedulerQueryMsg::Get { filter, limit } => to_json_binary(
-            &(match filter {
-                ConditionFilter::Owner { address } => match address {
-                    Some(addr) => triggers().idx.owner.prefix(addr).range(
-                        deps.storage,
-                        None,
-                        None,
-                        Order::Ascending,
-                    ),
-                    None => triggers().range(deps.storage, None, None, Order::Ascending),
-                },
-                ConditionFilter::Timestamp { start, end } => triggers().idx.timestamp.range(
-                    deps.storage,
-                    start.map(|s| Bound::inclusive((s.seconds(), u64::MAX))),
-                    end.map(|e| Bound::inclusive((e.seconds(), u64::MAX))),
-                    Order::Ascending,
-                ),
-                ConditionFilter::BlockHeight { start, end } => triggers().idx.block_height.range(
-                    deps.storage,
-                    start.map(|s| Bound::inclusive((s, u64::MAX))),
-                    end.map(|e| Bound::inclusive((e, u64::MAX))),
-                    Order::Ascending,
-                ),
-                ConditionFilter::LimitOrder {} => {
-                    triggers()
-                        .idx
-                        .limit_order_id
-                        .range(deps.storage, None, None, Order::Ascending)
-                }
-            })
-            .take(limit.unwrap_or(30))
-            .flat_map(|r| r.map(|(_, v)| v.condition))
-            .collect::<Vec<Condition>>(),
-        ),
+        SchedulerQueryMsg::Get { filter, limit } => {
+            to_json_binary(&fetch_triggers(deps, filter, limit))
+        }
     }
 }
 
