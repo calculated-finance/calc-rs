@@ -2,7 +2,9 @@ use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg}
 use calc_rs::types::{ContractError, ContractResult};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdResult};
+use cosmwasm_std::{
+    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult,
+};
 
 use crate::state::{CONFIG, FACTORY};
 use crate::types::Runnable;
@@ -39,11 +41,22 @@ pub fn execute(
     }
 }
 
+pub const EXECUTE_REPLY_ID: u64 = 1;
+pub const SCHEDULE_REPLY_ID: u64 = 2;
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
-    CONFIG
-        .load(deps.storage)?
-        .handle_execute_reply(deps, env, reply)
+    match reply.id {
+        EXECUTE_REPLY_ID => CONFIG
+            .load(deps.storage)?
+            .handle_execute_reply(deps, env, reply),
+        SCHEDULE_REPLY_ID => CONFIG
+            .load(deps.storage)?
+            .handle_schedule_reply(deps, env, reply),
+        _ => Err(ContractError::Std(StdError::generic_err(
+            "invalid reply id",
+        ))),
+    }
 }
 
 #[entry_point]

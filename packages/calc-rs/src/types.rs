@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, Binary, CheckedMultiplyRatioError, Coin, CosmosMsg, Event, Instantiate2AddressError,
@@ -75,6 +77,7 @@ pub struct NewStatistics {
     pub amount: Coin,
 }
 
+#[cw_serde]
 pub enum StrategyStatistics {
     Dca(DcaStatistics),
     New(NewStatistics),
@@ -88,11 +91,23 @@ pub struct Destination {
 }
 
 #[cw_serde]
+pub enum DcaSchedule {
+    Blocks {
+        interval: u64,
+        previous: Option<u64>,
+    },
+    Time {
+        duration: Duration,
+        previous: Option<Timestamp>,
+    },
+}
+
+#[cw_serde]
 pub struct DcaStrategy {
     pub owner: Addr,
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
-    pub interval_blocks: u64,
+    pub schedule: DcaSchedule,
     pub exchange_contract: Addr,
     pub scheduler_contract: Addr,
     pub fee_collector: Addr,
@@ -167,21 +182,34 @@ pub enum DomainEvent {
     FundsDeposited {
         contract_address: Addr,
         from: Addr,
-        amount: Vec<Coin>,
+        funds: Vec<Coin>,
     },
     FundsWithdrawn {
         contract_address: Addr,
         to: Addr,
-        amount: Vec<Coin>,
+        funds: Vec<Coin>,
     },
     ExecutionSucceeded {
         contract_address: Addr,
+        statistics: StrategyStatistics,
     },
     ExecutionFailed {
         contract_address: Addr,
         reason: String,
     },
     ExecutionSkipped {
+        contract_address: Addr,
+        reason: String,
+    },
+    SchedulingSucceeded {
+        contract_address: Addr,
+        conditions: Vec<Condition>,
+    },
+    SchedulingFailed {
+        contract_address: Addr,
+        reason: String,
+    },
+    SchedulingSkipped {
         contract_address: Addr,
         reason: String,
     },
@@ -215,7 +243,7 @@ impl From<DomainEvent> for Event {
             DomainEvent::FundsDeposited {
                 contract_address,
                 from,
-                amount,
+                funds: amount,
             } => Event::new("funds_deposited")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("from", from.as_str())
@@ -223,15 +251,17 @@ impl From<DomainEvent> for Event {
             DomainEvent::FundsWithdrawn {
                 contract_address,
                 to,
-                amount,
+                funds: amount,
             } => Event::new("funds_withdrawn")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("to", to.as_str())
                 .add_attribute("amount", format!("{:?}", amount)),
-            DomainEvent::ExecutionSucceeded { contract_address } => {
-                Event::new("execution_succeeded")
-                    .add_attribute("contract_address", contract_address.as_str())
-            }
+            DomainEvent::ExecutionSucceeded {
+                contract_address,
+                statistics,
+            } => Event::new("execution_succeeded")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("statistics", format!("{:?}", statistics)),
             DomainEvent::ExecutionFailed {
                 contract_address,
                 reason: error,
@@ -242,6 +272,24 @@ impl From<DomainEvent> for Event {
                 contract_address,
                 reason,
             } => Event::new("execution_skipped")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("reason", reason),
+            DomainEvent::SchedulingSucceeded {
+                contract_address,
+                conditions,
+            } => Event::new("scheduling_succeeded")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("conditions", format!("{:?}", conditions)),
+            DomainEvent::SchedulingFailed {
+                contract_address,
+                reason: error,
+            } => Event::new("scheduling_failed")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("error", error),
+            DomainEvent::SchedulingSkipped {
+                contract_address,
+                reason,
+            } => Event::new("scheduling_skipped")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("reason", reason),
         }

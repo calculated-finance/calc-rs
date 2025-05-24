@@ -46,11 +46,9 @@ pub fn execute(
                 None,
             );
 
-            triggers
+            let x = triggers
                 .iter()
-                .map(|trigger| {
-                    delete_trigger(deps.storage, trigger.id);
-                })
+                .map(|trigger| delete_trigger(deps.storage, trigger.id))
                 .collect::<Vec<_>>();
 
             Ok(Response::default())

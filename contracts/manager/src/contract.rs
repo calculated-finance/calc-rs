@@ -3,13 +3,13 @@ use calc_rs::{
         FactoryExecuteMsg, FactoryInstantiateMsg, FactoryQueryMsg, StrategyExecuteMsg,
         StrategyInstantiateMsg,
     },
-    types::{ContractError, ContractResult, DomainEvent, Status},
+    types::{ContractResult, Status},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response,
-    StdError, StdResult, WasmMsg,
+    StdResult, WasmMsg,
 };
 
 use crate::{
@@ -90,7 +90,7 @@ pub fn execute(
                 funds: info.funds,
             }))
         }
-        FactoryExecuteMsg::UpdateStatus { status, reason } => {
+        FactoryExecuteMsg::UpdateStatus { status } => {
             update_strategy_status(
                 deps.storage,
                 UpdateStrategyStatusCommand {
@@ -100,20 +100,7 @@ pub fn execute(
                 },
             )?;
 
-            Ok(Response::default().add_event(match status {
-                Status::Active => DomainEvent::StrategyResumed {
-                    contract_address: info.sender,
-                },
-                Status::Paused => DomainEvent::StrategyPaused {
-                    contract_address: info.sender,
-                    reason,
-                },
-                _ => {
-                    return Err(ContractError::Std(StdError::generic_err(
-                        "Strategies cannot mark themselves as archived",
-                    )))
-                }
-            }))
+            Ok(Response::default())
         }
     }
 }

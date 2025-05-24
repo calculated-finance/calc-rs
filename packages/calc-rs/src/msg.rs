@@ -22,7 +22,6 @@ pub enum FactoryExecuteMsg {
     },
     UpdateStatus {
         status: Status,
-        reason: String,
     },
 }
 

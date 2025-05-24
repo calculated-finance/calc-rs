@@ -10,6 +10,7 @@ pub trait Runnable {
     fn handle_execute_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
     fn can_schedule(&self, deps: Deps, env: Env) -> Result<(), String>;
     fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult;
+    fn handle_schedule_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
     fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult;
     fn pause(&self, deps: Deps, env: Env) -> ContractResult;
     fn statistics(&self) -> StrategyStatistics;
@@ -60,6 +61,15 @@ impl Runnable for StrategyConfig {
     fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult {
         match self {
             StrategyConfig::Dca(s) => s.schedule(deps, env),
+            StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
+                StdError::generic_err("New strategy not implemented"),
+            )),
+        }
+    }
+
+    fn handle_schedule_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
+        match self {
+            StrategyConfig::Dca(s) => s.handle_schedule_reply(deps, env, reply),
             StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
                 StdError::generic_err("New strategy not implemented"),
             )),
