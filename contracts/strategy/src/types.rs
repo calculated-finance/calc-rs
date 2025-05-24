@@ -1,26 +1,30 @@
-use calc_rs::types::{ContractError, ContractResult, StrategyConfig};
-use cosmwasm_std::{Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult};
+use calc_rs::types::{
+    ContractError, ContractResult, NewStatistics, StrategyConfig, StrategyStatistics,
+};
+use cosmwasm_std::{Coin, Deps, DepsMut, Env, MessageInfo, Reply, StdError, Uint128};
 
-pub trait Validatable {
-    fn validate(&self, deps: Deps, info: MessageInfo) -> StdResult<()>;
-}
-
-impl Validatable for StrategyConfig {
-    fn validate(&self, deps: Deps, info: MessageInfo) -> StdResult<()> {
-        match self {
-            StrategyConfig::Dca(s) => s.validate(deps, info),
-            StrategyConfig::New(_) => Err(StdError::generic_err("New strategy not implemented")),
-        }
-    }
-}
-
-pub trait Executable {
+pub trait Runnable {
+    fn initialize(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult;
     fn can_execute(&self, deps: Deps, env: Env) -> Result<(), String>;
     fn execute(&self, deps: Deps, env: Env) -> ContractResult;
-    fn handle_reply(&self, env: Env, reply: Reply) -> ContractResult;
+    fn handle_execute_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
+    fn can_schedule(&self, deps: Deps, env: Env) -> Result<(), String>;
+    fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult;
+    fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult;
+    fn pause(&self, deps: Deps, env: Env) -> ContractResult;
+    fn statistics(&self) -> StrategyStatistics;
 }
 
-impl Executable for StrategyConfig {
+impl Runnable for StrategyConfig {
+    fn initialize(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult {
+        match self {
+            StrategyConfig::Dca(s) => s.initialize(deps, env, info),
+            StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
+                StdError::generic_err("New strategy not implemented"),
+            )),
+        }
+    }
+
     fn can_execute(&self, deps: Deps, env: Env) -> Result<(), String> {
         match self {
             StrategyConfig::Dca(s) => s.can_execute(deps, env),
@@ -37,22 +41,15 @@ impl Executable for StrategyConfig {
         }
     }
 
-    fn handle_reply(&self, env: Env, reply: Reply) -> ContractResult {
+    fn handle_execute_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
         match self {
-            StrategyConfig::Dca(s) => s.handle_reply(env, reply),
+            StrategyConfig::Dca(s) => s.handle_execute_reply(deps, env, reply),
             StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
                 StdError::generic_err("New strategy not implemented"),
             )),
         }
     }
-}
 
-pub trait Schedulable {
-    fn can_schedule(&self, deps: Deps, env: Env) -> Result<(), String>;
-    fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult;
-}
-
-impl Schedulable for StrategyConfig {
     fn can_schedule(&self, deps: Deps, env: Env) -> Result<(), String> {
         match self {
             StrategyConfig::Dca(s) => s.can_schedule(deps, env),
@@ -68,13 +65,7 @@ impl Schedulable for StrategyConfig {
             )),
         }
     }
-}
 
-pub trait Withdrawable {
-    fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult;
-}
-
-impl Withdrawable for StrategyConfig {
     fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult {
         match self {
             StrategyConfig::Dca(s) => s.withdraw(deps, env, denoms),
@@ -83,19 +74,25 @@ impl Withdrawable for StrategyConfig {
             )),
         }
     }
-}
 
-pub trait Pausable {
-    fn pause(&self, deps: Deps, env: Env) -> ContractResult;
-}
-
-impl Pausable for StrategyConfig {
     fn pause(&self, deps: Deps, env: Env) -> ContractResult {
         match self {
             StrategyConfig::Dca(s) => s.pause(deps, env),
             StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
                 StdError::generic_err("New strategy not implemented"),
             )),
+        }
+    }
+
+    fn statistics(&self) -> StrategyStatistics {
+        match self {
+            StrategyConfig::Dca(s) => s.statistics(),
+            StrategyConfig::New(_) => StrategyStatistics::New(NewStatistics {
+                amount: Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::zero(),
+                },
+            }),
         }
     }
 }

@@ -1,7 +1,7 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, Binary, Coin, CosmosMsg, Event, Instantiate2AddressError, Response, StdError, StdResult,
-    Timestamp, WasmMsg,
+    Addr, Binary, CheckedMultiplyRatioError, Coin, CosmosMsg, Event, Instantiate2AddressError,
+    Response, StdError, StdResult, Timestamp, Uint128, WasmMsg,
 };
 use rujira_rs::CallbackData;
 use thiserror::Error;
@@ -14,11 +14,14 @@ pub enum ContractError {
     #[error("{0}")]
     Instantiate2Address(#[from] Instantiate2AddressError),
 
+    #[error("{0}")]
+    CheckedMultiplyRatioError(#[from] CheckedMultiplyRatioError),
+
     #[error("Unauthorized")]
     Unauthorized {},
 }
 
-pub type ContractResult = core::result::Result<Response, ContractError>;
+pub type ContractResult = Result<Response, ContractError>;
 
 #[cw_serde]
 pub enum Condition {
@@ -60,6 +63,31 @@ pub struct Trigger {
 }
 
 #[cw_serde]
+pub struct DcaStatistics {
+    pub amount_deposited: Coin,
+    pub amount_withdrawn: Coin,
+    pub amount_swapped: Coin,
+    pub amount_received: Coin,
+}
+
+#[cw_serde]
+pub struct NewStatistics {
+    pub amount: Coin,
+}
+
+pub enum StrategyStatistics {
+    Dca(DcaStatistics),
+    New(NewStatistics),
+}
+
+#[cw_serde]
+pub struct Destination {
+    pub address: Addr,
+    pub shares: Uint128,
+    pub label: Option<String>,
+}
+
+#[cw_serde]
 pub struct DcaStrategy {
     pub owner: Addr,
     pub swap_amount: Coin,
@@ -67,7 +95,11 @@ pub struct DcaStrategy {
     pub interval_blocks: u64,
     pub exchange_contract: Addr,
     pub scheduler_contract: Addr,
+    pub fee_collector: Addr,
     pub conditions: Vec<Condition>,
+    pub mutable_destinations: Vec<Destination>,
+    pub immutable_destinations: Vec<Destination>,
+    pub statistics: DcaStatistics,
 }
 
 #[cw_serde]

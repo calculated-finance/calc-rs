@@ -1,28 +1,21 @@
 use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
-use calc_rs::types::{ContractError, ContractResult, DomainEvent};
+use calc_rs::types::{ContractError, ContractResult};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdResult,
-};
+use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdResult};
 
-use crate::state::{FACTORY, STRATEGY};
-use crate::types::{Executable, Pausable, Schedulable, Validatable, Withdrawable};
+use crate::state::{CONFIG, FACTORY};
+use crate::types::Runnable;
 
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
     FACTORY.save(deps.storage, &info.sender)?;
-    msg.strategy.validate(deps.as_ref(), info)?;
-    STRATEGY.save(deps.storage, &msg.strategy)?;
-    Ok(Response::default().add_event(DomainEvent::StrategyCreated {
-        contract_address: _env.contract.address,
-        config: msg.strategy,
-    }))
+    msg.strategy.clone().initialize(deps, env, info)
 }
 
 #[entry_point]
@@ -36,7 +29,7 @@ pub fn execute(
         return Err(ContractError::Unauthorized {});
     }
 
-    let strategy = STRATEGY.load(deps.storage)?;
+    let strategy = CONFIG.load(deps.storage)?;
 
     match msg {
         StrategyExecuteMsg::Execute {} => strategy.execute(deps.as_ref(), env),
@@ -48,15 +41,17 @@ pub fn execute(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
-    STRATEGY.load(deps.storage)?.handle_reply(env, reply)
+    CONFIG
+        .load(deps.storage)?
+        .handle_execute_reply(deps, env, reply)
 }
 
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     match msg {
-        StrategyQueryMsg::Config {} => to_json_binary(&STRATEGY.load(deps.storage)?),
+        StrategyQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         StrategyQueryMsg::CanExecute {} => {
-            to_json_binary(&STRATEGY.load(deps.storage)?.can_execute(deps, env).is_ok())
+            to_json_binary(&CONFIG.load(deps.storage)?.can_execute(deps, env).is_ok())
         }
     }
 }
