@@ -1,16 +1,13 @@
 use calc_rs::types::{
     ContractError, ContractResult, NewStatistics, StrategyConfig, StrategyStatistics,
 };
-use cosmwasm_std::{Coin, Deps, DepsMut, Env, MessageInfo, Reply, StdError, Uint128};
+use cosmwasm_std::{Coin, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult, Uint128};
 
 pub trait Runnable {
     fn initialize(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult;
-    fn can_execute(&self, deps: Deps, env: Env) -> Result<(), String>;
-    fn execute(&self, deps: Deps, env: Env) -> ContractResult;
-    fn handle_execute_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
-    fn can_schedule(&self, deps: Deps, env: Env) -> Result<(), String>;
-    fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult;
-    fn handle_schedule_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
+    fn can_execute(&self, deps: Deps, env: Env) -> StdResult<()>;
+    fn execute(&self, deps: DepsMut, env: Env) -> ContractResult;
+    fn handle_reply(&mut self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
     fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult;
     fn pause(&self, deps: Deps, env: Env) -> ContractResult;
     fn statistics(&self) -> StrategyStatistics;
@@ -26,14 +23,16 @@ impl Runnable for StrategyConfig {
         }
     }
 
-    fn can_execute(&self, deps: Deps, env: Env) -> Result<(), String> {
+    fn can_execute(&self, deps: Deps, env: Env) -> StdResult<()> {
         match self {
             StrategyConfig::Dca(s) => s.can_execute(deps, env),
-            StrategyConfig::New(_) => Err("New strategy not implemented".to_string()),
+            StrategyConfig::New(_) => Err(StdError::generic_err(
+                "New strategy not implemented".to_string(),
+            )),
         }
     }
 
-    fn execute(&self, deps: Deps, env: Env) -> ContractResult {
+    fn execute(&self, deps: DepsMut, env: Env) -> ContractResult {
         match self {
             StrategyConfig::Dca(s) => s.execute(deps, env),
             StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
@@ -42,34 +41,9 @@ impl Runnable for StrategyConfig {
         }
     }
 
-    fn handle_execute_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
+    fn handle_reply(&mut self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
         match self {
-            StrategyConfig::Dca(s) => s.handle_execute_reply(deps, env, reply),
-            StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
-                StdError::generic_err("New strategy not implemented"),
-            )),
-        }
-    }
-
-    fn can_schedule(&self, deps: Deps, env: Env) -> Result<(), String> {
-        match self {
-            StrategyConfig::Dca(s) => s.can_schedule(deps, env),
-            StrategyConfig::New(_) => Err("New strategy not implemented".to_string()),
-        }
-    }
-
-    fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult {
-        match self {
-            StrategyConfig::Dca(s) => s.schedule(deps, env),
-            StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
-                StdError::generic_err("New strategy not implemented"),
-            )),
-        }
-    }
-
-    fn handle_schedule_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
-        match self {
-            StrategyConfig::Dca(s) => s.handle_schedule_reply(deps, env, reply),
+            StrategyConfig::Dca(s) => s.handle_reply(deps, env, reply),
             StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(
                 StdError::generic_err("New strategy not implemented"),
             )),

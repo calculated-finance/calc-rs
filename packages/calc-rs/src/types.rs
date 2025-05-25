@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, Binary, CheckedMultiplyRatioError, Coin, CosmosMsg, Event, Instantiate2AddressError,
-    Response, StdError, StdResult, Timestamp, Uint128, WasmMsg,
+    Addr, Binary, CheckedMultiplyRatioError, Coin, CosmosMsg, Env, Event, Instantiate2AddressError,
+    OverflowError, Response, StdError, StdResult, Timestamp, Uint128, WasmMsg,
 };
 use rujira_rs::CallbackData;
 use thiserror::Error;
@@ -18,6 +18,9 @@ pub enum ContractError {
 
     #[error("{0}")]
     CheckedMultiplyRatioError(#[from] CheckedMultiplyRatioError),
+
+    #[error("{0}")]
+    OverflowError(#[from] OverflowError),
 
     #[error("Unauthorized")]
     Unauthorized {},
@@ -64,10 +67,37 @@ pub struct Trigger {
     pub to: Addr,
 }
 
+pub trait Executable {
+    fn can_execute(&self, env: Env) -> bool;
+    fn execute(&self, env: Env) -> ContractResult;
+}
+
+impl Executable for Trigger {
+    fn can_execute(&self, env: Env) -> bool {
+        match self.condition {
+            Condition::BlockHeight { height } => height > env.block.height,
+            Condition::LimitOrder { .. } => false,
+            Condition::Timestamp { timestamp } => timestamp > env.block.time,
+        }
+    }
+
+    fn execute(&self, env: Env) -> ContractResult {
+        if !self.can_execute(env) {
+            return Err(ContractError::Std(StdError::generic_err(format!(
+                "Condition not met: {:?}",
+                self.condition
+            ))));
+        }
+
+        Ok(Response::default().add_message(
+            Contract(self.to.clone()).call(self.callback.clone().into_json_binary(), vec![])?,
+        ))
+    }
+}
+
 #[cw_serde]
 pub struct DcaStatistics {
     pub amount_deposited: Coin,
-    pub amount_withdrawn: Coin,
     pub amount_swapped: Coin,
     pub amount_received: Coin,
 }

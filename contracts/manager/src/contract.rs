@@ -1,9 +1,9 @@
 use calc_rs::{
     msg::{
-        FactoryExecuteMsg, FactoryInstantiateMsg, FactoryQueryMsg, StrategyExecuteMsg,
+        FactoryExecuteMsg, FactoryInstantiateMsg, FactoryMigrateMsg, FactoryQueryMsg,
         StrategyInstantiateMsg,
     },
-    types::{ContractResult, Status},
+    types::{Contract, ContractResult, Status},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -27,6 +27,18 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: FactoryInstantiateMsg,
 ) -> ContractResult {
+    CONFIG.save(
+        deps.storage,
+        &Config {
+            checksum: msg.checksum,
+            code_id: msg.code_id,
+        },
+    )?;
+    Ok(Response::default())
+}
+
+#[entry_point]
+pub fn migrate(deps: DepsMut, _: Env, msg: FactoryMigrateMsg) -> ContractResult {
     CONFIG.save(
         deps.storage,
         &Config {
@@ -82,14 +94,11 @@ pub fn execute(
                 salt,
             }))
         }
-        FactoryExecuteMsg::Execute { contract_address } => {
-            // TODO: Handle reply and publish appropriate events here
-            Ok(Response::default().add_message(WasmMsg::Execute {
-                contract_addr: contract_address.to_string(),
-                msg: to_json_binary(&StrategyExecuteMsg::Execute {})?,
-                funds: info.funds,
-            }))
-        }
+        FactoryExecuteMsg::Proxy {
+            contract_address,
+            msg,
+        } => Ok(Response::default()
+            .add_message(Contract(contract_address).call(to_json_binary(&msg)?, info.funds)?)),
         FactoryExecuteMsg::UpdateStatus { status } => {
             update_strategy_status(
                 deps.storage,

@@ -2,9 +2,7 @@ use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg}
 use calc_rs::types::{ContractError, ContractResult};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult,
-};
+use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdResult};
 
 use crate::state::{CONFIG, FACTORY};
 use crate::types::Runnable;
@@ -34,29 +32,15 @@ pub fn execute(
     let strategy = CONFIG.load(deps.storage)?;
 
     match msg {
-        StrategyExecuteMsg::Execute {} => strategy.execute(deps.as_ref(), env),
-        StrategyExecuteMsg::Schedule {} => strategy.schedule(deps, env),
+        StrategyExecuteMsg::Execute {} => strategy.execute(deps, env),
         StrategyExecuteMsg::Withdraw { denoms } => strategy.withdraw(deps.as_ref(), env, denoms),
         StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), env),
     }
 }
 
-pub const EXECUTE_REPLY_ID: u64 = 1;
-pub const SCHEDULE_REPLY_ID: u64 = 2;
-
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
-    match reply.id {
-        EXECUTE_REPLY_ID => CONFIG
-            .load(deps.storage)?
-            .handle_execute_reply(deps, env, reply),
-        SCHEDULE_REPLY_ID => CONFIG
-            .load(deps.storage)?
-            .handle_schedule_reply(deps, env, reply),
-        _ => Err(ContractError::Std(StdError::generic_err(
-            "invalid reply id",
-        ))),
-    }
+    CONFIG.load(deps.storage)?.handle_reply(deps, env, reply)
 }
 
 #[entry_point]

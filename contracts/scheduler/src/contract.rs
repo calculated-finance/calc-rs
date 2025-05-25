@@ -1,12 +1,9 @@
 use calc_rs::msg::{SchedulerExecuteMsg, SchedulerQueryMsg};
-use calc_rs::types::{Condition, ConditionFilter, ContractResult};
+use calc_rs::types::{ConditionFilter, ContractResult, Executable};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response, StdResult,
-};
-use cw_storage_plus::Bound;
+use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
 
 use crate::state::{delete_trigger, fetch_triggers, save_trigger, triggers};
 
@@ -26,7 +23,7 @@ pub fn instantiate(
 #[entry_point]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: SchedulerExecuteMsg,
 ) -> ContractResult {
@@ -39,28 +36,36 @@ pub fn execute(
             save_trigger(deps.storage, info.sender, condition, callback, to)?;
             Ok(Response::default())
         }
-        SchedulerExecuteMsg::DeleteTriggers { owner } => {
+        SchedulerExecuteMsg::DeleteTriggers {} => {
             let triggers = fetch_triggers(
                 deps.as_ref(),
-                ConditionFilter::Owner { address: owner },
+                ConditionFilter::Owner {
+                    address: info.sender,
+                },
                 None,
             );
 
-            let x = triggers
-                .iter()
-                .map(|trigger| delete_trigger(deps.storage, trigger.id))
-                .collect::<Vec<_>>();
+            for trigger in triggers {
+                delete_trigger(deps.storage, trigger.id)?;
+            }
 
             Ok(Response::default())
+        }
+        SchedulerExecuteMsg::ExecuteTrigger { id } => {
+            let trigger = triggers().load(deps.storage, id)?;
+            return trigger.execute(env);
         }
     }
 }
 
 #[entry_point]
-pub fn query(deps: Deps, _env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
         SchedulerQueryMsg::Get { filter, limit } => {
             to_json_binary(&fetch_triggers(deps, filter, limit))
+        }
+        SchedulerQueryMsg::CanExecute { id } => {
+            to_json_binary(&triggers().load(deps.storage, id)?.can_execute(env))
         }
     }
 }

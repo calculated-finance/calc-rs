@@ -1,9 +1,13 @@
 use calc_rs::{
     math::checked_mul,
-    msg::{ExchangeExecuteMsg, FactoryExecuteMsg, SchedulerExecuteMsg, StrategyExecuteMsg},
+    msg::{
+        ExchangeExecuteMsg, FactoryExecuteMsg, SchedulerExecuteMsg, SchedulerQueryMsg,
+        StrategyExecuteMsg,
+    },
     types::{
-        Condition, Contract, ContractError, ContractResult, DcaSchedule, DcaStrategy, Destination,
-        DomainEvent, Status, StrategyConfig, StrategyStatistics,
+        Condition, ConditionFilter, Contract, ContractError, ContractResult, DcaSchedule,
+        DcaStatistics, DcaStrategy, Destination, DomainEvent, Executable, Status, StrategyConfig,
+        StrategyStatistics, Trigger,
     },
 };
 use cosmwasm_std::{
@@ -13,10 +17,47 @@ use cosmwasm_std::{
 use rujira_rs::CallbackData;
 
 use crate::{
-    contract::{EXECUTE_REPLY_ID, SCHEDULE_REPLY_ID},
     state::{CONFIG, FACTORY},
     types::Runnable,
 };
+
+pub const EXECUTE_REPLY_ID: u64 = 1;
+pub const SCHEDULE_REPLY_ID: u64 = 2;
+
+fn get_schedule_msg(strategy: DcaStrategy, deps: DepsMut, env: Env) -> StdResult<SubMsg> {
+    let condition = match strategy.schedule {
+        DcaSchedule::Blocks { interval, previous } => Condition::BlockHeight {
+            height: previous.unwrap_or(env.block.height) + interval,
+        },
+        DcaSchedule::Time { duration, previous } => Condition::Timestamp {
+            timestamp: previous
+                .unwrap_or(env.block.time)
+                .plus_seconds(duration.as_secs()),
+        },
+    };
+
+    CONFIG.save(
+        deps.storage,
+        &StrategyConfig::Dca(DcaStrategy {
+            conditions: vec![condition.clone()],
+            ..strategy.clone()
+        }),
+    )?;
+
+    let create_trigger_msg = Contract(strategy.scheduler_contract.clone()).call(
+        to_json_binary(&SchedulerExecuteMsg::CreateTrigger {
+            condition: condition.clone(),
+            to: FACTORY.load(deps.storage)?,
+            callback: CallbackData(to_json_binary(&FactoryExecuteMsg::Proxy {
+                contract_address: env.contract.address,
+                msg: StrategyExecuteMsg::Execute {},
+            })?),
+        })?,
+        vec![],
+    )?;
+
+    Ok(SubMsg::reply_always(create_trigger_msg, SCHEDULE_REPLY_ID))
+}
 
 impl Runnable for DcaStrategy {
     fn initialize(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult {
@@ -28,12 +69,33 @@ impl Runnable for DcaStrategy {
             )));
         }
 
+        let destinations = self
+            .mutable_destinations
+            .iter()
+            .chain(self.immutable_destinations.iter())
+            .collect::<Vec<_>>();
+
+        if destinations.is_empty() {
+            return Err(ContractError::Std(StdError::generic_err(
+                "Must provide at least one destination",
+            )));
+        }
+
+        if destinations.len() > 20 {
+            return Err(ContractError::Std(StdError::generic_err(
+                "Cannot provide more than 20 total destinations",
+            )));
+        }
+
+        for destination in destinations.clone() {
+            deps.api.addr_validate(&destination.address.to_string())?;
+        }
+
         let fee_destination = Destination {
             address: self.fee_collector.clone(),
             shares: checked_mul(
-                self.mutable_destinations
-                    .iter()
-                    .chain(self.immutable_destinations.iter())
+                destinations
+                    .into_iter()
                     .fold(Uint128::zero(), |acc, d| acc + d.shares),
                 Decimal::permille(25),
             )?,
@@ -54,251 +116,227 @@ impl Runnable for DcaStrategy {
         }))
     }
 
-    fn can_execute(&self, deps: Deps, env: Env) -> Result<(), String> {
-        match deps
+    fn can_execute(&self, deps: Deps, env: Env) -> StdResult<()> {
+        let balance = deps
             .querier
-            .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())
-        {
-            Ok(balance) => {
-                if balance.amount < self.swap_amount.amount {
-                    return Err(format!(
-                        "Insufficient balance of {}: {}",
-                        balance.denom, balance.amount
-                    ));
-                }
-                Ok(())
-            }
-            Err(e) => Err(format!(
-                "Error querying balance for denom {}: {}",
-                self.swap_amount.denom, e
-            )),
+            .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())?;
+
+        if balance.amount < self.swap_amount.amount {
+            return Err(StdError::generic_err(format!(
+                "Insufficient balance of {}: {}",
+                balance.denom, balance.amount
+            )));
         }
+
+        let triggers = deps.querier.query_wasm_smart::<Vec<Trigger>>(
+            self.scheduler_contract.clone(),
+            &SchedulerQueryMsg::Get {
+                filter: ConditionFilter::Owner {
+                    address: env.contract.address.clone(),
+                },
+                limit: None,
+            },
+        )?;
+
+        for trigger in triggers {
+            if !trigger.can_execute(env.clone()) {
+                return Err(StdError::generic_err(format!(
+                    "Condition for execution not met: {:?}",
+                    trigger.condition
+                )));
+            }
+        }
+
+        Ok(())
     }
 
-    fn execute(&self, deps: Deps, env: Env) -> ContractResult {
+    fn execute(&self, deps: DepsMut, env: Env) -> ContractResult {
         let mut sub_messages: Vec<SubMsg> = vec![];
-        let mut messages: Vec<WasmMsg> = vec![];
         let mut events: Vec<DomainEvent> = vec![];
 
-        match self.can_execute(deps, env.clone()) {
+        match self.can_execute(deps.as_ref(), env.clone()) {
             Ok(_) => {
-                let swap_msg = SubMsg::reply_always(
-                    Contract(self.exchange_contract.clone()).call(
-                        to_json_binary(&ExchangeExecuteMsg::Swap {
-                            minimum_receive_amount: self.minimum_receive_amount.clone(),
-                            route: None,
-                            callback: None,
-                        })?,
-                        vec![self.swap_amount.clone()],
-                    )?,
-                    EXECUTE_REPLY_ID,
-                );
+                let swap_msg = Contract(self.exchange_contract.clone()).call(
+                    to_json_binary(&ExchangeExecuteMsg::Swap {
+                        minimum_receive_amount: self.minimum_receive_amount.clone(),
+                        route: None,
+                        callback: None,
+                    })?,
+                    vec![self.swap_amount.clone()],
+                )?;
 
-                sub_messages.push(swap_msg);
-
-                let schedule_msg = WasmMsg::Execute {
-                    contract_addr: env.contract.address.to_string(),
-                    msg: to_json_binary(&StrategyExecuteMsg::Schedule {})?,
-                    funds: vec![],
-                };
-
-                messages.push(schedule_msg);
+                sub_messages.push(SubMsg::reply_always(swap_msg, EXECUTE_REPLY_ID));
             }
-            Err(reason) => {
+            Err(err) => {
+                sub_messages.push(get_schedule_msg(self.clone(), deps, env.clone())?);
+
                 events.push(DomainEvent::ExecutionSkipped {
                     contract_address: env.contract.address,
-                    reason,
+                    reason: err.to_string(),
                 });
             }
         }
 
         Ok(Response::new()
             .add_submessages(sub_messages)
-            .add_messages(messages)
             .add_events(events))
     }
 
-    fn handle_execute_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
+    fn handle_reply(&mut self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
+        let mut sub_messages: Vec<SubMsg> = vec![];
         let mut messages: Vec<CosmosMsg> = vec![];
         let mut events: Vec<DomainEvent> = vec![];
 
-        match reply.result {
-            SubMsgResult::Ok(_) => {
+        match reply.id {
+            EXECUTE_REPLY_ID => {
+                match reply.result {
+                    SubMsgResult::Ok(_) => {
+                        let swap_denom_balance = deps.querier.query_balance(
+                            env.contract.address.clone(),
+                            self.swap_amount.denom.clone(),
+                        )?;
+
+                        let target_denom_balance = deps.querier.query_balance(
+                            env.contract.address.clone(),
+                            self.minimum_receive_amount.denom.clone(),
+                        )?;
+
+                        let destinations = self
+                            .mutable_destinations
+                            .iter()
+                            .chain(self.immutable_destinations.iter());
+
+                        let total_shares = destinations
+                            .clone()
+                            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
+                        let send_messages = &mut destinations
+                            .map(|d| {
+                                BankMsg::Send {
+                                    to_address: d.address.to_string(),
+                                    amount: vec![Coin {
+                                        denom: target_denom_balance.denom.clone(),
+                                        amount: checked_mul(
+                                            target_denom_balance.amount,
+                                            Decimal::from_ratio(d.shares, total_shares),
+                                        )
+                                        .unwrap_or(Uint128::zero()),
+                                    }],
+                                }
+                                .into()
+                            })
+                            .collect::<Vec<CosmosMsg>>();
+
+                        messages.append(send_messages);
+
+                        self.statistics = DcaStatistics {
+                            amount_swapped: Coin {
+                                denom: swap_denom_balance.denom,
+                                amount: self.statistics.amount_swapped.amount.checked_add(
+                                    self.statistics
+                                        .amount_deposited
+                                        .amount
+                                        .checked_sub(self.statistics.amount_swapped.amount)?
+                                        .checked_sub(swap_denom_balance.amount)?,
+                                )?,
+                            },
+                            amount_received: Coin {
+                                denom: target_denom_balance.denom,
+                                amount: self
+                                    .statistics
+                                    .amount_received
+                                    .amount
+                                    .checked_add(target_denom_balance.amount)?,
+                            },
+                            ..self.statistics.clone()
+                        };
+
+                        CONFIG.save(deps.storage, &StrategyConfig::Dca(self.clone()))?;
+
+                        events.push(DomainEvent::ExecutionSucceeded {
+                            contract_address: env.contract.address.clone(),
+                            statistics: StrategyStatistics::Dca(self.statistics.clone()),
+                        });
+                    }
+                    SubMsgResult::Err(reason) => {
+                        events.push(DomainEvent::ExecutionFailed {
+                            contract_address: env.contract.address.clone(),
+                            reason,
+                        });
+                    }
+                }
+
                 let balance = deps
                     .querier
-                    .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())?;
+                    .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())
+                    .unwrap_or(Coin {
+                        denom: self.swap_amount.denom.clone(),
+                        amount: Uint128::zero(),
+                    });
 
-                let destinations = self
-                    .mutable_destinations
-                    .iter()
-                    .chain(self.immutable_destinations.iter());
+                // TODO: check if balance is below viable swap amount rather than 0
+                if balance.amount.is_zero() {
+                    let pause_strategy_msg = Contract(FACTORY.load(deps.storage)?).call(
+                        to_json_binary(&FactoryExecuteMsg::UpdateStatus {
+                            status: Status::Paused,
+                        })?,
+                        vec![],
+                    )?;
 
-                let total_shares = destinations
-                    .clone()
-                    .fold(Uint128::zero(), |acc, d| acc + d.shares);
+                    messages.push(pause_strategy_msg);
 
-                let send_messages = &mut destinations
-                    .map(|d| {
-                        BankMsg::Send {
-                            to_address: d.address.to_string(),
-                            amount: vec![Coin {
-                                denom: balance.denom.clone(),
-                                amount: checked_mul(
-                                    balance.amount,
-                                    Decimal::from_ratio(d.shares, total_shares),
-                                )
-                                .unwrap_or(Uint128::zero())
-                                .into(),
-                            }],
-                        }
-                        .into()
-                    })
-                    .collect::<Vec<CosmosMsg>>();
+                    let strategy_paused_event = DomainEvent::StrategyPaused {
+                        contract_address: env.contract.address.clone(),
+                        reason: "Insufficient balance to reschedule".into(),
+                    };
 
-                messages.append(send_messages);
+                    let scheduling_skipped_event = DomainEvent::SchedulingSkipped {
+                        contract_address: env.contract.address.clone(),
+                        reason: "Insufficient balance to reschedule".to_string(),
+                    };
 
-                events.push(DomainEvent::ExecutionSucceeded {
-                    contract_address: env.contract.address.clone(),
-                    statistics: StrategyStatistics::Dca(self.statistics.clone()),
-                });
-            }
-            SubMsgResult::Err(reason) => {
-                events.push(DomainEvent::ExecutionFailed {
-                    contract_address: env.contract.address.clone(),
-                    reason,
-                });
-            }
-        }
-
-        let schedule_msg = SubMsg::reply_always(
-            WasmMsg::Execute {
-                contract_addr: env.contract.address.to_string(),
-                msg: to_json_binary(&StrategyExecuteMsg::Schedule {})?,
-                funds: vec![],
-            },
-            SCHEDULE_REPLY_ID,
-        );
-
-        Ok(Response::new()
-            .add_submessage(schedule_msg)
-            .add_messages(messages)
-            .add_events(events))
-    }
-
-    fn can_schedule(&self, deps: Deps, env: Env) -> Result<(), String> {
-        match deps
-            .querier
-            .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())
-        {
-            Ok(balance) => {
-                if balance.amount < self.swap_amount.amount {
-                    return Err(format!(
-                        "Insufficient balance of {}: {}",
-                        balance.denom, balance.amount
-                    ));
+                    events.append(&mut vec![scheduling_skipped_event, strategy_paused_event])
+                } else {
+                    sub_messages.push(get_schedule_msg(self.clone(), deps, env.clone())?);
                 }
-                Ok(())
+
+                Ok(Response::new()
+                    .add_submessages(sub_messages)
+                    .add_messages(messages)
+                    .add_events(events))
             }
-            Err(e) => Err(format!(
-                "Error querying balance for denom {}: {}",
-                self.swap_amount.denom, e
-            )),
+            SCHEDULE_REPLY_ID => {
+                let mut events: Vec<DomainEvent> = vec![];
+
+                match reply.result {
+                    SubMsgResult::Ok(_) => {
+                        events.push(DomainEvent::SchedulingSucceeded {
+                            contract_address: env.contract.address.clone(),
+                            conditions: self.conditions.clone(),
+                        });
+                    }
+                    SubMsgResult::Err(reason) => {
+                        CONFIG.save(
+                            deps.storage,
+                            &StrategyConfig::Dca(DcaStrategy {
+                                conditions: vec![],
+                                ..self.clone()
+                            }),
+                        )?;
+
+                        events.push(DomainEvent::SchedulingFailed {
+                            contract_address: env.contract.address.clone(),
+                            reason,
+                        });
+                    }
+                }
+
+                Ok(Response::new().add_events(events))
+            }
+            _ => Err(ContractError::Std(StdError::generic_err(
+                "invalid reply id",
+            ))),
         }
-    }
-
-    fn schedule(&self, deps: DepsMut, env: Env) -> ContractResult {
-        let mut messages: Vec<WasmMsg> = vec![];
-        let mut events: Vec<DomainEvent> = vec![];
-
-        match self.can_schedule(deps.as_ref(), env.clone()) {
-            Ok(_) => {
-                let condition = match self.schedule {
-                    DcaSchedule::Blocks { interval, previous } => Condition::BlockHeight {
-                        height: previous.unwrap_or(env.block.height) + interval,
-                    },
-                    DcaSchedule::Time { duration, previous } => Condition::Timestamp {
-                        timestamp: previous
-                            .unwrap_or(env.block.time)
-                            .plus_seconds(duration.as_secs()),
-                    },
-                };
-
-                let create_trigger_msg = WasmMsg::Execute {
-                    contract_addr: self.scheduler_contract.to_string(),
-                    msg: to_json_binary(&SchedulerExecuteMsg::CreateTrigger {
-                        condition: condition.clone(),
-                        to: env.contract.address.clone(),
-                        callback: CallbackData(to_json_binary(&StrategyExecuteMsg::Execute {})?),
-                    })?,
-                    funds: vec![],
-                };
-
-                messages.push(create_trigger_msg);
-
-                CONFIG.save(
-                    deps.storage,
-                    &StrategyConfig::Dca(DcaStrategy {
-                        conditions: vec![condition],
-                        ..self.clone()
-                    }),
-                )?;
-            }
-            Err(reason) => {
-                CONFIG.save(
-                    deps.storage,
-                    &StrategyConfig::Dca(DcaStrategy {
-                        conditions: vec![],
-                        ..self.clone()
-                    }),
-                )?;
-
-                let pause_strategy_msg = WasmMsg::Execute {
-                    contract_addr: FACTORY.load(deps.storage)?.into_string(),
-                    msg: to_json_binary(&FactoryExecuteMsg::UpdateStatus {
-                        status: Status::Paused,
-                    })?,
-                    funds: vec![],
-                };
-
-                messages.push(pause_strategy_msg);
-
-                events.push(DomainEvent::SchedulingSkipped {
-                    contract_address: env.contract.address.clone(),
-                    reason,
-                })
-            }
-        };
-
-        Ok(Response::new().add_messages(messages).add_events(events))
-    }
-
-    fn handle_schedule_reply(&self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
-        let mut events: Vec<DomainEvent> = vec![];
-
-        match reply.result {
-            SubMsgResult::Ok(_) => {
-                events.push(DomainEvent::SchedulingSucceeded {
-                    contract_address: env.contract.address.clone(),
-                    conditions: self.conditions.clone(),
-                });
-            }
-            SubMsgResult::Err(reason) => {
-                CONFIG.save(
-                    deps.storage,
-                    &StrategyConfig::Dca(DcaStrategy {
-                        conditions: vec![],
-                        ..self.clone()
-                    }),
-                )?;
-
-                events.push(DomainEvent::SchedulingFailed {
-                    contract_address: env.contract.address.clone(),
-                    reason,
-                });
-            }
-        }
-
-        return Ok(Response::new().add_events(events));
     }
 
     fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult {
@@ -308,37 +346,28 @@ impl Runnable for DcaStrategy {
                 deps.querier
                     .query_balance(env.contract.address.clone(), denom.clone())
             })
-            .collect::<StdResult<Vec<_>>>()?;
+            .collect::<StdResult<Vec<Coin>>>()?;
 
         let send_assets_msg = BankMsg::Send {
             to_address: self.owner.to_string(),
             amount: funds.clone(),
         };
 
-        let pause_strategy_msg = WasmMsg::Execute {
-            contract_addr: FACTORY.load(deps.storage)?.into_string(),
-            msg: to_json_binary(&FactoryExecuteMsg::UpdateStatus {
-                status: Status::Paused,
-            })?,
-            funds: vec![],
+        let funds_withdrawn_event = DomainEvent::FundsWithdrawn {
+            contract_address: env.contract.address,
+            to: self.owner.clone(),
+            funds,
         };
 
         Ok(Response::default()
             .add_message(send_assets_msg)
-            .add_message(pause_strategy_msg)
-            .add_event(DomainEvent::FundsWithdrawn {
-                contract_address: env.contract.address,
-                to: self.owner.clone(),
-                funds,
-            }))
+            .add_event(funds_withdrawn_event))
     }
 
     fn pause(&self, deps: Deps, env: Env) -> ContractResult {
         let delete_conditions_msg = WasmMsg::Execute {
             contract_addr: self.scheduler_contract.to_string(),
-            msg: to_json_binary(&SchedulerExecuteMsg::DeleteTriggers {
-                owner: self.owner.clone(),
-            })?,
+            msg: to_json_binary(&SchedulerExecuteMsg::DeleteTriggers {})?,
             funds: vec![],
         };
 
@@ -350,12 +379,14 @@ impl Runnable for DcaStrategy {
             funds: vec![],
         };
 
+        let strategy_paused_event = DomainEvent::StrategyPaused {
+            contract_address: env.contract.address,
+            reason: "User requested pause".into(),
+        };
+
         Ok(Response::default()
             .add_messages(vec![delete_conditions_msg, pause_strategy_msg])
-            .add_event(DomainEvent::StrategyPaused {
-                contract_address: env.contract.address,
-                reason: "User requested pause".into(),
-            }))
+            .add_event(strategy_paused_event))
     }
 
     fn statistics(&self) -> StrategyStatistics {

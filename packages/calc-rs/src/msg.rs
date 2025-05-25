@@ -11,17 +11,24 @@ pub struct FactoryInstantiateMsg {
 }
 
 #[cw_serde]
+pub struct FactoryMigrateMsg {
+    pub checksum: HexBinary,
+    pub code_id: u64,
+}
+
+#[cw_serde]
 pub enum FactoryExecuteMsg {
     InstantiateStrategy {
         owner: Addr,
         label: String,
         strategy: StrategyConfig,
     },
-    Execute {
-        contract_address: Addr,
-    },
     UpdateStatus {
         status: Status,
+    },
+    Proxy {
+        contract_address: Addr,
+        msg: StrategyExecuteMsg,
     },
 }
 
@@ -47,7 +54,6 @@ pub struct StrategyInstantiateMsg {
 #[cw_serde]
 pub enum StrategyExecuteMsg {
     Execute {},
-    Schedule {},
     Withdraw { denoms: Vec<String> },
     Pause {},
 }
@@ -96,8 +102,9 @@ pub enum SchedulerExecuteMsg {
         to: Addr,
         callback: CallbackData,
     },
-    DeleteTriggers {
-        owner: Addr,
+    DeleteTriggers {},
+    ExecuteTrigger {
+        id: u64,
     },
 }
 
@@ -109,4 +116,6 @@ pub enum SchedulerQueryMsg {
         filter: ConditionFilter,
         limit: Option<usize>,
     },
+    #[returns(bool)]
+    CanExecute { id: u64 },
 }
