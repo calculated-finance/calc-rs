@@ -1083,7 +1083,7 @@ dependencies = [
 [[package]]
 name = "rujira-rs"
 version = "0.0.1"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=bde18fdb02b9b0213e43308c7ebf5b865886ac97#bde18fdb02b9b0213e43308c7ebf5b865886ac97"
+source = "git+https://gitlab.com/thorchain/rujira.git?rev=171f878c6e524cf5e2817e2fd6e7033bce8216f5#171f878c6e524cf5e2817e2fd6e7033bce8216f5"
 dependencies = [
  "anybuf",
  "cosmos-sdk-proto",
@@ -1295,9 +1295,11 @@ dependencies = [
  "cw-storage-plus",
  "cw-utils",
  "cw2",
+ "prost",
  "rujira-rs",
  "schemars",
  "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

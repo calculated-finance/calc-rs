@@ -6,7 +6,8 @@ use cosmwasm_std::{Coin, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdRe
 pub trait Runnable {
     fn initialize(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult;
     fn can_execute(&self, deps: Deps, env: Env) -> StdResult<()>;
-    fn execute(&self, deps: DepsMut, env: Env) -> ContractResult;
+    fn get_execution_fee(&self, deps: Deps, env: Env) -> StdResult<Coin>;
+    fn execute(&mut self, deps: DepsMut, env: Env) -> ContractResult;
     fn handle_reply(&mut self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
     fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<String>) -> ContractResult;
     fn pause(&self, deps: Deps, env: Env) -> ContractResult;
@@ -32,7 +33,16 @@ impl Runnable for StrategyConfig {
         }
     }
 
-    fn execute(&self, deps: DepsMut, env: Env) -> ContractResult {
+    fn get_execution_fee(&self, deps: Deps, env: Env) -> StdResult<Coin> {
+        match self {
+            StrategyConfig::Dca(s) => s.get_execution_fee(deps, env),
+            StrategyConfig::New(_) => Err(StdError::generic_err(
+                "New strategy not implemented".to_string(),
+            )),
+        }
+    }
+
+    fn execute(&mut self, deps: DepsMut, env: Env) -> ContractResult {
         match self {
             StrategyConfig::Dca(s) => s.execute(deps, env),
             StrategyConfig::New(_) => ContractResult::Err(ContractError::Std(

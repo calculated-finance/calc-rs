@@ -1,8 +1,10 @@
+use std::{cmp::min, str::FromStr};
+
 use calc_rs::{
     math::checked_mul,
     msg::{
-        ExchangeExecuteMsg, FactoryExecuteMsg, SchedulerExecuteMsg, SchedulerQueryMsg,
-        StrategyExecuteMsg,
+        ExchangeExecuteMsg, ExchangeQueryMsg, FactoryExecuteMsg, SchedulerExecuteMsg,
+        SchedulerQueryMsg, StrategyExecuteMsg,
     },
     types::{
         Condition, ConditionFilter, Contract, ContractError, ContractResult, DcaSchedule,
@@ -11,10 +13,15 @@ use calc_rs::{
     },
 };
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, Reply,
-    Response, StdError, StdResult, SubMsg, SubMsgResult, Uint128, WasmMsg,
+    to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo,
+    QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, SubMsgResult, Uint128, WasmMsg,
 };
-use rujira_rs::CallbackData;
+use prost::{DecodeError, EncodeError, Message};
+use rujira_rs::{
+    proto::types::{QueryNetworkRequest, QueryNetworkResponse},
+    Asset, CallbackData, NativeAsset,
+};
+use thiserror::Error;
 
 use crate::{
     state::{CONFIG, FACTORY},
@@ -23,6 +30,101 @@ use crate::{
 
 pub const EXECUTE_REPLY_ID: u64 = 1;
 pub const SCHEDULE_REPLY_ID: u64 = 2;
+
+#[derive(Error, Debug)]
+pub enum QueryError {
+    #[error("{0}")]
+    Std(#[from] StdError),
+
+    #[error("{0}")]
+    Encode(#[from] EncodeError),
+
+    #[error("{0}")]
+    Decode(#[from] DecodeError),
+}
+
+fn query_chain<T: Message + Default, U: Message + Default>(
+    querier: QuerierWrapper,
+    path: String,
+    req: U,
+) -> Result<T, QueryError> {
+    let mut buf = Vec::new();
+    req.encode(&mut buf)?;
+    let res = querier.query_grpc(path, Binary::from(buf))?.to_vec();
+    Ok(T::decode(&*res)?)
+}
+
+fn get_swap_amount_after_execution_fee(
+    deps: Deps,
+    env: Env,
+    strategy: &DcaStrategy,
+) -> StdResult<Coin> {
+    let execution_fee = strategy.get_execution_fee(deps, env.clone())?;
+
+    let balance = deps.querier.query_balance(
+        env.contract.address.clone(),
+        strategy.swap_amount.denom.clone(),
+    )?;
+
+    Ok(Coin {
+        denom: strategy.swap_amount.denom.clone(),
+        amount: min(
+            balance.amount.checked_sub(execution_fee.amount)?,
+            strategy.swap_amount.amount,
+        ),
+    })
+}
+
+fn get_gas_fee_amount(deps: Deps, env: Env, strategy: &DcaStrategy) -> StdResult<Coin> {
+    let network = query_chain::<QueryNetworkResponse, QueryNetworkRequest>(
+        deps.querier,
+        "/types.Query/Network".to_string(),
+        QueryNetworkRequest {
+            height: env.block.height.to_string(),
+        },
+    )
+    .map_err(|e| StdError::generic_err(format!("Unable to fetch network params: {:?}", e)))?;
+
+    let rune_price = Decimal::from_str(&network.rune_price_in_tor)?;
+    let native_tx_fee_rune = Decimal::from_str(&network.native_tx_fee_rune)?;
+
+    let gas_fee_in_usd = rune_price.checked_mul(native_tx_fee_rune)?;
+
+    let asset_price = deps.querier.query_wasm_smart::<Decimal>(
+        strategy.exchange_contract.clone(),
+        &ExchangeQueryMsg::GetUsdPrice {
+            asset: Asset::Native(NativeAsset::new(&strategy.swap_amount.denom)),
+        },
+    )?;
+
+    let swap_amount = get_swap_amount_after_execution_fee(deps, env.clone(), strategy)?;
+
+    let swap_amount_in_usd =
+        asset_price.checked_mul(Decimal::from_ratio(swap_amount.amount, Uint128::one()))?;
+
+    let gas_fee_amount = checked_mul(
+        swap_amount.amount,
+        gas_fee_in_usd
+            .checked_div(swap_amount_in_usd)
+            .map_err(|e| {
+                StdError::generic_err(format!(
+                    "Failed to calculate fee ratio from swap amount: {:?}",
+                    e
+                ))
+            })?,
+    )
+    .map_err(|e| {
+        StdError::generic_err(format!(
+            "Failed to calculate fee amount from fee ratio: {:?}",
+            e
+        ))
+    })?;
+
+    Ok(Coin {
+        denom: strategy.swap_amount.denom.clone(),
+        amount: gas_fee_amount,
+    })
+}
 
 fn get_schedule_msg(strategy: DcaStrategy, deps: DepsMut, env: Env) -> StdResult<SubMsg> {
     let condition = match strategy.schedule {
@@ -117,14 +219,12 @@ impl Runnable for DcaStrategy {
     }
 
     fn can_execute(&self, deps: Deps, env: Env) -> StdResult<()> {
-        let balance = deps
-            .querier
-            .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())?;
+        let swap_amount = get_swap_amount_after_execution_fee(deps, env.clone(), self)?;
 
-        if balance.amount < self.swap_amount.amount {
+        if swap_amount.amount.is_zero() {
             return Err(StdError::generic_err(format!(
-                "Insufficient balance of {}: {}",
-                balance.denom, balance.amount
+                "Insufficient swap amount of {} ({}) to cover gas fees",
+                self.swap_amount.denom, swap_amount.amount
             )));
         }
 
@@ -150,19 +250,26 @@ impl Runnable for DcaStrategy {
         Ok(())
     }
 
-    fn execute(&self, deps: DepsMut, env: Env) -> ContractResult {
+    fn get_execution_fee(&self, deps: Deps, env: Env) -> StdResult<Coin> {
+        Ok(get_gas_fee_amount(deps, env.clone(), self)?)
+    }
+
+    fn execute(&mut self, deps: DepsMut, env: Env) -> ContractResult {
         let mut sub_messages: Vec<SubMsg> = vec![];
         let mut events: Vec<DomainEvent> = vec![];
 
         match self.can_execute(deps.as_ref(), env.clone()) {
             Ok(_) => {
+                let swap_amount =
+                    get_swap_amount_after_execution_fee(deps.as_ref(), env.clone(), self)?;
+
                 let swap_msg = Contract(self.exchange_contract.clone()).call(
                     to_json_binary(&ExchangeExecuteMsg::Swap {
                         minimum_receive_amount: self.minimum_receive_amount.clone(),
                         route: None,
                         callback: None,
                     })?,
-                    vec![self.swap_amount.clone()],
+                    vec![swap_amount],
                 )?;
 
                 sub_messages.push(SubMsg::reply_always(swap_msg, EXECUTE_REPLY_ID));
@@ -191,11 +298,6 @@ impl Runnable for DcaStrategy {
             EXECUTE_REPLY_ID => {
                 match reply.result {
                     SubMsgResult::Ok(_) => {
-                        let swap_denom_balance = deps.querier.query_balance(
-                            env.contract.address.clone(),
-                            self.swap_amount.denom.clone(),
-                        )?;
-
                         let target_denom_balance = deps.querier.query_balance(
                             env.contract.address.clone(),
                             self.minimum_receive_amount.denom.clone(),
@@ -228,6 +330,11 @@ impl Runnable for DcaStrategy {
                             .collect::<Vec<CosmosMsg>>();
 
                         messages.append(send_messages);
+
+                        let swap_denom_balance = deps.querier.query_balance(
+                            env.contract.address.clone(),
+                            self.swap_amount.denom.clone(),
+                        )?;
 
                         self.statistics = DcaStatistics {
                             amount_swapped: Coin {
@@ -266,38 +373,32 @@ impl Runnable for DcaStrategy {
                     }
                 }
 
-                let balance = deps
-                    .querier
-                    .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())
-                    .unwrap_or(Coin {
-                        denom: self.swap_amount.denom.clone(),
-                        amount: Uint128::zero(),
-                    });
+                match self.can_execute(deps.as_ref(), env.clone()) {
+                    Ok(_) => {
+                        sub_messages.push(get_schedule_msg(self.clone(), deps, env.clone())?);
+                    }
+                    Err(_) => {
+                        let pause_strategy_msg = Contract(FACTORY.load(deps.storage)?).call(
+                            to_json_binary(&FactoryExecuteMsg::UpdateStatus {
+                                status: Status::Paused,
+                            })?,
+                            vec![],
+                        )?;
 
-                // TODO: check if balance is below viable swap amount rather than 0
-                if balance.amount.is_zero() {
-                    let pause_strategy_msg = Contract(FACTORY.load(deps.storage)?).call(
-                        to_json_binary(&FactoryExecuteMsg::UpdateStatus {
-                            status: Status::Paused,
-                        })?,
-                        vec![],
-                    )?;
+                        messages.push(pause_strategy_msg);
 
-                    messages.push(pause_strategy_msg);
+                        let strategy_paused_event = DomainEvent::StrategyPaused {
+                            contract_address: env.contract.address.clone(),
+                            reason: "Insufficient balance to reschedule".into(),
+                        };
 
-                    let strategy_paused_event = DomainEvent::StrategyPaused {
-                        contract_address: env.contract.address.clone(),
-                        reason: "Insufficient balance to reschedule".into(),
-                    };
+                        let scheduling_skipped_event = DomainEvent::SchedulingSkipped {
+                            contract_address: env.contract.address.clone(),
+                            reason: "Insufficient balance to reschedule".to_string(),
+                        };
 
-                    let scheduling_skipped_event = DomainEvent::SchedulingSkipped {
-                        contract_address: env.contract.address.clone(),
-                        reason: "Insufficient balance to reschedule".to_string(),
-                    };
-
-                    events.append(&mut vec![scheduling_skipped_event, strategy_paused_event])
-                } else {
-                    sub_messages.push(get_schedule_msg(self.clone(), deps, env.clone())?);
+                        events.append(&mut vec![scheduling_skipped_event, strategy_paused_event])
+                    }
                 }
 
                 Ok(Response::new()

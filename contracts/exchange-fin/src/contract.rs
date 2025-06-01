@@ -10,6 +10,8 @@ use cosmwasm_std::{
 use rujira_rs::fin::{
     BookResponse, ExecuteMsg as FinExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
 };
+use rujira_rs::query::Pool;
+use rujira_rs::{Asset, Layer1Asset};
 
 use crate::state::{delete_pair, find_pair, save_pair, ADMIN};
 use crate::types::{Pair, PositionType};
@@ -73,7 +75,10 @@ pub fn execute(
                     }))?,
                     info.funds,
                 )?)),
-                Err(_) => Err(ContractError::Std(StdError::generic_err("Pair not found"))),
+                Err(_) => Err(ContractError::Std(StdError::generic_err(format!(
+                    "Pair not found between {} and {}",
+                    info.funds[0].denom, minimum_receive_amount.denom
+                )))),
             }
         }
         ExchangeExecuteMsg::Custom(custom_msg) => {
@@ -166,6 +171,40 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
                 })
             }
             Err(_) => Err(StdError::generic_err("Pair not found")),
+        },
+        ExchangeQueryMsg::GetUsdPrice { asset } => match asset {
+            Asset::Native(asset) => {
+                let oracle = Layer1Asset::from_native(asset.denom_string().to_ascii_uppercase())
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Unable to build layer 1 asset from native asset {:?}: {:?}",
+                            asset, e
+                        ))
+                    })?;
+
+                let pool = Pool::load(deps.querier, &oracle).map_err(|e| {
+                    StdError::generic_err(format!(
+                        "Unable to load pool from layer 1 asset {:?}: {:?}",
+                        oracle, e
+                    ))
+                })?;
+
+                to_json_binary(&pool.asset_tor_price)
+            }
+            Asset::Layer1(asset) => {
+                let pool = Pool::load(deps.querier, &asset).map_err(|e| {
+                    StdError::generic_err(format!(
+                        "Unable to load pool from layer 1 asset {:?}: {:?}",
+                        asset, e
+                    ))
+                })?;
+
+                to_json_binary(&pool.asset_tor_price)
+            }
+            _ => Err(StdError::generic_err(format!(
+                "Fetching USD price unsupported for asset: {:?}",
+                asset
+            ))),
         },
     }
 }

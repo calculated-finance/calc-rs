@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, Binary, CheckedMultiplyRatioError, Coin, CosmosMsg, Env, Event, Instantiate2AddressError,
-    OverflowError, Response, StdError, StdResult, Timestamp, Uint128, WasmMsg,
+    Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CosmosMsg, Env, Event,
+    Instantiate2AddressError, OverflowError, Response, StdError, StdResult, Timestamp, Uint128,
+    WasmMsg,
 };
 use rujira_rs::CallbackData;
 use thiserror::Error;
@@ -21,6 +22,9 @@ pub enum ContractError {
 
     #[error("{0}")]
     OverflowError(#[from] OverflowError),
+
+    #[error("{0}")]
+    CheckedFromRatioError(#[from] CheckedFromRatioError),
 
     #[error("Unauthorized")]
     Unauthorized {},

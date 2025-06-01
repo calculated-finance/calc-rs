@@ -2,7 +2,9 @@ use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg}
 use calc_rs::types::{ContractError, ContractResult};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdResult};
+use cosmwasm_std::{
+    to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdResult,
+};
 
 use crate::state::{CONFIG, FACTORY};
 use crate::types::Runnable;
@@ -29,10 +31,23 @@ pub fn execute(
         return Err(ContractError::Unauthorized {});
     }
 
-    let strategy = CONFIG.load(deps.storage)?;
+    let mut strategy = CONFIG.load(deps.storage)?;
 
     match msg {
-        StrategyExecuteMsg::Execute {} => strategy.execute(deps, env),
+        StrategyExecuteMsg::Execute {} => {
+            let execution_fee = strategy.get_execution_fee(deps.as_ref(), env.clone())?;
+
+            if execution_fee.amount.is_zero() {
+                return Ok(strategy.execute(deps, env)?);
+            }
+
+            Ok(strategy.execute(deps, env).map(|response| {
+                response.add_message(BankMsg::Send {
+                    to_address: info.sender.to_string(),
+                    amount: vec![execution_fee],
+                })
+            })?)
+        }
         StrategyExecuteMsg::Withdraw { denoms } => strategy.withdraw(deps.as_ref(), env, denoms),
         StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), env),
     }

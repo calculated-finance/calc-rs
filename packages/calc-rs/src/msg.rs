@@ -1,6 +1,6 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Decimal, HexBinary};
-use rujira_rs::CallbackData;
+use rujira_rs::{Asset, CallbackData};
 
 use crate::types::{Condition, ConditionFilter, Status, Strategy, StrategyConfig, Trigger};
 
@@ -93,6 +93,8 @@ pub enum ExchangeQueryMsg {
         target_denom: String,
         route: Option<Binary>,
     },
+    #[returns(Decimal)]
+    GetUsdPrice { asset: Asset },
 }
 
 #[cw_serde]
