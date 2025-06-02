@@ -1,35 +1,30 @@
 use calc_rs::{
     msg::{
-        FactoryExecuteMsg, FactoryInstantiateMsg, FactoryMigrateMsg, FactoryQueryMsg,
-        StrategyInstantiateMsg,
+        ManagerExecuteMsg, ManagerInstantiateMsg, ManagerMigrateMsg, ManagerQueryMsg,
+        StrategyExecuteMsg, StrategyInstantiateMsg,
     },
-    types::{Contract, ContractResult, Status},
+    types::{Contract, ContractError, ContractResult, ManagerConfig, Status, Strategy},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response,
-    StdResult, WasmMsg,
+    instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response,
+    StdError, StdResult, WasmMsg,
 };
+use cw_storage_plus::Bound;
 
-use crate::{
-    state::{
-        create_strategy_handle, get_config, update_strategy_status, CreateStrategyHandleCommand,
-        UpdateStrategyStatusCommand, CONFIG, STRATEGY_COUNTER,
-    },
-    types::Config,
-};
+use crate::state::{strategy_store, AFFILIATES, CONFIG, STRATEGY_COUNTER};
 
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
-    msg: FactoryInstantiateMsg,
+    msg: ManagerInstantiateMsg,
 ) -> ContractResult {
     CONFIG.save(
         deps.storage,
-        &Config {
+        &ManagerConfig {
             checksum: msg.checksum,
             code_id: msg.code_id,
         },
@@ -38,10 +33,10 @@ pub fn instantiate(
 }
 
 #[entry_point]
-pub fn migrate(deps: DepsMut, _: Env, msg: FactoryMigrateMsg) -> ContractResult {
+pub fn migrate(deps: DepsMut, _: Env, msg: ManagerMigrateMsg) -> ContractResult {
     CONFIG.save(
         deps.storage,
-        &Config {
+        &ManagerConfig {
             checksum: msg.checksum,
             code_id: msg.code_id,
         },
@@ -54,15 +49,15 @@ pub fn execute(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: FactoryExecuteMsg,
+    msg: ManagerExecuteMsg,
 ) -> ContractResult {
     match msg.clone() {
-        FactoryExecuteMsg::InstantiateStrategy {
+        ManagerExecuteMsg::InstantiateStrategy {
             owner,
             label,
             strategy,
         } => {
-            let config = get_config(deps.storage)?;
+            let config = CONFIG.load(deps.storage)?;
 
             let salt = to_json_binary(&(
                 env.block.time.seconds(),
@@ -71,17 +66,27 @@ pub fn execute(
                 STRATEGY_COUNTER.load(deps.storage)?,
             ))?;
 
-            create_strategy_handle(
+            let contract_address = deps.api.addr_humanize(&instantiate2_address(
+                &config.checksum,
+                &deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                &salt,
+            )?)?;
+
+            let strategy_id = STRATEGY_COUNTER.may_load(deps.storage)?.unwrap_or_default() + 1;
+            STRATEGY_COUNTER.save(deps.storage, &strategy_id)?;
+
+            strategy_store().save(
                 deps.storage,
-                CreateStrategyHandleCommand {
+                contract_address.clone(),
+                &Strategy {
                     owner: owner.clone(),
-                    contract_address: deps.api.addr_humanize(&instantiate2_address(
-                        &config.checksum,
-                        &deps.api.addr_canonicalize(env.contract.address.as_str())?,
-                        &salt,
-                    )?)?,
-                    status: Status::Active,
+                    contract_address,
+                    created_at: env.block.time.seconds(),
                     updated_at: env.block.time.seconds(),
+                    executions: 0,
+                    label: label.clone(),
+                    status: Status::Active,
+                    affiliates: Vec::new(),
                 },
             )?;
 
@@ -94,35 +99,137 @@ pub fn execute(
                 salt,
             }))
         }
-        FactoryExecuteMsg::Proxy {
+        ManagerExecuteMsg::ExecuteStrategy { contract_address } => Ok(Response::default()
+            .add_message(Contract(contract_address).call(
+                to_json_binary(&StrategyExecuteMsg::Execute {
+                    executor: info.sender.clone(),
+                })?,
+                info.funds,
+            )?)),
+        ManagerExecuteMsg::PauseStrategy { contract_address } => {
+            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+
+            if strategy.owner != info.sender {
+                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
+            }
+
+            Ok(Response::default().add_message(
+                Contract(contract_address)
+                    .call(to_json_binary(&StrategyExecuteMsg::Pause {})?, info.funds)?,
+            ))
+        }
+        ManagerExecuteMsg::WithdrawFromStrategy {
             contract_address,
-            msg,
-        } => Ok(Response::default()
-            .add_message(Contract(contract_address).call(to_json_binary(&msg)?, info.funds)?)),
-        FactoryExecuteMsg::UpdateStatus { status } => {
-            update_strategy_status(
+            amounts,
+        } => {
+            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+
+            if strategy.owner != info.sender {
+                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
+            }
+
+            Ok(
+                Response::default().add_message(Contract(contract_address).call(
+                    to_json_binary(&StrategyExecuteMsg::Withdraw { amounts })?,
+                    info.funds,
+                )?),
+            )
+        }
+        ManagerExecuteMsg::UpdateStatus { status } => {
+            let strategy = strategy_store().load(deps.storage, info.sender.clone())?;
+
+            strategy_store().save(
                 deps.storage,
-                UpdateStrategyStatusCommand {
-                    contract_address: info.sender.clone(),
-                    status: status.clone(),
+                info.sender.clone(),
+                &Strategy {
+                    status: status,
                     updated_at: env.block.time.seconds(),
+                    ..strategy
                 },
             )?;
 
+            Ok(Response::default())
+        }
+        ManagerExecuteMsg::AddAffiliate { affiliate } => {
+            AFFILIATES.save(deps.storage, affiliate.address.clone(), &affiliate)?;
+            Ok(Response::default())
+        }
+        ManagerExecuteMsg::RemoveAffiliate { affiliate } => {
+            AFFILIATES.remove(deps.storage, affiliate);
             Ok(Response::default())
         }
     }
 }
 
 #[entry_point]
-pub fn query(_deps: Deps, _env: Env, msg: FactoryQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
-        FactoryQueryMsg::Strategy { .. } => {
-            unimplemented!()
+        ManagerQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
+        ManagerQueryMsg::Strategy { address } => {
+            to_json_binary(&strategy_store().load(deps.storage, address)?)
         }
-        FactoryQueryMsg::Strategies { .. } => {
-            unimplemented!()
+        ManagerQueryMsg::Strategies {
+            owner,
+            status,
+            start_after,
+            limit,
+        } => to_json_binary(
+            &(match owner {
+                Some(owner) => match status {
+                    Some(status) => strategy_store()
+                        .idx
+                        .owner_status
+                        .prefix((owner, status as u8)),
+                    None => strategy_store()
+                        .idx
+                        .owner_updated_at
+                        .prefix((owner, u64::MAX)),
+                },
+                None => match status {
+                    Some(status) => strategy_store()
+                        .idx
+                        .status_updated_at
+                        .prefix((status, u64::MAX)),
+                    None => strategy_store().idx.updated_at.prefix(u64::MAX),
+                },
+            }
+            .range(
+                deps.storage,
+                start_after.map(Bound::exclusive),
+                None,
+                Order::Ascending,
+            )
+            .take(match limit {
+                Some(limit) => match limit {
+                    0..=30 => limit as usize,
+                    _ => 30,
+                },
+                None => 30,
+            })
+            .flat_map(|result| result.map(|(_, handle)| handle))
+            .collect::<Vec<Strategy>>()),
+        ),
+        ManagerQueryMsg::Affiliate { address } => {
+            to_json_binary(&AFFILIATES.load(deps.storage, address)?)
         }
+        ManagerQueryMsg::Affiliates { start_after, limit } => to_json_binary(
+            &AFFILIATES
+                .range(
+                    deps.storage,
+                    start_after.map(|addr| Bound::exclusive(addr)),
+                    None,
+                    cosmwasm_std::Order::Ascending,
+                )
+                .take(match limit {
+                    Some(limit) => match limit {
+                        0..=30 => limit as usize,
+                        _ => 30,
+                    },
+                    None => 30,
+                })
+                .map(|item| item.map(|(_, affiliate)| affiliate))
+                .collect::<StdResult<Vec<_>>>()?,
+        ),
     }
 }
 

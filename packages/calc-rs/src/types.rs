@@ -1,11 +1,12 @@
-use std::time::Duration;
+use std::{time::Duration, u8};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CosmosMsg, Env, Event,
-    Instantiate2AddressError, OverflowError, Response, StdError, StdResult, Timestamp, Uint128,
-    WasmMsg,
+    HexBinary, Instantiate2AddressError, OverflowError, Response, StdError, StdResult, Timestamp,
+    Uint128, WasmMsg,
 };
+use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 use rujira_rs::CallbackData;
 use thiserror::Error;
 
@@ -31,6 +32,12 @@ pub enum ContractError {
 }
 
 pub type ContractResult = Result<Response, ContractError>;
+
+#[cw_serde]
+pub struct ManagerConfig {
+    pub checksum: HexBinary,
+    pub code_id: u64,
+}
 
 #[cw_serde]
 pub enum Condition {
@@ -137,11 +144,12 @@ pub enum DcaSchedule {
 }
 
 #[cw_serde]
-pub struct DcaStrategy {
+pub struct DcaStrategyConfig {
     pub owner: Addr,
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub schedule: DcaSchedule,
+    pub manager_contract: Addr,
     pub exchange_contract: Addr,
     pub scheduler_contract: Addr,
     pub fee_collector: Addr,
@@ -152,15 +160,15 @@ pub struct DcaStrategy {
 }
 
 #[cw_serde]
-pub struct NewStrategy {
+pub struct CustomStrategyConfig {
     pub owner: Addr,
 }
 
 #[derive()]
 #[cw_serde]
 pub enum StrategyConfig {
-    Dca(DcaStrategy),
-    New(NewStrategy),
+    Dca(DcaStrategyConfig),
+    Custom(CustomStrategyConfig),
 }
 
 pub trait Owned {
@@ -171,7 +179,7 @@ impl Owned for StrategyConfig {
     fn owner(&self) -> Addr {
         match self {
             StrategyConfig::Dca(dca_strategy) => dca_strategy.owner.clone(),
-            StrategyConfig::New(new_strategy) => new_strategy.owner.clone(),
+            StrategyConfig::Custom(new_strategy) => new_strategy.owner.clone(),
         }
     }
 }
@@ -183,15 +191,40 @@ pub enum Status {
     Archived,
 }
 
+impl<'a> Prefixer<'a> for Status {
+    fn prefix(&self) -> Vec<Key> {
+        vec![Key::Val8([self.clone() as u8])]
+    }
+}
+
+impl<'a> PrimaryKey<'a> for Status {
+    type Prefix = Self;
+    type SubPrefix = Self;
+    type Suffix = ();
+    type SuperSuffix = ();
+
+    fn key(&self) -> Vec<Key> {
+        vec![Key::Val8([self.clone() as u8])]
+    }
+}
+
+#[cw_serde]
+pub struct Affiliate {
+    pub name: String,
+    pub address: Addr,
+    pub fee_bps: u16,
+}
+
 #[cw_serde]
 pub struct Strategy {
-    owner: Addr,
-    contract_address: Addr,
-    created_at: Timestamp,
-    updated_at: Timestamp,
-    label: String,
-    status: Status,
-    config: StrategyConfig,
+    pub owner: Addr,
+    pub contract_address: Addr,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub executions: u64,
+    pub label: String,
+    pub status: Status,
+    pub affiliates: Vec<Affiliate>,
 }
 
 pub enum DomainEvent {

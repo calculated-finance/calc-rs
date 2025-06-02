@@ -116,7 +116,7 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
             [swap_amount.denom.clone(), target_denom.clone()],
         ) {
             Ok(pair) => {
-                let res = deps
+                let simulation = deps
                     .querier
                     .query::<SimulationResponse>(&QueryRequest::Wasm(WasmQuery::Smart {
                         contract_addr: pair.address.into_string(),
@@ -125,7 +125,7 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
 
                 to_json_binary(&Coin {
                     denom: target_denom,
-                    amount: res.returned,
+                    amount: simulation.returned,
                 })
             }
             Err(_) => Err(StdError::generic_err("Pair not found")),
@@ -201,10 +201,24 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
 
                 to_json_binary(&pool.asset_tor_price)
             }
-            _ => Err(StdError::generic_err(format!(
-                "Fetching USD price unsupported for asset: {:?}",
-                asset
-            ))),
+            Asset::Secured(asset) => {
+                let oracle = Layer1Asset::from_native(asset.denom_string().to_ascii_uppercase())
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Unable to build layer 1 asset from secured asset {:?}: {:?}",
+                            asset, e
+                        ))
+                    })?;
+
+                let pool = Pool::load(deps.querier, &oracle).map_err(|e| {
+                    StdError::generic_err(format!(
+                        "Unable to load pool from layer 1 asset {:?}: {:?}",
+                        oracle, e
+                    ))
+                })?;
+
+                to_json_binary(&pool.asset_tor_price)
+            }
         },
     }
 }

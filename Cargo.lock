@@ -231,6 +231,7 @@ version = "0.0.1"
 dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
+ "cw-storage-plus",
  "cw-utils",
  "rujira-rs",
  "thiserror 1.0.69",

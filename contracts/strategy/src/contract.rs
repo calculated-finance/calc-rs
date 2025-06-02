@@ -3,10 +3,10 @@ use calc_rs::types::{ContractError, ContractResult};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdResult,
+    to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult,
 };
 
-use crate::state::{CONFIG, FACTORY};
+use crate::state::{CONFIG, MANAGER};
 use crate::types::Runnable;
 
 #[entry_point]
@@ -16,7 +16,7 @@ pub fn instantiate(
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
-    FACTORY.save(deps.storage, &info.sender)?;
+    MANAGER.save(deps.storage, &info.sender)?;
     msg.strategy.clone().initialize(deps, env, info)
 }
 
@@ -27,14 +27,19 @@ pub fn execute(
     info: MessageInfo,
     msg: StrategyExecuteMsg,
 ) -> ContractResult {
-    if info.sender != FACTORY.load(deps.storage)? {
-        return Err(ContractError::Unauthorized {});
+    let manager_address = MANAGER.load(deps.storage)?;
+
+    if info.sender != manager_address {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "Must invoke strategy execute methods via manager: {}",
+            manager_address
+        ))));
     }
 
     let mut strategy = CONFIG.load(deps.storage)?;
 
     match msg {
-        StrategyExecuteMsg::Execute {} => {
+        StrategyExecuteMsg::Execute { executor } => {
             let execution_fee = strategy.get_execution_fee(deps.as_ref(), env.clone())?;
 
             if execution_fee.amount.is_zero() {
@@ -43,12 +48,12 @@ pub fn execute(
 
             Ok(strategy.execute(deps, env).map(|response| {
                 response.add_message(BankMsg::Send {
-                    to_address: info.sender.to_string(),
+                    to_address: executor.to_string(),
                     amount: vec![execution_fee],
                 })
             })?)
         }
-        StrategyExecuteMsg::Withdraw { denoms } => strategy.withdraw(deps.as_ref(), env, denoms),
+        StrategyExecuteMsg::Withdraw { amounts } => strategy.withdraw(deps.as_ref(), env, amounts),
         StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), env),
     }
 }

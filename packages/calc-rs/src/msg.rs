@@ -2,39 +2,55 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Decimal, HexBinary};
 use rujira_rs::{Asset, CallbackData};
 
-use crate::types::{Condition, ConditionFilter, Status, Strategy, StrategyConfig, Trigger};
+use crate::types::{
+    Affiliate, Condition, ConditionFilter, ManagerConfig, Status, Strategy, StrategyConfig, Trigger,
+};
 
 #[cw_serde]
-pub struct FactoryInstantiateMsg {
+pub struct ManagerInstantiateMsg {
     pub checksum: HexBinary,
     pub code_id: u64,
 }
 
 #[cw_serde]
-pub struct FactoryMigrateMsg {
+pub struct ManagerMigrateMsg {
     pub checksum: HexBinary,
     pub code_id: u64,
 }
 
 #[cw_serde]
-pub enum FactoryExecuteMsg {
+pub enum ManagerExecuteMsg {
     InstantiateStrategy {
         owner: Addr,
         label: String,
         strategy: StrategyConfig,
     },
+    ExecuteStrategy {
+        contract_address: Addr,
+    },
+    PauseStrategy {
+        contract_address: Addr,
+    },
+    WithdrawFromStrategy {
+        contract_address: Addr,
+        amounts: Vec<Coin>,
+    },
     UpdateStatus {
         status: Status,
     },
-    Proxy {
-        contract_address: Addr,
-        msg: StrategyExecuteMsg,
+    AddAffiliate {
+        affiliate: Affiliate,
+    },
+    RemoveAffiliate {
+        affiliate: Addr,
     },
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
-pub enum FactoryQueryMsg {
+pub enum ManagerQueryMsg {
+    #[returns(ManagerConfig)]
+    Config {},
     #[returns(Strategy)]
     Strategy { address: Addr },
     #[returns(Vec<Strategy>)]
@@ -42,7 +58,14 @@ pub enum FactoryQueryMsg {
         owner: Option<Addr>,
         status: Option<Status>,
         start_after: Option<Addr>,
-        limit: Option<u32>,
+        limit: Option<u16>,
+    },
+    #[returns(Affiliate)]
+    Affiliate { address: Addr },
+    #[returns(Vec<Affiliate>)]
+    Affiliates {
+        start_after: Option<Addr>,
+        limit: Option<u16>,
     },
 }
 
@@ -53,8 +76,8 @@ pub struct StrategyInstantiateMsg {
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
-    Execute {},
-    Withdraw { denoms: Vec<String> },
+    Execute { executor: Addr },
+    Withdraw { amounts: Vec<Coin> },
     Pause {},
 }
 

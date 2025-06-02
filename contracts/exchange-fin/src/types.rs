@@ -1,6 +1,5 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::Addr;
-use cw_utils::NativeBalance;
 
 #[cw_serde]
 #[derive(Hash)]
@@ -38,10 +37,4 @@ impl Pair {
             self.quote_denom.clone()
         }
     }
-}
-
-#[cw_serde]
-pub struct SwapCache {
-    pub sender: Addr,
-    pub balances: NativeBalance,
 }

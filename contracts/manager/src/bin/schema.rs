@@ -1,10 +1,10 @@
-use calc_rs::msg::{FactoryExecuteMsg, FactoryInstantiateMsg, FactoryQueryMsg};
+use calc_rs::msg::{ManagerExecuteMsg, ManagerInstantiateMsg, ManagerQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {
     write_api! {
-        instantiate: FactoryInstantiateMsg,
-        execute: FactoryExecuteMsg,
-        query: FactoryQueryMsg,
+        instantiate: ManagerInstantiateMsg,
+        execute: ManagerExecuteMsg,
+        query: ManagerQueryMsg,
     }
 }
