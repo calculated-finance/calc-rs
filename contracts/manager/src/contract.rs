@@ -19,28 +19,34 @@ use crate::state::{strategy_store, AFFILIATES, CONFIG, STRATEGY_COUNTER};
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
-    _info: MessageInfo,
+    info: MessageInfo,
     msg: ManagerInstantiateMsg,
 ) -> ContractResult {
     CONFIG.save(
         deps.storage,
         &ManagerConfig {
+            admin: info.sender,
             checksum: msg.checksum,
             code_id: msg.code_id,
         },
     )?;
+
     Ok(Response::default())
 }
 
 #[entry_point]
 pub fn migrate(deps: DepsMut, _: Env, msg: ManagerMigrateMsg) -> ContractResult {
+    let admin = CONFIG.load(deps.storage)?.admin;
+
     CONFIG.save(
         deps.storage,
         &ManagerConfig {
+            admin,
             checksum: msg.checksum,
             code_id: msg.code_id,
         },
     )?;
+
     Ok(Response::default())
 }
 
@@ -99,13 +105,24 @@ pub fn execute(
                 salt,
             }))
         }
-        ManagerExecuteMsg::ExecuteStrategy { contract_address } => Ok(Response::default()
-            .add_message(Contract(contract_address).call(
-                to_json_binary(&StrategyExecuteMsg::Execute {
-                    executor: info.sender.clone(),
-                })?,
-                info.funds,
-            )?)),
+        ManagerExecuteMsg::ExecuteStrategy { contract_address } => {
+            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+
+            strategy_store().save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    executions: strategy.executions + 1,
+                    updated_at: env.block.time.seconds(),
+                    ..strategy
+                },
+            )?;
+
+            Ok(Response::default().add_message(
+                Contract(contract_address)
+                    .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds)?,
+            ))
+        }
         ManagerExecuteMsg::PauseStrategy { contract_address } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
 
@@ -113,9 +130,39 @@ pub fn execute(
                 return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
             }
 
+            strategy_store().save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    updated_at: env.block.time.seconds(),
+                    ..strategy
+                },
+            )?;
+
             Ok(Response::default().add_message(
-                Contract(contract_address)
+                Contract(contract_address.clone())
                     .call(to_json_binary(&StrategyExecuteMsg::Pause {})?, info.funds)?,
+            ))
+        }
+        ManagerExecuteMsg::ResumeStrategy { contract_address } => {
+            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+
+            if strategy.owner != info.sender {
+                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
+            }
+
+            strategy_store().save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    updated_at: env.block.time.seconds(),
+                    ..strategy
+                },
+            )?;
+
+            Ok(Response::default().add_message(
+                Contract(contract_address.clone())
+                    .call(to_json_binary(&StrategyExecuteMsg::Resume {})?, info.funds)?,
             ))
         }
         ManagerExecuteMsg::WithdrawFromStrategy {
@@ -128,6 +175,15 @@ pub fn execute(
                 return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
             }
 
+            strategy_store().save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    updated_at: env.block.time.seconds(),
+                    ..strategy
+                },
+            )?;
+
             Ok(
                 Response::default().add_message(Contract(contract_address).call(
                     to_json_binary(&StrategyExecuteMsg::Withdraw { amounts })?,
@@ -135,8 +191,38 @@ pub fn execute(
                 )?),
             )
         }
+        ManagerExecuteMsg::UpdateStrategy {
+            contract_address,
+            update,
+        } => {
+            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+
+            if strategy.owner != info.sender {
+                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
+            }
+
+            strategy_store().save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    updated_at: env.block.time.seconds(),
+                    ..strategy
+                },
+            )?;
+
+            Ok(
+                Response::default().add_message(Contract(contract_address).call(
+                    to_json_binary(&StrategyExecuteMsg::Update { update })?,
+                    info.funds,
+                )?),
+            )
+        }
         ManagerExecuteMsg::UpdateStatus { status } => {
             let strategy = strategy_store().load(deps.storage, info.sender.clone())?;
+
+            if strategy.contract_address != info.sender {
+                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
+            }
 
             strategy_store().save(
                 deps.storage,
@@ -151,11 +237,11 @@ pub fn execute(
             Ok(Response::default())
         }
         ManagerExecuteMsg::AddAffiliate { affiliate } => {
-            AFFILIATES.save(deps.storage, affiliate.address.clone(), &affiliate)?;
+            AFFILIATES.save(deps.storage, affiliate.code.clone(), &affiliate)?;
             Ok(Response::default())
         }
-        ManagerExecuteMsg::RemoveAffiliate { affiliate } => {
-            AFFILIATES.remove(deps.storage, affiliate);
+        ManagerExecuteMsg::RemoveAffiliate { code } => {
+            AFFILIATES.remove(deps.storage, code);
             Ok(Response::default())
         }
     }
@@ -209,8 +295,8 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
             .flat_map(|result| result.map(|(_, handle)| handle))
             .collect::<Vec<Strategy>>()),
         ),
-        ManagerQueryMsg::Affiliate { address } => {
-            to_json_binary(&AFFILIATES.load(deps.storage, address)?)
+        ManagerQueryMsg::Affiliate { code } => {
+            to_json_binary(&AFFILIATES.load(deps.storage, code)?)
         }
         ManagerQueryMsg::Affiliates { start_after, limit } => to_json_binary(
             &AFFILIATES

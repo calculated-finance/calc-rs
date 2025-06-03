@@ -1,11 +1,14 @@
 use calc_rs::msg::{SchedulerExecuteMsg, SchedulerQueryMsg};
-use calc_rs::types::{ConditionFilter, ContractResult, Executable};
+use calc_rs::types::{ConditionFilter, ContractResult, Executable, Trigger};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{
+    to_json_binary, BankMsg, Binary, Coins, Deps, DepsMut, Env, MessageInfo, Response, StdError,
+    StdResult,
+};
 
-use crate::state::{delete_trigger, fetch_triggers, save_trigger, triggers};
+use crate::state::{fetch_triggers, triggers, TRIGGER_COUNTER};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -33,27 +36,57 @@ pub fn execute(
             to,
             callback,
         } => {
-            save_trigger(deps.storage, info.sender, condition, callback, to)?;
+            let id = TRIGGER_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
+
+            triggers().save(
+                deps.storage,
+                id,
+                &Trigger {
+                    id,
+                    owner: info.sender,
+                    condition,
+                    callback,
+                    to,
+                    execution_rebate: info.funds,
+                },
+            )?;
+
             Ok(Response::default())
         }
         SchedulerExecuteMsg::DeleteTriggers {} => {
-            let triggers = fetch_triggers(
+            let triggers_to_delete = fetch_triggers(
                 deps.as_ref(),
                 ConditionFilter::Owner {
-                    address: info.sender,
+                    address: info.sender.clone(),
                 },
                 None,
             );
 
-            for trigger in triggers {
-                delete_trigger(deps.storage, trigger.id)?;
+            let mut rebates_to_refund = Coins::default();
+
+            for trigger in triggers_to_delete {
+                triggers().remove(deps.storage, trigger.id)?;
+
+                for coin in &trigger.execution_rebate {
+                    rebates_to_refund.add(coin.clone())?;
+                }
             }
 
-            Ok(Response::default())
+            Ok(Response::default().add_message(BankMsg::Send {
+                to_address: info.sender.to_string(),
+                amount: rebates_to_refund.into(),
+            }))
         }
         SchedulerExecuteMsg::ExecuteTrigger { id } => {
             let trigger = triggers().load(deps.storage, id)?;
-            return trigger.execute(env);
+            let response = trigger.execute(env)?;
+
+            triggers().remove(deps.storage, id)?;
+
+            Ok(response.add_message(BankMsg::Send {
+                to_address: info.sender.to_string(),
+                amount: trigger.execution_rebate,
+            }))
         }
     }
 }

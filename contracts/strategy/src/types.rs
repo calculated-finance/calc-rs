@@ -4,20 +4,40 @@ use calc_rs::types::{
 use cosmwasm_std::{Coin, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult, Uint128};
 
 pub trait Runnable {
-    fn initialize(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult;
+    fn validate(&self, deps: Deps) -> StdResult<()>;
+    fn instantiate(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult;
+    fn update(&self, deps: DepsMut, env: Env, info: StrategyConfig) -> ContractResult;
     fn can_execute(&self, deps: Deps, env: Env) -> StdResult<()>;
-    fn get_execution_fee(&self, deps: Deps, env: Env) -> StdResult<Coin>;
     fn execute(&mut self, deps: DepsMut, env: Env) -> ContractResult;
     fn handle_reply(&mut self, deps: DepsMut, env: Env, reply: Reply) -> ContractResult;
-    fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<Coin>) -> ContractResult;
-    fn pause(&self, deps: Deps, env: Env) -> ContractResult;
+    fn withdraw(&self, deps: Deps, env: Env, amounts: Vec<Coin>) -> ContractResult;
+    fn pause(&self, deps: DepsMut, env: Env) -> ContractResult;
+    fn resume(&self, deps: DepsMut, env: Env) -> ContractResult;
     fn statistics(&self) -> StrategyStatistics;
 }
 
 impl Runnable for StrategyConfig {
-    fn initialize(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult {
+    fn validate(&self, deps: Deps) -> StdResult<()> {
         match self {
-            StrategyConfig::Dca(s) => s.initialize(deps, env, info),
+            StrategyConfig::Dca(s) => s.validate(deps),
+            StrategyConfig::Custom(_) => Err(StdError::generic_err(
+                "New strategy not implemented".to_string(),
+            )),
+        }
+    }
+
+    fn instantiate(&self, deps: DepsMut, env: Env, info: MessageInfo) -> ContractResult {
+        match self {
+            StrategyConfig::Dca(s) => s.instantiate(deps, env, info),
+            StrategyConfig::Custom(_) => ContractResult::Err(ContractError::Std(
+                StdError::generic_err("New strategy not implemented"),
+            )),
+        }
+    }
+
+    fn update(&self, deps: DepsMut, env: Env, info: StrategyConfig) -> ContractResult {
+        match self {
+            StrategyConfig::Dca(s) => s.update(deps, env, info),
             StrategyConfig::Custom(_) => ContractResult::Err(ContractError::Std(
                 StdError::generic_err("New strategy not implemented"),
             )),
@@ -27,15 +47,6 @@ impl Runnable for StrategyConfig {
     fn can_execute(&self, deps: Deps, env: Env) -> StdResult<()> {
         match self {
             StrategyConfig::Dca(s) => s.can_execute(deps, env),
-            StrategyConfig::Custom(_) => Err(StdError::generic_err(
-                "New strategy not implemented".to_string(),
-            )),
-        }
-    }
-
-    fn get_execution_fee(&self, deps: Deps, env: Env) -> StdResult<Coin> {
-        match self {
-            StrategyConfig::Dca(s) => s.get_execution_fee(deps, env),
             StrategyConfig::Custom(_) => Err(StdError::generic_err(
                 "New strategy not implemented".to_string(),
             )),
@@ -60,18 +71,27 @@ impl Runnable for StrategyConfig {
         }
     }
 
-    fn withdraw(&self, deps: Deps, env: Env, denoms: Vec<Coin>) -> ContractResult {
+    fn withdraw(&self, deps: Deps, env: Env, amounts: Vec<Coin>) -> ContractResult {
         match self {
-            StrategyConfig::Dca(s) => s.withdraw(deps, env, denoms),
+            StrategyConfig::Dca(s) => s.withdraw(deps, env, amounts),
             StrategyConfig::Custom(_) => ContractResult::Err(ContractError::Std(
                 StdError::generic_err("New strategy not implemented"),
             )),
         }
     }
 
-    fn pause(&self, deps: Deps, env: Env) -> ContractResult {
+    fn pause(&self, deps: DepsMut, env: Env) -> ContractResult {
         match self {
             StrategyConfig::Dca(s) => s.pause(deps, env),
+            StrategyConfig::Custom(_) => ContractResult::Err(ContractError::Std(
+                StdError::generic_err("New strategy not implemented"),
+            )),
+        }
+    }
+
+    fn resume(&self, deps: DepsMut, env: Env) -> ContractResult {
+        match self {
+            StrategyConfig::Dca(s) => s.resume(deps, env),
             StrategyConfig::Custom(_) => ContractResult::Err(ContractError::Std(
                 StdError::generic_err("New strategy not implemented"),
             )),

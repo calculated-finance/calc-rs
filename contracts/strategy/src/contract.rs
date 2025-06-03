@@ -3,7 +3,7 @@ use calc_rs::types::{ContractError, ContractResult};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult,
+    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult,
 };
 
 use crate::state::{CONFIG, MANAGER};
@@ -17,7 +17,7 @@ pub fn instantiate(
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
     MANAGER.save(deps.storage, &info.sender)?;
-    msg.strategy.clone().initialize(deps, env, info)
+    msg.strategy.clone().instantiate(deps, env, info)
 }
 
 #[entry_point]
@@ -31,7 +31,7 @@ pub fn execute(
 
     if info.sender != manager_address {
         return Err(ContractError::Std(StdError::generic_err(format!(
-            "Must invoke strategy execute methods via manager: {}",
+            "Must invoke strategy execute methods via strategy manager contract: {}",
             manager_address
         ))));
     }
@@ -39,22 +39,11 @@ pub fn execute(
     let mut strategy = CONFIG.load(deps.storage)?;
 
     match msg {
-        StrategyExecuteMsg::Execute { executor } => {
-            let execution_fee = strategy.get_execution_fee(deps.as_ref(), env.clone())?;
-
-            if execution_fee.amount.is_zero() {
-                return Ok(strategy.execute(deps, env)?);
-            }
-
-            Ok(strategy.execute(deps, env).map(|response| {
-                response.add_message(BankMsg::Send {
-                    to_address: executor.to_string(),
-                    amount: vec![execution_fee],
-                })
-            })?)
-        }
+        StrategyExecuteMsg::Execute {} => Ok(strategy.execute(deps, env)?),
+        StrategyExecuteMsg::Pause {} => strategy.pause(deps, env),
+        StrategyExecuteMsg::Resume {} => strategy.resume(deps, env),
         StrategyExecuteMsg::Withdraw { amounts } => strategy.withdraw(deps.as_ref(), env, amounts),
-        StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), env),
+        StrategyExecuteMsg::Update { update } => strategy.update(deps, env, update),
     }
 }
 

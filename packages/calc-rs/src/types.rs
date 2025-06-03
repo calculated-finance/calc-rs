@@ -2,9 +2,9 @@ use std::{time::Duration, u8};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CosmosMsg, Env, Event,
-    HexBinary, Instantiate2AddressError, OverflowError, Response, StdError, StdResult, Timestamp,
-    Uint128, WasmMsg,
+    Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
+    Env, Event, HexBinary, Instantiate2AddressError, OverflowError, Response, StdError, StdResult,
+    Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 use rujira_rs::CallbackData;
@@ -27,14 +27,21 @@ pub enum ContractError {
     #[error("{0}")]
     CheckedFromRatioError(#[from] CheckedFromRatioError),
 
+    #[error("{0}")]
+    CoinsError(#[from] CoinsError),
+
     #[error("Unauthorized")]
     Unauthorized {},
+
+    #[error("Generic error: {0}")]
+    Generic(String),
 }
 
 pub type ContractResult = Result<Response, ContractError>;
 
 #[cw_serde]
 pub struct ManagerConfig {
+    pub admin: Addr,
     pub checksum: HexBinary,
     pub code_id: u64,
 }
@@ -76,6 +83,7 @@ pub struct Trigger {
     pub condition: Condition,
     pub callback: CallbackData,
     pub to: Addr,
+    pub execution_rebate: Vec<Coin>,
 }
 
 pub trait Executable {
@@ -100,9 +108,23 @@ impl Executable for Trigger {
             ))));
         }
 
-        Ok(Response::default().add_message(
-            Contract(self.to.clone()).call(self.callback.clone().into_json_binary(), vec![])?,
-        ))
+        let mut messages: Vec<CosmosMsg> = vec![];
+
+        match self.condition {
+            Condition::Timestamp { .. } | Condition::BlockHeight { .. } => {
+                let execute_message = Contract(self.to.clone())
+                    .call(self.callback.clone().into_json_binary(), vec![])?;
+
+                messages.push(execute_message);
+            }
+            Condition::LimitOrder { .. } => {
+                return Err(ContractError::Std(StdError::generic_err(
+                    "Limit order condition not implemented",
+                )));
+            }
+        }
+
+        Ok(Response::default().add_messages(messages))
     }
 }
 
@@ -128,6 +150,7 @@ pub enum StrategyStatistics {
 pub struct Destination {
     pub address: Addr,
     pub shares: Uint128,
+    pub msg: Option<Binary>,
     pub label: Option<String>,
 }
 
@@ -149,11 +172,10 @@ pub struct DcaStrategyConfig {
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub schedule: DcaSchedule,
-    pub manager_contract: Addr,
     pub exchange_contract: Addr,
     pub scheduler_contract: Addr,
     pub fee_collector: Addr,
-    pub conditions: Vec<Condition>,
+    pub affiliate_code: Option<String>,
     pub mutable_destinations: Vec<Destination>,
     pub immutable_destinations: Vec<Destination>,
     pub statistics: DcaStatistics,
@@ -210,9 +232,9 @@ impl<'a> PrimaryKey<'a> for Status {
 
 #[cw_serde]
 pub struct Affiliate {
-    pub name: String,
+    pub code: String,
     pub address: Addr,
-    pub fee_bps: u16,
+    pub bps: u64,
 }
 
 #[cw_serde]
@@ -244,7 +266,8 @@ pub enum DomainEvent {
     },
     StrategyUpdated {
         contract_address: Addr,
-        config: StrategyConfig,
+        old_config: StrategyConfig,
+        new_config: StrategyConfig,
     },
     FundsDeposited {
         contract_address: Addr,
@@ -303,10 +326,12 @@ impl From<DomainEvent> for Event {
                 .add_attribute("contract_address", contract_address.as_str()),
             DomainEvent::StrategyUpdated {
                 contract_address,
-                config,
+                old_config,
+                new_config,
             } => Event::new("strategy_updated")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("config", format!("{:?}", config)),
+                .add_attribute("old_config", format!("{:?}", old_config))
+                .add_attribute("new_config", format!("{:?}", new_config)),
             DomainEvent::FundsDeposited {
                 contract_address,
                 from,

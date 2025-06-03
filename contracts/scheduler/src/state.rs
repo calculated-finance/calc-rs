@@ -1,9 +1,9 @@
 use calc_rs::types::{Condition, ConditionFilter, Trigger};
-use cosmwasm_std::{Addr, Deps, Order, StdError, StdResult, Storage, Uint64};
+use cosmwasm_std::{Addr, Coin, Deps, Order, StdError, StdResult, Storage, Uint64};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 use rujira_rs::CallbackData;
 
-const TRIGGER_COUNTER: Item<u64> = Item::new("condition_counter");
+pub const TRIGGER_COUNTER: Item<u64> = Item::new("condition_counter");
 
 pub struct TriggerIndexes<'a> {
     pub owner: MultiIndex<'a, Addr, Trigger, u64>,
@@ -63,6 +63,7 @@ pub fn save_trigger(
     condition: Condition,
     callback: CallbackData,
     to: Addr,
+    execution_rebate: Vec<Coin>,
 ) -> StdResult<()> {
     let id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
     triggers().save(
@@ -74,6 +75,7 @@ pub fn save_trigger(
             condition,
             callback,
             to,
+            execution_rebate,
         },
     )
 }
@@ -106,7 +108,13 @@ pub fn fetch_triggers(deps: Deps, filter: ConditionFilter, limit: Option<usize>)
                 .range(deps.storage, None, None, Order::Ascending)
         }
     }
-    .take(limit.unwrap_or(30))
+    .take(match limit {
+        Some(limit) => match limit {
+            0..=50 => limit,
+            _ => 50,
+        },
+        _ => 50,
+    })
     .flat_map(|r| r.map(|(_, v)| v))
     .collect::<Vec<Trigger>>()
 }

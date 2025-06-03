@@ -31,9 +31,16 @@ pub enum ManagerExecuteMsg {
     PauseStrategy {
         contract_address: Addr,
     },
+    ResumeStrategy {
+        contract_address: Addr,
+    },
     WithdrawFromStrategy {
         contract_address: Addr,
         amounts: Vec<Coin>,
+    },
+    UpdateStrategy {
+        contract_address: Addr,
+        update: StrategyConfig,
     },
     UpdateStatus {
         status: Status,
@@ -42,7 +49,7 @@ pub enum ManagerExecuteMsg {
         affiliate: Affiliate,
     },
     RemoveAffiliate {
-        affiliate: Addr,
+        code: String,
     },
 }
 
@@ -61,7 +68,7 @@ pub enum ManagerQueryMsg {
         limit: Option<u16>,
     },
     #[returns(Affiliate)]
-    Affiliate { address: Addr },
+    Affiliate { code: String },
     #[returns(Vec<Affiliate>)]
     Affiliates {
         start_after: Option<Addr>,
@@ -76,9 +83,11 @@ pub struct StrategyInstantiateMsg {
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
-    Execute { executor: Addr },
-    Withdraw { amounts: Vec<Coin> },
+    Execute {},
     Pause {},
+    Resume {},
+    Withdraw { amounts: Vec<Coin> },
+    Update { update: StrategyConfig },
 }
 
 #[cw_serde]

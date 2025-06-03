@@ -17,19 +17,16 @@ use crate::state::{delete_pair, find_pair, save_pair, ADMIN};
 use crate::types::{Pair, PositionType};
 
 #[cw_serde]
-pub struct InstantiateMsg {
-    admin: Addr,
-}
+pub struct InstantiateMsg {}
 
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
-    _info: MessageInfo,
-    msg: InstantiateMsg,
+    info: MessageInfo,
+    _msg: InstantiateMsg,
 ) -> ContractResult {
-    deps.api.addr_validate(&msg.admin.to_string())?;
-    ADMIN.save(deps.storage, &msg.admin)?;
+    ADMIN.save(deps.storage, &info.sender)?;
     Ok(Response::default())
 }
 

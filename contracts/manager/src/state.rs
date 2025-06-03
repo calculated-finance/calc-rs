@@ -51,4 +51,4 @@ pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, Strategies<'a>> {
     )
 }
 
-pub const AFFILIATES: Map<Addr, Affiliate> = Map::new("affiliates");
+pub const AFFILIATES: Map<String, Affiliate> = Map::new("affiliates");
