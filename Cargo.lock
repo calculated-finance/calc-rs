@@ -633,7 +633,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "exchange-fin"
+name = "exchange"
 version = "0.1.0"
 dependencies = [
  "calc-rs",

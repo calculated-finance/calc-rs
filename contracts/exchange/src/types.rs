@@ -1,5 +1,29 @@
+use calc_rs::types::ContractResult;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, Coin, Decimal, Deps, MessageInfo, StdResult};
+
+pub trait Exchange {
+    fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> bool;
+    fn get_expected_receive_amount(
+        &self,
+        deps: Deps,
+        swap_amount: Coin,
+        target_denom: &str,
+    ) -> StdResult<Coin>;
+    fn get_spot_price(
+        &self,
+        deps: Deps,
+        swap_denom: &str,
+        target_denom: &str,
+    ) -> StdResult<Decimal>;
+    fn swap(
+        &self,
+        deps: Deps,
+        info: MessageInfo,
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+    ) -> ContractResult;
+}
 
 #[cw_serde]
 #[derive(Hash)]

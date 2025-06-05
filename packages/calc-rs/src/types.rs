@@ -3,8 +3,8 @@ use std::{time::Duration, u8};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
-    Env, Event, HexBinary, Instantiate2AddressError, OverflowError, Response, StdError, StdResult,
-    Timestamp, Uint128, WasmMsg,
+    Decimal, Env, Event, HexBinary, Instantiate2AddressError, OverflowError, Response, StdError,
+    StdResult, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 use rujira_rs::CallbackData;
@@ -34,7 +34,7 @@ pub enum ContractError {
     Unauthorized {},
 
     #[error("Generic error: {0}")]
-    Generic(String),
+    Generic(&'static str),
 }
 
 pub type ContractResult = Result<Response, ContractError>;
@@ -174,6 +174,7 @@ pub struct DcaStrategyConfig {
     pub schedule: DcaSchedule,
     pub exchange_contract: Addr,
     pub scheduler_contract: Addr,
+    pub execution_rebate_usd_amount: Decimal,
     pub fee_collector: Addr,
     pub affiliate_code: Option<String>,
     pub mutable_destinations: Vec<Destination>,

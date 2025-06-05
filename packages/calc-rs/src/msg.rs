@@ -84,9 +84,10 @@ pub struct StrategyInstantiateMsg {
 #[cw_serde]
 pub enum StrategyExecuteMsg {
     Execute {},
+    Deposit {},
+    Withdraw { amounts: Vec<Coin> },
     Pause {},
     Resume {},
-    Withdraw { amounts: Vec<Coin> },
     Update { update: StrategyConfig },
 }
 
@@ -104,7 +105,6 @@ pub enum ExchangeExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
         route: Option<Binary>,
-        callback: Option<CallbackData>,
     },
     Custom(Binary),
 }

@@ -1,7 +1,7 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet, type Coin } from "@cosmjs/proto-signing";
-import { GasPrice } from "@cosmjs/stargate";
+import { GasPrice, StargateClient } from "@cosmjs/stargate";
 import { config } from "dotenv";
 import fs from "fs";
 
@@ -137,3 +137,33 @@ const uploadAndInstantiateSchedulerContract = async () => {
 // };
 
 // uploadContractSuite();
+
+const uploadPairs = async () => {
+  const cosmWasmClient = await getSigner();
+
+  const account = await getAccount(await getWallet());
+
+  await cosmWasmClient.execute(
+    account,
+    SCHEDULER_ADDRESS,
+    {
+      create_pairs: {
+        pairs: [{}],
+      },
+    },
+    "auto"
+  );
+};
+
+const fetchBalances = async () => {
+  const stargateClient = await StargateClient.connect(process.env.RPC_URL!);
+  const account = await getAccount(await getWallet());
+
+  const balances = await stargateClient.getAllBalances(
+    "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka"
+  );
+
+  console.log("Balances:", balances);
+};
+
+fetchBalances();

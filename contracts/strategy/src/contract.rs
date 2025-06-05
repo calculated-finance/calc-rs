@@ -6,7 +6,7 @@ use cosmwasm_std::{
     to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult,
 };
 
-use crate::state::{CONFIG, MANAGER};
+use crate::state::{CONFIG, IS_EXECUTING, MANAGER};
 use crate::types::Runnable;
 
 #[entry_point]
@@ -14,10 +14,16 @@ pub fn instantiate(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: StrategyInstantiateMsg,
+    msg: &mut StrategyInstantiateMsg,
 ) -> ContractResult {
     MANAGER.save(deps.storage, &info.sender)?;
-    msg.strategy.clone().instantiate(deps, env, info)
+    IS_EXECUTING.save(deps.storage, &false)?;
+
+    let response = msg.strategy.instantiate(deps.as_ref(), env, info)?;
+
+    CONFIG.save(deps.storage, &msg.strategy)?;
+
+    Ok(response)
 }
 
 #[entry_point]
@@ -38,27 +44,39 @@ pub fn execute(
 
     let mut strategy = CONFIG.load(deps.storage)?;
 
-    match msg {
-        StrategyExecuteMsg::Execute {} => Ok(strategy.execute(deps, env)?),
-        StrategyExecuteMsg::Pause {} => strategy.pause(deps, env),
-        StrategyExecuteMsg::Resume {} => strategy.resume(deps, env),
+    let response = match msg {
+        StrategyExecuteMsg::Execute {} => {
+            IS_EXECUTING.save(deps.storage, &true)?;
+            strategy.execute(deps.as_ref(), env)
+        }
+        StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), env),
+        StrategyExecuteMsg::Resume {} => strategy.resume(deps.as_ref(), env),
+        StrategyExecuteMsg::Deposit {} => strategy.deposit(deps.as_ref(), env, info),
         StrategyExecuteMsg::Withdraw { amounts } => strategy.withdraw(deps.as_ref(), env, amounts),
-        StrategyExecuteMsg::Update { update } => strategy.update(deps, env, update),
-    }
+        StrategyExecuteMsg::Update { update } => strategy.update(deps.as_ref(), env, update),
+    }?;
+
+    CONFIG.save(deps.storage, &strategy)?;
+
+    Ok(response)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
-    CONFIG.load(deps.storage)?.handle_reply(deps, env, reply)
+    IS_EXECUTING.save(deps.storage, &false)?;
+    CONFIG
+        .load(deps.storage)?
+        .handle_reply(deps.as_ref(), env, reply)
 }
 
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     match msg {
         StrategyQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
-        StrategyQueryMsg::CanExecute {} => {
-            to_json_binary(&CONFIG.load(deps.storage)?.can_execute(deps, env).is_ok())
-        }
+        StrategyQueryMsg::CanExecute {} => to_json_binary(
+            &(!IS_EXECUTING.load(deps.storage)?
+                && CONFIG.load(deps.storage)?.can_execute(deps, &env).is_ok()),
+        ),
     }
 }
 
