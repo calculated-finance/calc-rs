@@ -1,21 +1,18 @@
 use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg};
-use calc_rs::types::{Contract, ContractError, ContractResult};
+use calc_rs::types::{ContractError, ContractResult};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    from_json, to_json_binary, Binary, Coin, Decimal, Deps, DepsMut, Env, MessageInfo,
-    QueryRequest, Response, StdError, StdResult, WasmQuery,
-};
-use rujira_rs::fin::{
-    BookResponse, ExecuteMsg as FinExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
+    from_json, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError,
+    StdResult,
 };
 use rujira_rs::query::Pool;
-use rujira_rs::{Asset, Layer1Asset, NativeAsset, SecuredAsset};
+use rujira_rs::{Asset, Layer1Asset};
 
 use crate::exchanges::fin::FinExchange;
-use crate::state::{delete_pair, find_pair, save_pair, ADMIN};
-use crate::types::{Exchange, Pair, PositionType};
+use crate::state::{delete_pair, save_pair, ADMIN};
+use crate::types::{Exchange, Pair};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -37,18 +34,6 @@ enum CustomMsg {
     DeletePairs { pairs: Vec<Pair> },
 }
 
-fn parse_asset(denom: &str) -> Asset {
-    if let Some((chain, symbol)) = denom.split_once('-') {
-        Asset::Secured(SecuredAsset::new(chain.into(), symbol.into()))
-    } else if let Some((chain, symbol)) = denom.split_once('.') {
-        Asset::Layer1(Layer1Asset::new(chain.into(), symbol.into()))
-    } else if denom == "rune" {
-        Asset::Layer1(Layer1Asset::new("THOR".into(), "RUNE".into()))
-    } else {
-        Asset::Native(NativeAsset::new(denom))
-    }
-}
-
 #[entry_point]
 pub fn execute(
     deps: DepsMut,
@@ -56,7 +41,7 @@ pub fn execute(
     info: MessageInfo,
     msg: ExchangeExecuteMsg,
 ) -> ContractResult {
-    let exchanges = vec![FinExchange {}];
+    let exchanges = vec![FinExchange::new()];
 
     match msg {
         ExchangeExecuteMsg::Swap {
@@ -72,62 +57,50 @@ pub fn execute(
             }
 
             let swap_amount = info.funds[0].clone();
+            let target_denom = minimum_receive_amount.denom.clone();
 
-            let swap_asset = parse_asset(&swap_amount.denom);
-            let return_asset = parse_asset(&minimum_receive_amount.denom);
+            let best_exchange = exchanges
+                .iter()
+                .filter(|e| e.can_swap(deps.as_ref(), &swap_amount.denom, &target_denom))
+                .max_by(|a, b| {
+                    a.get_expected_receive_amount(deps.as_ref(), swap_amount.clone(), &target_denom)
+                        .expect(
+                            format!(
+                                "Failed to get expected receive amount for {} to {}",
+                                swap_amount.denom, target_denom
+                            )
+                            .as_str(),
+                        )
+                        .amount
+                        .cmp(
+                            &b.get_expected_receive_amount(
+                                deps.as_ref(),
+                                swap_amount.clone(),
+                                &target_denom,
+                            )
+                            .expect(
+                                format!(
+                                    "Failed to get expected receive amount for {} to {}",
+                                    swap_amount.denom, target_denom
+                                )
+                                .as_str(),
+                            )
+                            .amount,
+                        )
+                });
 
-            match swap_asset {
-                Asset::Native(_) => match return_asset {
-                    Asset::Native(return_asset) => {
-                        swap_native_to_native(deps, swap_amount, return_asset.denom_string(), info)
-                    }
-                    Asset::Secured(_) => {
-                        Ok(Response::default())
-                        // Handle native to secured asset swap
-                    }
-                    Asset::Layer1(return_asset) => {
-                        if !return_asset.is_rune() {
-                            return Err(ContractError::Generic(
-                                "Layer 1 asset swaps only supported for RUNE",
-                            ));
-                        }
-
-                        Ok(Response::default())
-                    }
-                },
-                Asset::Secured(swap_asset) => {
-                    Ok(Response::default())
-                    // Handle secured asset case
-                }
-                Asset::Layer1(swap_asset) => {
-                    if !swap_asset.is_rune() {
-                        return Err(ContractError::Generic(
-                            "Layer 1 asset swaps only supported for RUNE",
-                        ));
-                    }
-
-                    match return_asset {
-                        Asset::Native(return_asset) => swap_native_to_native(
-                            deps,
-                            swap_amount,
-                            return_asset.denom_string(),
-                            info,
-                        ),
-                        Asset::Secured(return_asset) => {
-                            Ok(Response::default())
-                            // Handle RUNE to secured asset swap
-                        }
-                        Asset::Layer1(return_asset) => {
-                            if !return_asset.is_rune() {
-                                return Err(ContractError::Generic(
-                                    "Layer 1 asset swaps only supported for RUNE",
-                                ));
-                            }
-
-                            Ok(Response::default())
-                        }
-                    }
-                }
+            match best_exchange {
+                Some(exchange) => exchange.swap(
+                    deps.as_ref(),
+                    info,
+                    swap_amount.clone(),
+                    minimum_receive_amount,
+                ),
+                None => Err(StdError::generic_err(format!(
+                    "Unable to find an exchange for swapping {} to {}",
+                    swap_amount.denom, target_denom
+                ))
+                .into()),
             }
         }
         ExchangeExecuteMsg::Custom(custom_msg) => {
@@ -153,31 +126,9 @@ pub fn execute(
     }
 }
 
-fn swap_native_to_native(
-    deps: DepsMut,
-    swap_amount: Coin,
-    target_denom: String,
-    info: MessageInfo,
-) -> ContractResult {
-    match find_pair(
-        deps.storage,
-        [swap_amount.denom.clone(), target_denom.clone()],
-    ) {
-        Ok(pair) => {
-            let msg = to_json_binary(&FinExecuteMsg::Swap(SwapRequest {
-                min_return: None,
-                to: Some(info.sender.to_string()),
-                callback: None,
-            }))?;
-            Ok(Response::new().add_message(Contract(pair.address).call(msg, vec![swap_amount])?))
-        }
-        Err(_) => Err(ContractError::Std(StdError::generic_err("Pair not found"))),
-    }
-}
-
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
-    let exchanges = vec![FinExchange {}];
+    let exchanges = vec![FinExchange::new()];
 
     match msg {
         ExchangeQueryMsg::GetExpectedReceiveAmount {

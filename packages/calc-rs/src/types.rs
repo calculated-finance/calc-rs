@@ -7,7 +7,7 @@ use cosmwasm_std::{
     StdResult, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
-use rujira_rs::CallbackData;
+use rujira_rs::{query::PoolError, CallbackData};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -29,6 +29,9 @@ pub enum ContractError {
 
     #[error("{0}")]
     CoinsError(#[from] CoinsError),
+
+    #[error("{0}")]
+    PoolError(#[from] PoolError),
 
     #[error("Unauthorized")]
     Unauthorized {},

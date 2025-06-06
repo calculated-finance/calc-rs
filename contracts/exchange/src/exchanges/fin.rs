@@ -10,7 +10,17 @@ use crate::{
     types::{Exchange, PositionType},
 };
 
-pub struct FinExchange {}
+pub struct FinExchange {
+    pub name: String,
+}
+
+impl FinExchange {
+    pub fn new() -> Self {
+        FinExchange {
+            name: "Fin".to_string(),
+        }
+    }
+}
 
 impl Exchange for FinExchange {
     fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> bool {

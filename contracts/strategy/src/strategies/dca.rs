@@ -14,7 +14,7 @@ use calc_rs::{
 };
 use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, Env, MessageInfo,
-    QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, SubMsgResult, Uint128, WasmMsg,
+    QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, SubMsgResult, Uint128,
 };
 use prost::{DecodeError, EncodeError, Message};
 use rujira_rs::{
@@ -137,7 +137,6 @@ fn get_swap_message(strategy: &DcaStrategyConfig, deps: Deps, env: &Env) -> StdR
         to_json_binary(&ExchangeExecuteMsg::Swap {
             minimum_receive_amount: strategy.minimum_receive_amount.clone(),
             route: None,
-            callback: None,
         })?,
         vec![swap_amount],
     )?;
@@ -322,7 +321,7 @@ impl Runnable for DcaStrategyConfig {
 
                 if mutable_shares_new != mutable_shares_old {
                     return Err(ContractError::Generic(
-                        "Updated total shares must match the original total shares".to_string(),
+                        "Updated total shares must match the original total shares",
                     ));
                 }
 
@@ -332,6 +331,7 @@ impl Runnable for DcaStrategyConfig {
                 self.minimum_receive_amount = update.minimum_receive_amount;
                 self.schedule = update.schedule;
                 self.mutable_destinations = update.mutable_destinations;
+                self.execution_rebate_usd_amount = update.execution_rebate_usd_amount;
 
                 self.validate(deps)?;
 
@@ -341,11 +341,10 @@ impl Runnable for DcaStrategyConfig {
                 if previous_config.schedule != self.schedule {
                     let schedule_msg = get_schedule_msg(self, deps, &env)?;
 
-                    let delete_conditions_msg = WasmMsg::Execute {
-                        contract_addr: self.scheduler_contract.to_string(),
-                        msg: to_json_binary(&SchedulerExecuteMsg::DeleteTriggers {})?,
-                        funds: vec![],
-                    };
+                    let delete_conditions_msg = Contract(self.scheduler_contract.clone()).call(
+                        to_json_binary(&SchedulerExecuteMsg::DeleteTriggers {})?,
+                        vec![],
+                    )?;
 
                     sub_messages.push(schedule_msg);
                     messages.push(delete_conditions_msg.into());
@@ -643,19 +642,17 @@ impl Runnable for DcaStrategyConfig {
     }
 
     fn pause(&mut self, deps: Deps, env: Env) -> ContractResult {
-        let delete_conditions_msg = WasmMsg::Execute {
-            contract_addr: self.scheduler_contract.to_string(),
-            msg: to_json_binary(&SchedulerExecuteMsg::DeleteTriggers {})?,
-            funds: vec![],
-        };
+        let delete_conditions_msg = Contract(self.scheduler_contract.clone()).call(
+            to_json_binary(&SchedulerExecuteMsg::DeleteTriggers {})?,
+            vec![],
+        )?;
 
-        let pause_strategy_msg = WasmMsg::Execute {
-            contract_addr: MANAGER.load(deps.storage)?.to_string(),
-            msg: to_json_binary(&ManagerExecuteMsg::UpdateStatus {
+        let pause_strategy_msg = Contract(MANAGER.load(deps.storage)?).call(
+            to_json_binary(&ManagerExecuteMsg::UpdateStatus {
                 status: Status::Paused,
             })?,
-            funds: vec![],
-        };
+            vec![],
+        )?;
 
         let strategy_paused_event = DomainEvent::StrategyPaused {
             contract_address: env.contract.address,
