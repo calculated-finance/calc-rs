@@ -40,6 +40,12 @@ pub enum ContractError {
     Generic(&'static str),
 }
 
+impl ContractError {
+    pub fn generic_err(msg: impl Into<String>) -> Self {
+        ContractError::Std(StdError::generic_err(msg.into()))
+    }
+}
+
 pub type ContractResult = Result<Response, ContractError>;
 
 #[cw_serde]

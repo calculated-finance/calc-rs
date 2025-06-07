@@ -1,4 +1,5 @@
 use calc_rs::types::{Contract, ContractError, ContractResult};
+use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Coin, Decimal, Deps, MessageInfo, QueryRequest, Response, StdError, StdResult,
     WasmQuery,
@@ -10,6 +11,7 @@ use crate::{
     types::{Exchange, PositionType},
 };
 
+#[cw_serde]
 pub struct FinExchange {
     pub name: String,
 }
@@ -23,12 +25,12 @@ impl FinExchange {
 }
 
 impl Exchange for FinExchange {
-    fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> bool {
-        find_pair(
+    fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> StdResult<bool> {
+        Ok(find_pair(
             deps.storage,
             [swap_denom.to_string(), target_denom.to_string()],
         )
-        .is_ok()
+        .is_ok())
     }
 
     fn get_expected_receive_amount(

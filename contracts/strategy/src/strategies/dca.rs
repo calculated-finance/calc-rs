@@ -73,7 +73,7 @@ fn get_execution_rebate(deps: Deps, env: &Env, strategy: &DcaStrategyConfig) -> 
 
     let asset_price = deps.querier.query_wasm_smart::<Decimal>(
         strategy.exchange_contract.clone(),
-        &ExchangeQueryMsg::GetUsdPrice {
+        &ExchangeQueryMsg::UsdPrice {
             asset: Asset::Native(NativeAsset::new(&strategy.swap_amount.denom)),
         },
     )?;
@@ -210,7 +210,7 @@ impl Runnable for DcaStrategyConfig {
 
         let asset_usd_price = deps.querier.query_wasm_smart::<Decimal>(
             self.exchange_contract.to_string(),
-            &ExchangeQueryMsg::GetUsdPrice {
+            &ExchangeQueryMsg::UsdPrice {
                 asset: Asset::Native(NativeAsset::new(&self.swap_amount.denom)),
             },
         )?;

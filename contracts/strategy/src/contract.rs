@@ -14,14 +14,15 @@ pub fn instantiate(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: &mut StrategyInstantiateMsg,
+    msg: StrategyInstantiateMsg,
 ) -> ContractResult {
     MANAGER.save(deps.storage, &info.sender)?;
     IS_EXECUTING.save(deps.storage, &false)?;
 
-    let response = msg.strategy.instantiate(deps.as_ref(), env, info)?;
+    let mut strategy = msg.strategy.clone();
+    let response = strategy.instantiate(deps.as_ref(), env, info)?;
 
-    CONFIG.save(deps.storage, &msg.strategy)?;
+    CONFIG.save(deps.storage, &strategy)?;
 
     Ok(response)
 }

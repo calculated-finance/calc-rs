@@ -3,7 +3,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin, Decimal, Deps, MessageInfo, StdResult};
 
 pub trait Exchange {
-    fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> bool;
+    fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> StdResult<bool>;
     fn get_expected_receive_amount(
         &self,
         deps: Deps,

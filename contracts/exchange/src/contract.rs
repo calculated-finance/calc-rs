@@ -1,4 +1,4 @@
-use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg};
+use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg, SchedulerInstantiateMsg};
 use calc_rs::types::{ContractError, ContractResult};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
@@ -11,6 +11,7 @@ use rujira_rs::query::Pool;
 use rujira_rs::{Asset, Layer1Asset};
 
 use crate::exchanges::fin::FinExchange;
+use crate::exchanges::pool::PoolExchange;
 use crate::state::{delete_pair, save_pair, ADMIN};
 use crate::types::{Exchange, Pair};
 
@@ -25,6 +26,11 @@ pub fn instantiate(
     _msg: InstantiateMsg,
 ) -> ContractResult {
     ADMIN.save(deps.storage, &info.sender)?;
+    Ok(Response::default())
+}
+
+#[entry_point]
+pub fn migrate(_: DepsMut, __: Env, ___: SchedulerInstantiateMsg) -> ContractResult {
     Ok(Response::default())
 }
 
@@ -61,7 +67,10 @@ pub fn execute(
 
             let best_exchange = exchanges
                 .iter()
-                .filter(|e| e.can_swap(deps.as_ref(), &swap_amount.denom, &target_denom))
+                .filter(|e| {
+                    e.can_swap(deps.as_ref(), &swap_amount.denom, &target_denom)
+                        .unwrap_or(false)
+                })
                 .max_by(|a, b| {
                     a.get_expected_receive_amount(deps.as_ref(), swap_amount.clone(), &target_denom)
                         .expect(
@@ -128,19 +137,24 @@ pub fn execute(
 
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
-    let exchanges = vec![FinExchange::new()];
+    let exchanges: Vec<Box<dyn Exchange>> =
+        vec![Box::new(FinExchange::new()), Box::new(PoolExchange::new())];
 
     match msg {
-        ExchangeQueryMsg::GetExpectedReceiveAmount {
+        ExchangeQueryMsg::ExpectedReceiveAmount {
             swap_amount,
             target_denom,
             ..
         } => exchanges
             .iter()
-            .filter(|e| e.can_swap(deps, &swap_amount.denom, &target_denom))
-            .map(|e| e.get_expected_receive_amount(deps, swap_amount.clone(), &target_denom))
-            .collect::<StdResult<Vec<_>>>()?
-            .into_iter()
+            .filter(|e| {
+                e.can_swap(deps, &swap_amount.denom, &target_denom)
+                    .unwrap_or(false)
+            })
+            .flat_map(|e| {
+                e.get_expected_receive_amount(deps, swap_amount.clone(), &target_denom)
+                    .ok()
+            })
             .max_by(|a, b| a.amount.cmp(&b.amount))
             .map_or_else(
                 || {
@@ -151,13 +165,16 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
                 },
                 |amount| to_json_binary(&amount),
             ),
-        ExchangeQueryMsg::GetSpotPrice {
+        ExchangeQueryMsg::SpotPrice {
             swap_denom,
             target_denom,
             ..
         } => exchanges
             .iter()
-            .filter(|e| e.can_swap(deps, &swap_denom, &target_denom))
+            .filter(|e| {
+                e.can_swap(deps, &swap_denom, &target_denom)
+                    .unwrap_or(false)
+            })
             .map(|e| e.get_spot_price(deps, &swap_denom, &target_denom))
             .collect::<StdResult<Vec<_>>>()?
             .into_iter()
@@ -171,7 +188,7 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
                 },
                 |price| to_json_binary(&price),
             ),
-        ExchangeQueryMsg::GetUsdPrice { asset } => match asset {
+        ExchangeQueryMsg::UsdPrice { asset } => match asset {
             Asset::Native(asset) => {
                 let oracle = Layer1Asset::from_native(asset.denom_string().to_ascii_uppercase())
                     .map_err(|e| {

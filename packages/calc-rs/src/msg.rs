@@ -113,21 +113,24 @@ pub enum ExchangeExecuteMsg {
 #[derive(QueryResponses)]
 pub enum ExchangeQueryMsg {
     #[returns(Decimal)]
-    GetSpotPrice {
+    SpotPrice {
         swap_denom: String,
         target_denom: String,
         period: u64,
         route: Option<Binary>,
     },
     #[returns(Coin)]
-    GetExpectedReceiveAmount {
+    ExpectedReceiveAmount {
         swap_amount: Coin,
         target_denom: String,
         route: Option<Binary>,
     },
     #[returns(Decimal)]
-    GetUsdPrice { asset: Asset },
+    UsdPrice { asset: Asset },
 }
+
+#[cw_serde]
+pub struct SchedulerInstantiateMsg {}
 
 #[cw_serde]
 pub enum SchedulerExecuteMsg {

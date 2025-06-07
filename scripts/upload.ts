@@ -9,7 +9,7 @@ const MANAGER_ADDRESS =
   "sthor1xp856u6s4mxxq3zpm8lr2dy6w8z9ttzu26shvheqfw5p75wm06tqxq95a3";
 
 const EXCHANGE_ADDRESS =
-  "sthor1qxdh2778l06s6f0t44503x3rqeaz9nma7rnpndmtethw4kp68t5s2vjuuf";
+  "sthor1etex24dkgru28kasve7mn8erkjls7fjvu8vkk0kekxgzvywdx5wq7rrg0d";
 
 const SCHEDULER_ADDRESS =
   "sthor1ad9wj03d2upe5h68ypzjjqxj7mcqdadysqhqsw5hx9kvr5zs5mlsv3yyzy";
@@ -74,6 +74,31 @@ export const uploadAndInstantiate = async (
   return contractAddress;
 };
 
+export const uploadAndMigrate = async (
+  binaryFilePath: string,
+  adminAddress: string,
+  contractAddress: string
+): Promise<void> => {
+  const cosmWasmClient = await getSigner();
+  const { codeId } = await cosmWasmClient.upload(
+    adminAddress,
+    fs.readFileSync(binaryFilePath),
+    1.5
+  );
+
+  console.log("Uploaded code id:", codeId);
+
+  await cosmWasmClient.migrate(
+    adminAddress,
+    contractAddress,
+    codeId,
+    {},
+    "auto"
+  );
+
+  console.log("Migrated contract at address:", contractAddress);
+};
+
 export const getAccount = async (wallet: DirectSecp256k1HdWallet) => {
   const accounts = await wallet.getAccounts();
   return accounts[0]?.address;
@@ -117,6 +142,17 @@ const uploadAndInstantiateExchangeContract = async () => {
   );
 };
 
+const uploadAndMigrateExchangeContract = async () => {
+  const wallet = await getWallet();
+  const adminAddress = await getAccount(wallet);
+
+  await uploadAndMigrate(
+    "artifacts/exchange.wasm",
+    adminAddress,
+    EXCHANGE_ADDRESS
+  );
+};
+
 const uploadAndInstantiateSchedulerContract = async () => {
   const wallet = await getWallet();
   const adminAddress = await getAccount(wallet);
@@ -129,14 +165,12 @@ const uploadAndInstantiateSchedulerContract = async () => {
   );
 };
 
-// const uploadContractSuite = async () => {
-//   const strategyCodeId = await uploadStrategyContract();
-//   await uploadAndInstantiateManagerContract(strategyCodeId);
-//   await uploadAndInstantiateExchangeContract();
-//   await uploadAndInstantiateSchedulerContract();
-// };
-
-// uploadContractSuite();
+const uploadContractSuite = async () => {
+  const strategyCodeId = await uploadStrategyContract();
+  await uploadAndInstantiateManagerContract(strategyCodeId);
+  await uploadAndInstantiateExchangeContract();
+  await uploadAndInstantiateSchedulerContract();
+};
 
 const uploadPairs = async () => {
   const cosmWasmClient = await getSigner();
@@ -166,4 +200,24 @@ const fetchBalances = async () => {
   console.log("Balances:", balances);
 };
 
-fetchBalances();
+const getExpectedReceiveAmount = async () => {
+  const cosmWasmClient = await getSigner();
+  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
+    expected_receive_amount: {
+      swap_amount: {
+        denom: "BTC-BTC",
+        amount: "1000000",
+      },
+      target_denom: "ETH-ETH",
+      amount: "1000000",
+    },
+  });
+
+  console.log("Expected receive amount:", response);
+};
+
+// uploadContractSuite();
+// fetchBalances();
+// uploadAndMigrateExchangeContract();
+getExpectedReceiveAmount();
+// uploadAndInstantiateExchangeContract();
