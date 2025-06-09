@@ -56,6 +56,12 @@ pub struct ManagerConfig {
 }
 
 #[cw_serde]
+pub struct ExpectedReturnAmount {
+    pub amount: Coin,
+    pub slippage: Decimal,
+}
+
+#[cw_serde]
 pub enum Condition {
     Timestamp {
         timestamp: Timestamp,

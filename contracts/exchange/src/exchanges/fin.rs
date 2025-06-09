@@ -1,4 +1,7 @@
-use calc_rs::types::{Contract, ContractError, ContractResult};
+use calc_rs::{
+    math::checked_mul,
+    types::{Contract, ContractError, ContractResult, ExpectedReturnAmount},
+};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Coin, Decimal, Deps, MessageInfo, QueryRequest, Response, StdError, StdResult,
@@ -33,12 +36,19 @@ impl Exchange for FinExchange {
         .is_ok())
     }
 
+    fn route(&self, deps: Deps, swap_amount: Coin, target_denom: &str) -> StdResult<Vec<Coin>> {
+        let receive_amount =
+            self.get_expected_receive_amount(deps, swap_amount.clone(), target_denom)?;
+
+        Ok(vec![swap_amount, receive_amount.amount])
+    }
+
     fn get_expected_receive_amount(
         &self,
         deps: Deps,
         swap_amount: Coin,
         target_denom: &str,
-    ) -> StdResult<Coin> {
+    ) -> StdResult<ExpectedReturnAmount> {
         match find_pair(
             deps.storage,
             [swap_amount.denom.clone(), target_denom.to_string()],
@@ -48,12 +58,28 @@ impl Exchange for FinExchange {
                     .querier
                     .query::<SimulationResponse>(&QueryRequest::Wasm(WasmQuery::Smart {
                         contract_addr: pair.address.into_string(),
-                        msg: to_json_binary(&QueryMsg::Simulate(swap_amount))?,
+                        msg: to_json_binary(&QueryMsg::Simulate(swap_amount.clone()))?,
                     }))?;
 
-                Ok(Coin {
-                    denom: target_denom.to_string(),
-                    amount: simulation.returned,
+                let spot_price = self.get_spot_price(deps, &swap_amount.denom, target_denom)?;
+
+                let optimal_return_amount =
+                    checked_mul(swap_amount.amount, spot_price).map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Unable to calculate optimal return amount: {}",
+                            e
+                        ))
+                    })?;
+
+                let slippage = Decimal::one()
+                    - Decimal::from_ratio(simulation.returned, optimal_return_amount);
+
+                Ok(ExpectedReturnAmount {
+                    amount: Coin {
+                        denom: target_denom.to_string(),
+                        amount: simulation.returned,
+                    },
+                    slippage,
                 })
             }
             Err(_) => Err(StdError::generic_err("Pair not found")),

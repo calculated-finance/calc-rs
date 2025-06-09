@@ -1,15 +1,16 @@
-use calc_rs::types::ContractResult;
+use calc_rs::types::{ContractResult, ExpectedReturnAmount};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin, Decimal, Deps, MessageInfo, StdResult};
 
 pub trait Exchange {
     fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> StdResult<bool>;
+    fn route(&self, deps: Deps, swap_amount: Coin, target_denom: &str) -> StdResult<Vec<Coin>>;
     fn get_expected_receive_amount(
         &self,
         deps: Deps,
         swap_amount: Coin,
         target_denom: &str,
-    ) -> StdResult<Coin>;
+    ) -> StdResult<ExpectedReturnAmount>;
     fn get_spot_price(
         &self,
         deps: Deps,

@@ -205,19 +205,48 @@ const getExpectedReceiveAmount = async () => {
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     expected_receive_amount: {
       swap_amount: {
-        denom: "BTC-BTC",
-        amount: "1000000",
+        denom: "rune",
+        amount: "100000000",
       },
-      target_denom: "ETH-ETH",
-      amount: "1000000",
+      target_denom: "ETH-USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7",
     },
   });
 
   console.log("Expected receive amount:", response);
 };
 
+const getSpotPrice = async () => {
+  const cosmWasmClient = await getSigner();
+  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
+    spot_price: {
+      swap_denom: "rune",
+      target_denom: "ETH-USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7",
+      period: 0,
+    },
+  });
+
+  console.log("Spot price:", response);
+};
+
+const getRoute = async () => {
+  const cosmWasmClient = await getSigner();
+  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
+    route: {
+      swap_amount: {
+        denom: "ETH-ETH",
+        amount: "1000000",
+      },
+      target_denom: "BTC-BTC",
+    },
+  });
+
+  console.log("Route:", response);
+};
+
 // uploadContractSuite();
 // fetchBalances();
 // uploadAndMigrateExchangeContract();
+getSpotPrice();
 getExpectedReceiveAmount();
+// getRoute();
 // uploadAndInstantiateExchangeContract();

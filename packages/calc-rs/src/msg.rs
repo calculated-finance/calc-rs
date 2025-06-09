@@ -3,7 +3,8 @@ use cosmwasm_std::{Addr, Binary, Coin, Decimal, HexBinary};
 use rujira_rs::{Asset, CallbackData};
 
 use crate::types::{
-    Affiliate, Condition, ConditionFilter, ManagerConfig, Status, Strategy, StrategyConfig, Trigger,
+    Affiliate, Condition, ConditionFilter, ExpectedReturnAmount, ManagerConfig, Status, Strategy,
+    StrategyConfig, Trigger,
 };
 
 #[cw_serde]
@@ -112,14 +113,18 @@ pub enum ExchangeExecuteMsg {
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum ExchangeQueryMsg {
+    #[returns(Vec<Coin>)]
+    Route {
+        swap_amount: Coin,
+        target_denom: String,
+    },
     #[returns(Decimal)]
     SpotPrice {
         swap_denom: String,
         target_denom: String,
-        period: u64,
         route: Option<Binary>,
     },
-    #[returns(Coin)]
+    #[returns(ExpectedReturnAmount)]
     ExpectedReceiveAmount {
         swap_amount: Coin,
         target_denom: String,

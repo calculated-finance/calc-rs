@@ -4,8 +4,8 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    from_json, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError,
-    StdResult,
+    from_json, to_json_binary, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response, StdError,
+    StdResult, Uint128,
 };
 use rujira_rs::query::Pool;
 use rujira_rs::{Asset, Layer1Asset};
@@ -81,6 +81,7 @@ pub fn execute(
                             .as_str(),
                         )
                         .amount
+                        .amount
                         .cmp(
                             &b.get_expected_receive_amount(
                                 deps.as_ref(),
@@ -94,6 +95,7 @@ pub fn execute(
                                 )
                                 .as_str(),
                             )
+                            .amount
                             .amount,
                         )
                 });
@@ -141,6 +143,39 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
         vec![Box::new(FinExchange::new()), Box::new(PoolExchange::new())];
 
     match msg {
+        ExchangeQueryMsg::Route {
+            swap_amount,
+            target_denom,
+        } => {
+            let route = exchanges
+                .iter()
+                .filter(|e| {
+                    e.can_swap(deps, &swap_amount.denom, &target_denom)
+                        .unwrap_or(false)
+                })
+                .flat_map(|e| e.route(deps, swap_amount.clone(), &target_denom).ok())
+                .max_by(|a, b| {
+                    let empty = Coin {
+                        denom: target_denom.clone(),
+                        amount: Uint128::zero(),
+                    };
+                    a.last()
+                        .unwrap_or(&empty)
+                        .amount
+                        .cmp(&b.last().unwrap_or(&empty).amount)
+                })
+                .into_iter()
+                .collect::<Vec<_>>();
+
+            if route.is_empty() {
+                return Err(StdError::generic_err(format!(
+                    "Unable to find an exchange for swapping {} to {}",
+                    swap_amount.denom, target_denom
+                )));
+            }
+
+            to_json_binary(&route)
+        }
         ExchangeQueryMsg::ExpectedReceiveAmount {
             swap_amount,
             target_denom,
@@ -155,7 +190,7 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
                 e.get_expected_receive_amount(deps, swap_amount.clone(), &target_denom)
                     .ok()
             })
-            .max_by(|a, b| a.amount.cmp(&b.amount))
+            .max_by(|a, b| a.amount.amount.cmp(&b.amount.amount))
             .map_or_else(
                 || {
                     Err(StdError::generic_err(format!(
@@ -175,18 +210,16 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
                 e.can_swap(deps, &swap_denom, &target_denom)
                     .unwrap_or(false)
             })
-            .map(|e| e.get_spot_price(deps, &swap_denom, &target_denom))
-            .collect::<StdResult<Vec<_>>>()?
-            .into_iter()
-            .max_by(|a, b| a.cmp(b))
+            .flat_map(|e| e.get_spot_price(deps, &swap_denom, &target_denom).ok())
+            .max_by(|a, b| a.cmp(&b))
             .map_or_else(
                 || {
                     Err(StdError::generic_err(format!(
-                        "Unable to find an exchange for spot price of {} to {}",
+                        "Unable to find an exchange for swapping {} to {}",
                         swap_denom, target_denom
                     )))
                 },
-                |price| to_json_binary(&price),
+                |amount| to_json_binary(&amount),
             ),
         ExchangeQueryMsg::UsdPrice { asset } => match asset {
             Asset::Native(asset) => {

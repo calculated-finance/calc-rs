@@ -1,7 +1,10 @@
-use calc_rs::{math::checked_mul, types::ContractResult};
+use calc_rs::{
+    math::checked_mul,
+    types::{ContractResult, ExpectedReturnAmount},
+};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, Decimal, Deps, MessageInfo, StdError, StdResult, Uint128};
-use rujira_rs::{query::Pool, Asset, Layer1Asset};
+use rujira_rs::{query::Pool, Asset, Layer1Asset, SecuredAsset};
 
 use crate::types::Exchange;
 
@@ -18,24 +21,60 @@ impl PoolExchange {
     }
 }
 
-fn load_pool(deps: Deps, asset: Layer1Asset) -> StdResult<Pool> {
-    Ok(Pool::load(deps.querier, &asset)
-        .map_err(|e| StdError::generic_err(format!("Failed to load pool: {}", e)))?)
+fn layer_1_asset(denom: &str) -> StdResult<Layer1Asset> {
+    if denom.contains("rune") {
+        return Ok(Layer1Asset::new("THOR", "RUNE"));
+    }
+
+    let (chain, symbol) = denom
+        .split_once('-')
+        .ok_or_else(|| StdError::generic_err(format!("Invalid layer 1 asset: {}", denom)))?;
+
+    Ok(Layer1Asset::new(
+        &chain.to_ascii_uppercase(),
+        &symbol.to_ascii_uppercase(),
+    ))
 }
 
-const THOR_RUNE: &str = "thor.rune";
+fn secured_asset(asset: &Layer1Asset) -> StdResult<SecuredAsset> {
+    match asset.denom_string().to_uppercase().split_once(".") {
+        Some((chain, symbol)) => Ok(SecuredAsset::new(chain, symbol)),
+        None => Err(StdError::generic_err(format!(
+            "Invalid layer 1 asset: {}",
+            asset.denom_string()
+        ))),
+    }
+}
+
+fn load_pool(deps: Deps, asset: &Layer1Asset) -> StdResult<Pool> {
+    Ok(Pool::load(deps.querier, asset).map_err(|e| {
+        StdError::generic_err(format!(
+            "Failed to load pool for asset {}: {}",
+            asset.denom_string(),
+            e
+        ))
+    })?)
+}
+
+fn get_pools(deps: Deps, swap_denom: &str, target_denom: &str) -> Result<Vec<Pool>, StdError> {
+    Ok([swap_denom, target_denom]
+        .iter()
+        .filter(|&&denom| !denom.to_lowercase().contains("rune"))
+        .map(|&denom| load_pool(deps, &layer_1_asset(denom)?))
+        .collect::<StdResult<Vec<Pool>>>()?)
+}
 
 fn get_expected_receive_amount(
     pool: &Pool,
-    swap_asset: Layer1Asset,
-    swap_amount: Uint128,
+    swap_asset: &Layer1Asset,
+    swap_amount: &Uint128,
 ) -> StdResult<(Layer1Asset, Uint128)> {
     let receive_asset = match swap_asset.denom_string().as_str() {
-        THOR_RUNE => match pool.asset.clone() {
+        "thor.rune" => match pool.asset.clone() {
             Asset::Layer1(asset) => asset,
-            _ => return Err(StdError::generic_err("Pool asset is not a Layer1 asset")),
+            _ => return Err(StdError::generic_err("Pool asset is not a Layer 1 asset")),
         },
-        _ => Layer1Asset::new("THOR", "rune"),
+        _ => Layer1Asset::new("THOR", "RUNE"),
     };
 
     let receive_amount = swap_amount
@@ -44,7 +83,7 @@ fn get_expected_receive_amount(
         .checked_div(
             swap_amount
                 .checked_add(match swap_asset.denom_string().as_str() {
-                    THOR_RUNE => pool.balance_rune,
+                    "thor.rune" => pool.balance_rune,
                     _ => pool.balance_asset,
                 })?
                 .pow(2),
@@ -53,19 +92,59 @@ fn get_expected_receive_amount(
     Ok((receive_asset, receive_amount))
 }
 
+fn get_spot_price(pool: &Pool, swap_asset: &Layer1Asset) -> StdResult<(Layer1Asset, Decimal)> {
+    let pool_asset = match pool.asset.clone() {
+        Asset::Layer1(asset) => asset,
+        _ => return Err(StdError::generic_err("Pool asset is not a Layer 1 asset")),
+    };
+
+    let pool_asset_price = Decimal::from_ratio(pool.balance_rune, pool.balance_asset);
+
+    match swap_asset.denom_string().as_str() {
+        "thor.rune" => Ok((pool_asset, pool_asset_price)),
+        _ => Ok((
+            Layer1Asset::new("THOR", "RUNE"),
+            Decimal::one() / (pool_asset_price),
+        )),
+    }
+}
+
 impl Exchange for PoolExchange {
     fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> StdResult<bool> {
-        let route = [swap_denom, target_denom]
-            .iter()
-            .filter(|&&denom| denom != "rune")
-            .map(|&denom| {
-                let asset = Layer1Asset::from_native(denom.to_string())
-                    .map_err(|e| StdError::generic_err(format!("Invalid secured asset: {}", e)))?;
-                load_pool(deps, asset)
-            })
-            .collect::<StdResult<Vec<Pool>>>()?;
+        Ok(!get_pools(deps, swap_denom, target_denom)?.is_empty())
+    }
 
-        Ok(!route.is_empty())
+    fn route(&self, deps: Deps, swap_amount: Coin, target_denom: &str) -> StdResult<Vec<Coin>> {
+        let pools = get_pools(deps, swap_amount.denom.as_str(), target_denom)?;
+
+        if pools.is_empty() {
+            return Err(StdError::generic_err("No valid route found"));
+        }
+
+        let mut route = vec![swap_amount.clone()];
+
+        for (i, pool) in pools.iter().enumerate() {
+            let (out_asset, out_amount) = get_expected_receive_amount(
+                pool,
+                &layer_1_asset(&route[i].denom)?,
+                &route[i].amount,
+            )?;
+
+            if out_amount.is_zero() {
+                return Err(StdError::generic_err("Received zero amount from pool"));
+            }
+
+            route.push(Coin {
+                denom: if out_asset.is_rune() {
+                    "rune".to_string()
+                } else {
+                    secured_asset(&out_asset)?.denom_string()
+                },
+                amount: out_amount,
+            });
+        }
+
+        Ok(route)
     }
 
     fn get_expected_receive_amount(
@@ -73,36 +152,45 @@ impl Exchange for PoolExchange {
         deps: Deps,
         swap_amount: Coin,
         target_denom: &str,
-    ) -> StdResult<Coin> {
-        let route = [swap_amount.denom.as_str(), target_denom]
-            .iter()
-            .filter(|&&denom| denom != "rune")
-            .map(|&denom| {
-                let asset = Layer1Asset::from_native(denom.to_string())
-                    .map_err(|e| StdError::generic_err(format!("Invalid secured asset: {}", e)))?;
-                load_pool(deps, asset)
-            })
-            .collect::<StdResult<Vec<Pool>>>()?;
+    ) -> StdResult<ExpectedReturnAmount> {
+        let pools = get_pools(deps, swap_amount.denom.as_str(), target_denom)?;
 
-        if route.is_empty() {
+        if pools.is_empty() {
             return Err(StdError::generic_err("No valid route found"));
         }
 
-        let (out_asset, out_amount) = route.iter().fold(
-            (
-                Layer1Asset::from_native(swap_amount.denom)
-                    .map_err(|e| StdError::generic_err(format!("Invalid secured asset: {}", e)))?,
-                swap_amount.amount,
-            ),
+        let (_, out_amount) = pools.iter().fold(
+            (layer_1_asset(&swap_amount.denom)?, swap_amount.amount),
             |(in_asset, in_amount), pool| {
-                get_expected_receive_amount(pool, in_asset, in_amount)
-                    .expect("Failed to get expected receive amount")
+                get_expected_receive_amount(pool, &in_asset, &in_amount).expect(
+                    format!(
+                        "Failed to get expected receive amount for swapping {} {} in {} pool",
+                        in_amount,
+                        in_asset.denom_string(),
+                        pool.asset
+                    )
+                    .as_str(),
+                )
             },
         );
 
-        Ok(Coin {
-            denom: out_asset.denom_string(),
-            amount: out_amount,
+        let spot_price = self.get_spot_price(deps, &swap_amount.denom, &target_denom)?;
+
+        let optimal_return_amount =
+            checked_mul(swap_amount.amount, spot_price).unwrap_or(Uint128::zero());
+
+        // let slippage = Decimal::one()
+        //     .checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))
+        //     .unwrap_or(Decimal::one());
+
+        let slippage = Decimal::from_ratio(out_amount, optimal_return_amount);
+
+        Ok(ExpectedReturnAmount {
+            amount: Coin {
+                denom: target_denom.to_string(),
+                amount: out_amount,
+            },
+            slippage,
         })
     }
 
@@ -112,44 +200,26 @@ impl Exchange for PoolExchange {
         swap_denom: &str,
         target_denom: &str,
     ) -> StdResult<Decimal> {
-        let route = [swap_denom, target_denom]
-            .iter()
-            .filter(|&&denom| denom != "rune")
-            .map(|&denom| {
-                let asset = Layer1Asset::from_native(denom.to_string())
-                    .map_err(|e| StdError::generic_err(format!("Invalid secured asset: {}", e)))?;
-                load_pool(deps, asset)
-            })
-            .collect::<StdResult<Vec<Pool>>>()?;
+        let pools = get_pools(deps, swap_denom, target_denom)?;
 
-        if route.is_empty() {
+        if pools.is_empty() {
             return Err(StdError::generic_err("No valid route found"));
         }
 
-        let in_amount = checked_mul(
-            Uint128::new(100_000_000),
-            route.first().unwrap().asset_tor_price,
-        )
-        .map_err(|e| {
-            StdError::generic_err(format!(
-                "Unable to calculate $1 USD worth of {}: {}",
-                swap_denom, e
-            ))
-        })?;
-
-        let (_, out_amount) = route.iter().fold(
-            (
-                Layer1Asset::from_native(swap_denom.to_string())
-                    .map_err(|e| StdError::generic_err(format!("Invalid secured asset: {}", e)))?,
-                in_amount,
-            ),
-            |(in_asset, in_amount), pool| {
-                get_expected_receive_amount(pool, in_asset, in_amount)
-                    .expect("Failed to get expected receive amount")
+        let (_, price) = pools.iter().fold(
+            (layer_1_asset(swap_denom)?, Decimal::one()),
+            |(asset, out_price), pool| {
+                get_spot_price(pool, &asset)
+                    .map(|(asset, price)| (asset, out_price * price))
+                    .expect(&format!(
+                        "Failed to get spot price for swapping {} in {} pool",
+                        asset.denom_string(),
+                        pool.asset
+                    ))
             },
         );
 
-        Ok(Decimal::from_ratio(in_amount, out_amount))
+        Ok(price)
     }
 
     fn swap(
