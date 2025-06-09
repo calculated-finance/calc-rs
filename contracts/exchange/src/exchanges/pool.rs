@@ -176,14 +176,13 @@ impl Exchange for PoolExchange {
 
         let spot_price = self.get_spot_price(deps, &swap_amount.denom, &target_denom)?;
 
-        let optimal_return_amount =
-            checked_mul(swap_amount.amount, spot_price).unwrap_or(Uint128::zero());
+        let optimal_return_amount = checked_mul(swap_amount.amount, Decimal::one() / spot_price)
+            .map_err(|e| {
+                StdError::generic_err(format!("Failed to calculate optimal return amount: {}", e))
+            })?;
 
-        // let slippage = Decimal::one()
-        //     .checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))
-        //     .unwrap_or(Decimal::one());
-
-        let slippage = Decimal::from_ratio(out_amount, optimal_return_amount);
+        let slippage =
+            Decimal::one().checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))?;
 
         Ok(ExpectedReturnAmount {
             amount: Coin {

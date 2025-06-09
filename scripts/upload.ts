@@ -246,7 +246,6 @@ const getRoute = async () => {
 // uploadContractSuite();
 // fetchBalances();
 // uploadAndMigrateExchangeContract();
-getSpotPrice();
 getExpectedReceiveAmount();
 // getRoute();
 // uploadAndInstantiateExchangeContract();

@@ -61,18 +61,20 @@ impl Exchange for FinExchange {
                         msg: to_json_binary(&QueryMsg::Simulate(swap_amount.clone()))?,
                     }))?;
 
-                let spot_price = self.get_spot_price(deps, &swap_amount.denom, target_denom)?;
+                let spot_price = self.get_spot_price(deps, &swap_amount.denom, &target_denom)?;
 
                 let optimal_return_amount =
-                    checked_mul(swap_amount.amount, spot_price).map_err(|e| {
+                    checked_mul(swap_amount.amount, Decimal::one() / spot_price).map_err(|e| {
                         StdError::generic_err(format!(
-                            "Unable to calculate optimal return amount: {}",
+                            "Failed to calculate optimal return amount: {}",
                             e
                         ))
                     })?;
 
-                let slippage = Decimal::one()
-                    - Decimal::from_ratio(simulation.returned, optimal_return_amount);
+                let slippage = Decimal::one().checked_sub(Decimal::from_ratio(
+                    simulation.returned,
+                    optimal_return_amount,
+                ))?;
 
                 Ok(ExpectedReturnAmount {
                     amount: Coin {
