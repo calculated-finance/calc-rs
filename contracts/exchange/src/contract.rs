@@ -7,8 +7,6 @@ use cosmwasm_std::{
     from_json, to_json_binary, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response, StdError,
     StdResult, Uint128,
 };
-use rujira_rs::query::Pool;
-use rujira_rs::{Asset, Layer1Asset};
 
 use crate::exchanges::fin::FinExchange;
 use crate::exchanges::pool::PoolExchange;
@@ -221,54 +219,6 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
                 },
                 |amount| to_json_binary(&amount),
             ),
-        ExchangeQueryMsg::UsdPrice { asset } => match asset {
-            Asset::Native(asset) => {
-                let oracle = Layer1Asset::from_native(asset.denom_string().to_ascii_uppercase())
-                    .map_err(|e| {
-                        StdError::generic_err(format!(
-                            "Unable to build layer 1 asset from native asset {:?}: {:?}",
-                            asset, e
-                        ))
-                    })?;
-
-                let pool = Pool::load(deps.querier, &oracle).map_err(|e| {
-                    StdError::generic_err(format!(
-                        "Unable to load pool from layer 1 asset {:?}: {:?}",
-                        oracle, e
-                    ))
-                })?;
-
-                to_json_binary(&pool.asset_tor_price)
-            }
-            Asset::Layer1(asset) => {
-                let pool = Pool::load(deps.querier, &asset).map_err(|e| {
-                    StdError::generic_err(format!(
-                        "Unable to load pool from layer 1 asset {:?}: {:?}",
-                        asset, e
-                    ))
-                })?;
-
-                to_json_binary(&pool.asset_tor_price)
-            }
-            Asset::Secured(asset) => {
-                let oracle = Layer1Asset::from_native(asset.denom_string().to_ascii_uppercase())
-                    .map_err(|e| {
-                        StdError::generic_err(format!(
-                            "Unable to build layer 1 asset from secured asset {:?}: {:?}",
-                            asset, e
-                        ))
-                    })?;
-
-                let pool = Pool::load(deps.querier, &oracle).map_err(|e| {
-                    StdError::generic_err(format!(
-                        "Unable to load pool from layer 1 asset {:?}: {:?}",
-                        oracle, e
-                    ))
-                })?;
-
-                to_json_binary(&pool.asset_tor_price)
-            }
-        },
     }
 }
 

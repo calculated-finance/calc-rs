@@ -15,8 +15,12 @@ pub struct Strategies<'a> {
 
 impl<'a> IndexList<Strategy> for Strategies<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Strategy>> + '_> {
-        let s: Vec<&dyn Index<Strategy>> =
-            vec![&self.owner_updated_at, &self.owner_status, &self.updated_at];
+        let s: Vec<&dyn Index<Strategy>> = vec![
+            &self.owner_updated_at,
+            &self.owner_status,
+            &self.updated_at,
+            &self.status_updated_at,
+        ];
         Box::new(s.into_iter())
     }
 }

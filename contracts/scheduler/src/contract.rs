@@ -23,6 +23,14 @@ pub fn instantiate(
     Ok(Response::default())
 }
 
+#[cw_serde]
+pub struct MigrateMsg {}
+
+#[entry_point]
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
+    Ok(Response::default())
+}
+
 #[entry_point]
 pub fn execute(
     deps: DepsMut,
@@ -31,11 +39,7 @@ pub fn execute(
     msg: SchedulerExecuteMsg,
 ) -> ContractResult {
     match msg {
-        SchedulerExecuteMsg::CreateTrigger {
-            condition,
-            to,
-            callback,
-        } => {
+        SchedulerExecuteMsg::CreateTrigger(trigger_to_create) => {
             let id = TRIGGER_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
 
             triggers().save(
@@ -44,14 +48,59 @@ pub fn execute(
                 &Trigger {
                     id,
                     owner: info.sender,
-                    condition,
-                    callback,
-                    to,
+                    condition: trigger_to_create.condition,
+                    msg: trigger_to_create.msg,
+                    to: trigger_to_create.to,
                     execution_rebate: info.funds,
                 },
             )?;
 
             Ok(Response::default())
+        }
+        SchedulerExecuteMsg::SetTriggers(triggers_to_create) => {
+            let triggers_to_delete = fetch_triggers(
+                deps.as_ref(),
+                ConditionFilter::Owner {
+                    address: info.sender.clone(),
+                },
+                None,
+            );
+
+            let mut rebates_to_refund = Coins::default();
+
+            for trigger in triggers_to_delete {
+                triggers().remove(deps.storage, trigger.id)?;
+
+                for coin in &trigger.execution_rebate {
+                    rebates_to_refund.add(coin.clone())?;
+                }
+            }
+
+            for trigger_to_create in triggers_to_create {
+                let id = TRIGGER_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
+
+                triggers().save(
+                    deps.storage,
+                    id,
+                    &Trigger {
+                        id,
+                        owner: info.sender.clone(),
+                        condition: trigger_to_create.condition,
+                        msg: trigger_to_create.msg,
+                        to: trigger_to_create.to,
+                        execution_rebate: info.funds.clone(),
+                    },
+                )?;
+            }
+
+            if rebates_to_refund.is_empty() {
+                return Ok(Response::default());
+            }
+
+            Ok(Response::default().add_message(BankMsg::Send {
+                to_address: info.sender.to_string(),
+                amount: rebates_to_refund.into(),
+            }))
         }
         SchedulerExecuteMsg::DeleteTriggers {} => {
             let triggers_to_delete = fetch_triggers(
@@ -70,6 +119,10 @@ pub fn execute(
                 for coin in &trigger.execution_rebate {
                     rebates_to_refund.add(coin.clone())?;
                 }
+            }
+
+            if rebates_to_refund.is_empty() {
+                return Ok(Response::default());
             }
 
             Ok(Response::default().add_message(BankMsg::Send {
@@ -94,7 +147,7 @@ pub fn execute(
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
-        SchedulerQueryMsg::Get { filter, limit } => {
+        SchedulerQueryMsg::Triggers { filter, limit } => {
             to_json_binary(&fetch_triggers(deps, filter, limit))
         }
         SchedulerQueryMsg::CanExecute { id } => {

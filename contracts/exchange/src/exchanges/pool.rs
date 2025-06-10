@@ -21,7 +21,7 @@ impl PoolExchange {
     }
 }
 
-fn layer_1_asset(denom: &str) -> StdResult<Layer1Asset> {
+pub fn layer_1_asset(denom: &str) -> StdResult<Layer1Asset> {
     if denom.contains("rune") {
         return Ok(Layer1Asset::new("THOR", "RUNE"));
     }

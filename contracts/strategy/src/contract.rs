@@ -1,12 +1,12 @@
 use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
-use calc_rs::types::{ContractError, ContractResult};
+use calc_rs::types::{ContractError, ContractResult, StrategyConfig};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Reply, StdError, StdResult,
 };
 
-use crate::state::{CONFIG, IS_EXECUTING, MANAGER};
+use crate::state::{CONFIG, FEE_COLLECTOR, IS_EXECUTING, MANAGER};
 use crate::types::Runnable;
 
 #[entry_point]
@@ -17,9 +17,10 @@ pub fn instantiate(
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
     MANAGER.save(deps.storage, &info.sender)?;
+    FEE_COLLECTOR.save(deps.storage, &msg.fee_collector)?;
     IS_EXECUTING.save(deps.storage, &false)?;
 
-    let mut strategy = msg.strategy.clone();
+    let mut strategy = StrategyConfig::from(msg.strategy.clone());
     let response = strategy.instantiate(deps.as_ref(), env, info)?;
 
     CONFIG.save(deps.storage, &strategy)?;

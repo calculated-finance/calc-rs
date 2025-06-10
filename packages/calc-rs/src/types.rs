@@ -7,8 +7,10 @@ use cosmwasm_std::{
     StdResult, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
-use rujira_rs::{query::PoolError, CallbackData};
+use rujira_rs::query::PoolError;
 use thiserror::Error;
+
+use crate::msg::InstantiateStrategyConfig;
 
 #[derive(Error, Debug)]
 pub enum ContractError {
@@ -53,6 +55,7 @@ pub struct ManagerConfig {
     pub admin: Addr,
     pub checksum: HexBinary,
     pub code_id: u64,
+    pub fee_collector: Addr,
 }
 
 #[cw_serde]
@@ -96,7 +99,7 @@ pub struct Trigger {
     pub id: u64,
     pub owner: Addr,
     pub condition: Condition,
-    pub callback: CallbackData,
+    pub msg: Binary,
     pub to: Addr,
     pub execution_rebate: Vec<Coin>,
 }
@@ -127,8 +130,7 @@ impl Executable for Trigger {
 
         match self.condition {
             Condition::Timestamp { .. } | Condition::BlockHeight { .. } => {
-                let execute_message = Contract(self.to.clone())
-                    .call(self.callback.clone().into_json_binary(), vec![])?;
+                let execute_message = Contract(self.to.clone()).call(self.msg.clone(), vec![])?;
 
                 messages.push(execute_message);
             }
@@ -189,8 +191,7 @@ pub struct DcaStrategyConfig {
     pub schedule: DcaSchedule,
     pub exchange_contract: Addr,
     pub scheduler_contract: Addr,
-    pub execution_rebate_usd_amount: Decimal,
-    pub fee_collector: Addr,
+    pub execution_rebate: Coin,
     pub affiliate_code: Option<String>,
     pub mutable_destinations: Vec<Destination>,
     pub immutable_destinations: Vec<Destination>,
@@ -207,6 +208,53 @@ pub struct CustomStrategyConfig {
 pub enum StrategyConfig {
     Dca(DcaStrategyConfig),
     Custom(CustomStrategyConfig),
+}
+
+impl From<InstantiateStrategyConfig> for StrategyConfig {
+    fn from(config: InstantiateStrategyConfig) -> Self {
+        match config {
+            InstantiateStrategyConfig::Dca {
+                owner,
+                swap_amount,
+                minimum_receive_amount,
+                schedule,
+                exchange_contract,
+                scheduler_contract,
+                execution_rebate,
+                mutable_destinations,
+                immutable_destinations,
+                affiliate_code,
+            } => StrategyConfig::Dca(DcaStrategyConfig {
+                owner,
+                swap_amount,
+                minimum_receive_amount,
+                schedule,
+                exchange_contract,
+                scheduler_contract,
+                execution_rebate,
+                mutable_destinations,
+                immutable_destinations,
+                affiliate_code,
+                statistics: DcaStatistics {
+                    amount_deposited: Coin {
+                        denom: "uusd".to_string(),
+                        amount: Uint128::zero(),
+                    },
+                    amount_swapped: Coin {
+                        denom: "uusd".to_string(),
+                        amount: Uint128::zero(),
+                    },
+                    amount_received: Coin {
+                        denom: "uusd".to_string(),
+                        amount: Uint128::zero(),
+                    },
+                },
+            }),
+            InstantiateStrategyConfig::Custom {} => StrategyConfig::Custom(CustomStrategyConfig {
+                owner: Addr::unchecked("custom_strategy_owner"),
+            }),
+        }
+    }
 }
 
 pub trait Owned {

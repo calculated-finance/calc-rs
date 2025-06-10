@@ -1,7 +1,6 @@
 use calc_rs::types::{Condition, ConditionFilter, Trigger};
-use cosmwasm_std::{Addr, Coin, Deps, Order, StdError, StdResult, Storage, Uint64};
+use cosmwasm_std::{Addr, Binary, Coin, Deps, Order, StdError, StdResult, Storage, Uint64};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
-use rujira_rs::CallbackData;
 
 pub const TRIGGER_COUNTER: Item<u64> = Item::new("condition_counter");
 
@@ -61,7 +60,7 @@ pub fn save_trigger(
     storage: &mut dyn Storage,
     owner: Addr,
     condition: Condition,
-    callback: CallbackData,
+    msg: Binary,
     to: Addr,
     execution_rebate: Vec<Coin>,
 ) -> StdResult<()> {
@@ -73,7 +72,7 @@ pub fn save_trigger(
             id,
             owner,
             condition,
-            callback,
+            msg,
             to,
             execution_rebate,
         },

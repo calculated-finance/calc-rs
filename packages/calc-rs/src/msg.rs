@@ -1,22 +1,23 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Decimal, HexBinary};
-use rujira_rs::{Asset, CallbackData};
 
 use crate::types::{
-    Affiliate, Condition, ConditionFilter, ExpectedReturnAmount, ManagerConfig, Status, Strategy,
-    StrategyConfig, Trigger,
+    Affiliate, Condition, ConditionFilter, DcaSchedule, Destination, ExpectedReturnAmount,
+    ManagerConfig, Status, Strategy, StrategyConfig, Trigger,
 };
 
 #[cw_serde]
 pub struct ManagerInstantiateMsg {
     pub checksum: HexBinary,
     pub code_id: u64,
+    pub fee_collector: Addr,
 }
 
 #[cw_serde]
 pub struct ManagerMigrateMsg {
     pub checksum: HexBinary,
     pub code_id: u64,
+    pub fee_collector: Addr,
 }
 
 #[cw_serde]
@@ -24,7 +25,7 @@ pub enum ManagerExecuteMsg {
     InstantiateStrategy {
         owner: Addr,
         label: String,
-        strategy: StrategyConfig,
+        strategy: InstantiateStrategyConfig,
     },
     ExecuteStrategy {
         contract_address: Addr,
@@ -78,8 +79,26 @@ pub enum ManagerQueryMsg {
 }
 
 #[cw_serde]
+pub enum InstantiateStrategyConfig {
+    Dca {
+        owner: Addr,
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+        schedule: DcaSchedule,
+        exchange_contract: Addr,
+        scheduler_contract: Addr,
+        execution_rebate: Coin,
+        affiliate_code: Option<String>,
+        mutable_destinations: Vec<Destination>,
+        immutable_destinations: Vec<Destination>,
+    },
+    Custom {},
+}
+
+#[cw_serde]
 pub struct StrategyInstantiateMsg {
-    pub strategy: StrategyConfig,
+    pub fee_collector: Addr,
+    pub strategy: InstantiateStrategyConfig,
 }
 
 #[cw_serde]
@@ -130,31 +149,31 @@ pub enum ExchangeQueryMsg {
         target_denom: String,
         route: Option<Binary>,
     },
-    #[returns(Decimal)]
-    UsdPrice { asset: Asset },
 }
 
 #[cw_serde]
 pub struct SchedulerInstantiateMsg {}
 
 #[cw_serde]
+pub struct CreateTrigger {
+    pub condition: Condition,
+    pub to: Addr,
+    pub msg: Binary,
+}
+
+#[cw_serde]
 pub enum SchedulerExecuteMsg {
-    CreateTrigger {
-        condition: Condition,
-        to: Addr,
-        callback: CallbackData,
-    },
+    CreateTrigger(CreateTrigger),
     DeleteTriggers {},
-    ExecuteTrigger {
-        id: u64,
-    },
+    SetTriggers(Vec<CreateTrigger>),
+    ExecuteTrigger { id: u64 },
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum SchedulerQueryMsg {
     #[returns(Vec<Trigger>)]
-    Get {
+    Triggers {
         filter: ConditionFilter,
         limit: Option<usize>,
     },
