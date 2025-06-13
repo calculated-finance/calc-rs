@@ -8,10 +8,10 @@ use cosmwasm_std::{
     StdResult, Uint128,
 };
 
-use crate::exchanges::fin::FinExchange;
+use crate::exchanges::fin::{FinExchange, Pair};
 use crate::exchanges::pool::PoolExchange;
 use crate::state::{delete_pair, save_pair, ADMIN};
-use crate::types::{Exchange, Pair};
+use crate::types::Exchange;
 
 #[cw_serde]
 pub struct InstantiateMsg {}

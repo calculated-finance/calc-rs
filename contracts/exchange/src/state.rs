@@ -3,7 +3,7 @@ use std::any::type_name;
 use cosmwasm_std::{Addr, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Bound, Item, Map};
 
-use crate::types::Pair;
+use crate::exchanges::fin::Pair;
 
 pub const ADMIN: Item<Addr> = Item::new("admin");
 
@@ -100,7 +100,7 @@ mod find_pair_tests {
 mod get_pairs_tests {
     use cosmwasm_std::{testing::mock_dependencies, Addr};
 
-    use crate::types::Pair;
+    use crate::exchanges::fin::Pair;
 
     use super::{get_pairs, save_pair};
 

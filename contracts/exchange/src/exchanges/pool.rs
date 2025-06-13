@@ -1,3 +1,4 @@
+use anybuf::Anybuf;
 use calc_rs::{
     math::checked_mul,
     types::{ContractResult, ExpectedReturnAmount},
@@ -7,11 +8,7 @@ use cosmwasm_std::{
     AnyMsg, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo, Response, StdError, StdResult,
     Uint128,
 };
-use prost::Message;
-use rujira_rs::{
-    proto::common::Asset as ProtoAsset, proto::common::Coin as ProtoCoin, proto::types::MsgDeposit,
-    query::Pool, Asset, Layer1Asset, SecuredAsset,
-};
+use rujira_rs::{query::Pool, Asset, Layer1Asset, SecuredAsset};
 
 use crate::types::Exchange;
 
@@ -25,6 +22,40 @@ impl PoolExchange {
         PoolExchange {
             name: "Pool".to_string(),
         }
+    }
+}
+
+struct MsgDeposit {
+    memo: String,
+    coins: Vec<Coin>,
+}
+
+impl MsgDeposit {
+    pub fn new(coins: Vec<Coin>, memo: String) -> Self {
+        Self { memo, coins }
+    }
+}
+
+impl From<MsgDeposit> for CosmosMsg {
+    fn from(value: MsgDeposit) -> Self {
+        let coins: Vec<Anybuf> = value
+            .coins
+            .iter()
+            .map(|c| {
+                Anybuf::new()
+                    .append_string(1, c.denom.to_string())
+                    .append_string(2, c.amount.to_string())
+            })
+            .collect();
+
+        let value = Anybuf::new()
+            .append_repeated_message(1, &coins)
+            .append_string(2, value.memo);
+
+        CosmosMsg::Any(AnyMsg {
+            type_url: "/types.MsgDeposit".to_string(),
+            value: value.as_bytes().into(),
+        })
     }
 }
 
@@ -236,40 +267,24 @@ impl Exchange for PoolExchange {
         swap_amount: Coin,
         minimum_receive_amount: Coin,
     ) -> ContractResult {
-        let memo = format!(
+        let swap_asset = secured_asset(&layer_1_asset(&swap_amount.denom)?)?;
+        let receive_asset = secured_asset(&layer_1_asset(&minimum_receive_amount.denom)?)?;
+
+        let swap_memo = format!(
             "=:{}:{}:{}",
-            minimum_receive_amount.denom, info.sender, minimum_receive_amount.amount
+            receive_asset.denom_string().to_ascii_uppercase(),
+            info.sender,
+            minimum_receive_amount.amount
         );
 
-        let swap_asset = layer_1_asset(&swap_amount.denom)?;
-        let denom_string = swap_asset.denom_string().to_ascii_uppercase();
+        let swap_msg = MsgDeposit::new(
+            vec![Coin {
+                denom: swap_asset.denom_string().to_ascii_uppercase(),
+                amount: swap_amount.amount,
+            }],
+            swap_memo,
+        );
 
-        let (chain, symbol) = denom_string
-            .split_once('.')
-            .ok_or_else(|| StdError::generic_err("Invalid asset format"))?;
-
-        let msg = CosmosMsg::Any(AnyMsg {
-            type_url: "/types.MsgDeposit".to_string(),
-            value: MsgDeposit {
-                coins: vec![ProtoCoin {
-                    asset: Some(ProtoAsset {
-                        chain: chain.to_string(),
-                        symbol: symbol.to_string(),
-                        ticker: symbol.to_string(),
-                        synth: false,
-                        trade: false,
-                        secured: symbol != "RUNE",
-                    }),
-                    amount: swap_amount.amount.to_string(),
-                    decimals: 8,
-                }],
-                memo,
-                signer: info.sender.as_bytes().to_vec(),
-            }
-            .encode_to_vec()
-            .into(),
-        });
-
-        Ok(Response::new().add_message(msg))
+        Ok(Response::new().add_message(swap_msg))
     }
 }
