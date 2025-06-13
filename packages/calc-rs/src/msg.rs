@@ -1,5 +1,5 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin, Decimal, HexBinary};
+use cosmwasm_std::{Addr, Binary, Coin, Decimal};
 
 use crate::types::{
     Affiliate, Condition, ConditionFilter, DcaSchedule, Destination, ExpectedReturnAmount,
@@ -8,14 +8,12 @@ use crate::types::{
 
 #[cw_serde]
 pub struct ManagerInstantiateMsg {
-    pub checksum: HexBinary,
     pub code_id: u64,
     pub fee_collector: Addr,
 }
 
 #[cw_serde]
 pub struct ManagerMigrateMsg {
-    pub checksum: HexBinary,
     pub code_id: u64,
     pub fee_collector: Addr,
 }

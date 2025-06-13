@@ -3,8 +3,15 @@ use calc_rs::{
     types::{ContractResult, ExpectedReturnAmount},
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, Decimal, Deps, MessageInfo, StdError, StdResult, Uint128};
-use rujira_rs::{query::Pool, Asset, Layer1Asset, SecuredAsset};
+use cosmwasm_std::{
+    AnyMsg, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo, Response, StdError, StdResult,
+    Uint128,
+};
+use prost::Message;
+use rujira_rs::{
+    proto::common::Asset as ProtoAsset, proto::common::Coin as ProtoCoin, proto::types::MsgDeposit,
+    query::Pool, Asset, Layer1Asset, SecuredAsset,
+};
 
 use crate::types::Exchange;
 
@@ -185,7 +192,7 @@ impl Exchange for PoolExchange {
             Decimal::one().checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))?;
 
         Ok(ExpectedReturnAmount {
-            amount: Coin {
+            return_amount: Coin {
                 denom: target_denom.to_string(),
                 amount: out_amount,
             },
@@ -224,35 +231,45 @@ impl Exchange for PoolExchange {
     fn swap(
         &self,
         _deps: Deps,
-        _info: MessageInfo,
-        _swap_amount: Coin,
-        _minimum_receive_amount: Coin,
+        _env: Env,
+        info: MessageInfo,
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
     ) -> ContractResult {
-        unimplemented!("PoolExchange::swap is not implemented yet")
-        // let target_asset = Layer1Asset::from_native(minimum_receive_amount.denom).map_err(|e| {
-        //     ContractError::Std(StdError::generic_err(
-        //         format!(
-        //             "Unable to map {} to Layer 1 asset: {}",
-        //             minimum_receive_amount.denom, e
-        //         )
-        //         .as_str(),
-        //     ))
-        // })?;
+        let memo = format!(
+            "=:{}:{}:{}",
+            minimum_receive_amount.denom, info.sender, minimum_receive_amount.amount
+        );
 
-        // MsgSwap {
-        //     tx: todo!(),
-        //     target_asset: todo!(),
-        //     destination: todo!(),
-        //     trade_target: todo!(),
-        //     affiliate_address: todo!(),
-        //     affiliate_basis_points: todo!(),
-        //     signer: todo!(),
-        //     aggregator: todo!(),
-        //     aggregator_target_address: todo!(),
-        //     aggregator_target_limit: todo!(),
-        //     order_type: todo!(),
-        //     stream_quantity: todo!(),
-        //     stream_interval: todo!(),
-        // };
+        let swap_asset = layer_1_asset(&swap_amount.denom)?;
+        let denom_string = swap_asset.denom_string().to_ascii_uppercase();
+
+        let (chain, symbol) = denom_string
+            .split_once('.')
+            .ok_or_else(|| StdError::generic_err("Invalid asset format"))?;
+
+        let msg = CosmosMsg::Any(AnyMsg {
+            type_url: "/types.MsgDeposit".to_string(),
+            value: MsgDeposit {
+                coins: vec![ProtoCoin {
+                    asset: Some(ProtoAsset {
+                        chain: chain.to_string(),
+                        symbol: symbol.to_string(),
+                        ticker: symbol.to_string(),
+                        synth: false,
+                        trade: false,
+                        secured: symbol != "RUNE",
+                    }),
+                    amount: swap_amount.amount.to_string(),
+                    decimals: 8,
+                }],
+                memo,
+                signer: info.sender.as_bytes().to_vec(),
+            }
+            .encode_to_vec()
+            .into(),
+        });
+
+        Ok(Response::new().add_message(msg))
     }
 }

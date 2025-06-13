@@ -125,7 +125,7 @@ const uploadAndInstantiateManagerContract = async (codeId: number) => {
     {
       code_id: codeId,
       checksum:
-        "bb8bf7d32a57b6616da5342f5641edf9ff9e667ff0627b9b2b4e8a2de04afbab",
+        "5555798dd8a1556f533e2b6aa9aaa1ce933e6f6033b8027d07764be9ca19d0c3",
       fee_collector: adminAddress,
     },
     "Manager Contract"
@@ -155,7 +155,7 @@ const uploadAndMigrateManagerContract = async (codeId: number) => {
     {
       code_id: codeId,
       checksum:
-        "54f5909fd6075c3eb4298a3677fd4605e4da571033c0936de9fe15f960d72dd8",
+        "66839ec3b3536bbdc5b714ef7e462fcd0d265f1f8df7f96eb28f8d68934ce8f1",
       fee_collector: adminAddress,
     }
   );
@@ -228,7 +228,11 @@ const uploadPairs = async () => {
 
 const fetchBalances = async (address: string) => {
   const stargateClient = await StargateClient.connect(process.env.RPC_URL!);
-  return stargateClient.getAllBalances(address);
+  const balances = await stargateClient.getAllBalances(address);
+
+  console.log("Balances:", balances);
+
+  return balances;
 };
 
 const getExpectedReceiveAmount = async () => {
@@ -236,10 +240,10 @@ const getExpectedReceiveAmount = async () => {
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     expected_receive_amount: {
       swap_amount: {
-        denom: "ETH-ETH",
-        amount: "100000000",
+        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
+        amount: "10000000",
       },
-      target_denom: "ETH-USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7",
+      target_denom: "rune",
     },
   });
 
@@ -250,8 +254,8 @@ const getSpotPrice = async () => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     spot_price: {
-      swap_denom: "ETH-ETH",
-      target_denom: "ETH-USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7",
+      swap_denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
+      target_denom: "rune",
       period: 0,
     },
   });
@@ -264,14 +268,49 @@ const getRoute = async () => {
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     route: {
       swap_amount: {
-        denom: "ETH-ETH",
+        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
         amount: "100000000",
       },
-      target_denom: "ETH-USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7",
+      target_denom: "rune",
     },
   });
 
   console.log("Route:", response);
+};
+
+const swap = async () => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWallet());
+  const response = await cosmWasmClient.execute(
+    account,
+    EXCHANGE_ADDRESS,
+    {
+      swap: {
+        minimum_receive_amount: {
+          denom: "rune",
+          amount: "0",
+        },
+      },
+    },
+    "auto",
+    "Swap",
+    [
+      {
+        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
+        amount: "10000000",
+      },
+    ]
+  );
+  console.log("Swap response:", response);
+};
+
+const getConfig = async (contractAddress: string) => {
+  const cosmWasmClient = await getSigner();
+  const response = await cosmWasmClient.queryContractSmart(contractAddress, {
+    config: {},
+  });
+
+  console.log("Config:", response);
 };
 
 const createStrategy = async () => {
@@ -342,12 +381,11 @@ const createStrategy = async () => {
   console.log("Strategies:", strategies);
 };
 
-const getStrategy = async () => {
+const getStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(MANAGER_ADDRESS, {
     strategy: {
-      address:
-        "sthor1c8tvw6msz439ed6yz4p2jnfjszyazpsfdxtrx9rz6m4q7d7x22cqgrsu0u",
+      address,
     },
   });
   console.log("Strategy:", response);
@@ -407,20 +445,21 @@ const withdrawFromStrategy = async (address: string) => {
 };
 
 const STRATEGY_ADDRESS =
-  "sthor1c8tvw6msz439ed6yz4p2jnfjszyazpsfdxtrx9rz6m4q7d7x22cqgrsu0u";
+  "sthor1rycyu6frrcpm5ayhvlmheyhg67v4xjdghecpxhv2d3yt67lmwvlqd8r3yt";
 
 // uploadContractSuite();
-// fetchBalances();
+// fetchBalances(STRATEGY_ADDRESS);
 // createStrategy();
-// getStrategy();
+// getStrategy(STRATEGY_ADDRESS);
 // getStrategies();
-// getStrategyConfig(STRATEGY_ADDRESS);
+// getConfig(MANAGER_ADDRESS);
 // executeStrategy(STRATEGY_ADDRESS);
-withdrawFromStrategy(STRATEGY_ADDRESS);
+// withdrawFromStrategy(STRATEGY_ADDRESS);
 // uploadAndMigrateExchangeContract();
 // uploadAndMigrateContractSuite();
 // uploadContractSuite();
 // getSpotPrice();
 // getExpectedReceiveAmount();
 // getRoute();
+swap();
 // uploadAndInstantiateExchangeContract();

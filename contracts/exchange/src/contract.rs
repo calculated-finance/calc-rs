@@ -41,11 +41,12 @@ enum CustomMsg {
 #[entry_point]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: ExchangeExecuteMsg,
 ) -> ContractResult {
-    let exchanges = vec![FinExchange::new()];
+    let exchanges: Vec<Box<dyn Exchange>> =
+        vec![Box::new(FinExchange::new()), Box::new(PoolExchange::new())];
 
     match msg {
         ExchangeExecuteMsg::Swap {
@@ -78,7 +79,7 @@ pub fn execute(
                             )
                             .as_str(),
                         )
-                        .amount
+                        .return_amount
                         .amount
                         .cmp(
                             &b.get_expected_receive_amount(
@@ -93,7 +94,7 @@ pub fn execute(
                                 )
                                 .as_str(),
                             )
-                            .amount
+                            .return_amount
                             .amount,
                         )
                 });
@@ -101,6 +102,7 @@ pub fn execute(
             match best_exchange {
                 Some(exchange) => exchange.swap(
                     deps.as_ref(),
+                    env,
                     info,
                     swap_amount.clone(),
                     minimum_receive_amount,
@@ -188,7 +190,7 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
                 e.get_expected_receive_amount(deps, swap_amount.clone(), &target_denom)
                     .ok()
             })
-            .max_by(|a, b| a.amount.amount.cmp(&b.amount.amount))
+            .max_by(|a, b| a.return_amount.amount.cmp(&b.return_amount.amount))
             .map_or_else(
                 || {
                     Err(StdError::generic_err(format!(

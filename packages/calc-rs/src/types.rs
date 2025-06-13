@@ -2,9 +2,9 @@ use std::{time::Duration, u8};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
-    Decimal, Env, Event, HexBinary, Instantiate2AddressError, OverflowError, Response, StdError,
-    StdResult, Timestamp, Uint128, WasmMsg,
+    to_json_string, Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
+    CoinsError, CosmosMsg, Decimal, Env, Event, Instantiate2AddressError, OverflowError, Response,
+    StdError, StdResult, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 use rujira_rs::query::PoolError;
@@ -53,14 +53,13 @@ pub type ContractResult = Result<Response, ContractError>;
 #[cw_serde]
 pub struct ManagerConfig {
     pub admin: Addr,
-    pub checksum: HexBinary,
     pub code_id: u64,
     pub fee_collector: Addr,
 }
 
 #[cw_serde]
 pub struct ExpectedReturnAmount {
-    pub amount: Coin,
+    pub return_amount: Coin,
     pub slippage: Decimal,
 }
 
@@ -314,7 +313,7 @@ pub struct Strategy {
 }
 
 pub enum DomainEvent {
-    StrategyCreated {
+    StrategyInstantiated {
         contract_address: Addr,
         config: StrategyConfig,
     },
@@ -372,12 +371,15 @@ pub enum DomainEvent {
 impl From<DomainEvent> for Event {
     fn from(event: DomainEvent) -> Self {
         match event {
-            DomainEvent::StrategyCreated {
+            DomainEvent::StrategyInstantiated {
                 contract_address,
                 config,
             } => Event::new("strategy_created")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("config", format!("{:?}", config)),
+                .add_attribute(
+                    "config",
+                    to_json_string(&config).expect("Failed to serialize config"),
+                ),
             DomainEvent::StrategyPaused {
                 contract_address,
                 reason,
@@ -394,8 +396,14 @@ impl From<DomainEvent> for Event {
                 new_config,
             } => Event::new("strategy_updated")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("old_config", format!("{:?}", old_config))
-                .add_attribute("new_config", format!("{:?}", new_config)),
+                .add_attribute(
+                    "old_config",
+                    to_json_string(&old_config).expect("Failed to serialize old config"),
+                )
+                .add_attribute(
+                    "new_config",
+                    to_json_string(&new_config).expect("Failed to serialize new config"),
+                ),
             DomainEvent::FundsDeposited {
                 contract_address,
                 from,
@@ -403,7 +411,10 @@ impl From<DomainEvent> for Event {
             } => Event::new("funds_deposited")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("from", from.as_str())
-                .add_attribute("amount", format!("{:?}", amount)),
+                .add_attribute(
+                    "amount",
+                    to_json_string(&amount).expect("Failed to serialize amount"),
+                ),
             DomainEvent::FundsWithdrawn {
                 contract_address,
                 to,
@@ -411,13 +422,19 @@ impl From<DomainEvent> for Event {
             } => Event::new("funds_withdrawn")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("to", to.as_str())
-                .add_attribute("amount", format!("{:?}", amount)),
+                .add_attribute(
+                    "amount",
+                    to_json_string(&amount).expect("Failed to serialize withdrawn amount"),
+                ),
             DomainEvent::ExecutionSucceeded {
                 contract_address,
                 statistics,
             } => Event::new("execution_succeeded")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("statistics", format!("{:?}", statistics)),
+                .add_attribute(
+                    "statistics",
+                    to_json_string(&statistics).expect("Failed to serialize statistics"),
+                ),
             DomainEvent::ExecutionFailed {
                 contract_address,
                 reason: error,
@@ -435,7 +452,10 @@ impl From<DomainEvent> for Event {
                 conditions,
             } => Event::new("scheduling_succeeded")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("conditions", format!("{:?}", conditions)),
+                .add_attribute(
+                    "conditions",
+                    to_json_string(&conditions).expect("Failed to serialize conditions"),
+                ),
             DomainEvent::SchedulingFailed {
                 contract_address,
                 reason: error,

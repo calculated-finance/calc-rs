@@ -1,6 +1,6 @@
 use calc_rs::types::{ContractResult, ExpectedReturnAmount};
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Decimal, Deps, MessageInfo, StdResult};
+use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, MessageInfo, StdResult};
 
 pub trait Exchange {
     fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> StdResult<bool>;
@@ -20,6 +20,7 @@ pub trait Exchange {
     fn swap(
         &self,
         deps: Deps,
+        env: Env,
         info: MessageInfo,
         swap_amount: Coin,
         minimum_receive_amount: Coin,

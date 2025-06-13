@@ -22,6 +22,7 @@ overflow-checks = true
 library = []
 
 [dependencies]
+anybuf = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }
 cw-storage-plus = { workspace = true }
@@ -30,6 +31,7 @@ cw-utils = { workspace = true }
 rujira-rs = { workspace = true }
 calc-rs = { workspace = true }
 schemars = { workspace = true }
+prost = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

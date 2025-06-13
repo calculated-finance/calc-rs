@@ -4,8 +4,8 @@ use calc_rs::{
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Coin, Decimal, Deps, MessageInfo, QueryRequest, Response, StdError, StdResult,
-    WasmQuery,
+    to_json_binary, Coin, Decimal, Deps, Env, MessageInfo, QueryRequest, Response, StdError,
+    StdResult, WasmQuery,
 };
 use rujira_rs::fin::{BookResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest};
 
@@ -40,7 +40,7 @@ impl Exchange for FinExchange {
         let receive_amount =
             self.get_expected_receive_amount(deps, swap_amount.clone(), target_denom)?;
 
-        Ok(vec![swap_amount, receive_amount.amount])
+        Ok(vec![swap_amount, receive_amount.return_amount])
     }
 
     fn get_expected_receive_amount(
@@ -77,7 +77,7 @@ impl Exchange for FinExchange {
                 ))?;
 
                 Ok(ExpectedReturnAmount {
-                    amount: Coin {
+                    return_amount: Coin {
                         denom: target_denom.to_string(),
                         amount: simulation.returned,
                     },
@@ -140,6 +140,7 @@ impl Exchange for FinExchange {
     fn swap(
         &self,
         deps: Deps,
+        _env: Env,
         info: MessageInfo,
         swap_amount: Coin,
         minimum_receive_amount: Coin,

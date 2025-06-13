@@ -636,6 +636,7 @@ dependencies = [
 name = "exchange"
 version = "0.1.0"
 dependencies = [
+ "anybuf",
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -643,6 +644,7 @@ dependencies = [
  "cw-storage-plus",
  "cw-utils",
  "cw2",
+ "prost",
  "rujira-rs",
  "schemars",
  "serde",

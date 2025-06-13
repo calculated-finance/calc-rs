@@ -1,55 +1,53 @@
-use calc_rs::types::{Affiliate, ManagerConfig, Status, Strategy};
+use calc_rs::types::{Affiliate, ManagerConfig, Strategy};
 use cosmwasm_std::Addr;
-use cw_storage_plus::{Index, IndexList, IndexedMap, Item, Map, UniqueIndex};
+use cw_storage_plus::{Index, IndexList, IndexedMap, Item, Map, MultiIndex};
 
 pub const CONFIG: Item<ManagerConfig> = Item::new("config");
 
 pub const STRATEGY_COUNTER: Item<u64> = Item::new("strategy_counter");
 
-pub struct Strategies<'a> {
-    pub owner_updated_at: UniqueIndex<'a, (Addr, u64, Addr), Strategy, Addr>,
-    pub owner_status: UniqueIndex<'a, (Addr, u8, Addr), Strategy, Addr>,
-    pub updated_at: UniqueIndex<'a, (u64, Addr), Strategy, Addr>,
-    pub status_updated_at: UniqueIndex<'a, (Status, u64, Addr), Strategy, Addr>,
+pub struct StrategyIndexes<'a> {
+    pub updated_at: MultiIndex<'a, u64, Strategy, Addr>,
+    pub owner_updated_at: MultiIndex<'a, (Addr, u64), Strategy, Addr>,
+    pub status_updated_at: MultiIndex<'a, (u8, u64), Strategy, Addr>,
+    pub owner_status_updated_at: MultiIndex<'a, (Addr, u8, u64), Strategy, Addr>,
 }
 
-impl<'a> IndexList<Strategy> for Strategies<'a> {
+impl<'a> IndexList<Strategy> for StrategyIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Strategy>> + '_> {
         let s: Vec<&dyn Index<Strategy>> = vec![
-            &self.owner_updated_at,
-            &self.owner_status,
             &self.updated_at,
+            &self.owner_updated_at,
             &self.status_updated_at,
+            &self.owner_status_updated_at,
         ];
         Box::new(s.into_iter())
     }
 }
 
-pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, Strategies<'a>> {
+pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, StrategyIndexes<'a>> {
     IndexedMap::new(
-        "strategies_v1",
-        Strategies {
-            owner_updated_at: UniqueIndex::new(
-                |s| (s.owner.clone(), s.updated_at, s.contract_address.clone()),
-                "strategies_v1__owner_updated_at",
+        "strategies",
+        StrategyIndexes {
+            updated_at: MultiIndex::new(
+                |_, s| (s.updated_at),
+                "strategies",
+                "strategies_updated_at",
             ),
-            owner_status: UniqueIndex::new(
-                |s| {
-                    (
-                        s.owner.clone(),
-                        s.status.clone() as u8,
-                        s.contract_address.clone(),
-                    )
-                },
-                "strategies_v1__owner_status",
+            owner_updated_at: MultiIndex::new(
+                |_, s| (s.owner.clone(), s.updated_at),
+                "strategies",
+                "strategies_owner_updated_at",
             ),
-            updated_at: UniqueIndex::new(
-                |s| (s.updated_at, s.contract_address.clone()),
-                "strategies_v1__updated_at",
+            status_updated_at: MultiIndex::new(
+                |_, s| (s.status.clone() as u8, s.updated_at),
+                "strategies",
+                "strategies_status_updated_at",
             ),
-            status_updated_at: UniqueIndex::new(
-                |s| (s.status.clone(), s.updated_at, s.contract_address.clone()),
-                "strategies_v1__status_updated_at",
+            owner_status_updated_at: MultiIndex::new(
+                |_, s| (s.owner.clone(), s.status.clone() as u8, s.updated_at),
+                "strategies",
+                "strategies_owner_status_updated_at",
             ),
         },
     )

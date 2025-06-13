@@ -14,6 +14,7 @@ incremental = false
 overflow-checks = true
 
 [workspace.dependencies]
+anybuf = "0.5"
 calc-rs = { path = "packages/calc-rs" }
 cosmwasm-schema = "2.2.0"
 cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1"] }

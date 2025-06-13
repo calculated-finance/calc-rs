@@ -26,7 +26,6 @@ pub fn instantiate(
         deps.storage,
         &ManagerConfig {
             admin: info.sender,
-            checksum: msg.checksum,
             code_id: msg.code_id,
             fee_collector: msg.fee_collector,
         },
@@ -41,13 +40,10 @@ pub fn instantiate(
 pub fn migrate(deps: DepsMut, _: Env, msg: ManagerMigrateMsg) -> ContractResult {
     let admin = CONFIG.load(deps.storage)?.admin;
 
-    STRATEGY_COUNTER.save(deps.storage, &0)?; // TODO: remove
-
     CONFIG.save(
         deps.storage,
         &ManagerConfig {
             admin,
-            checksum: msg.checksum,
             code_id: msg.code_id,
             fee_collector: msg.fee_collector,
         },
@@ -71,19 +67,20 @@ pub fn execute(
         } => {
             let config = CONFIG.load(deps.storage)?;
 
-            let salt = to_json_binary(&(
-                env.block.time.seconds(),
-                owner.clone(),
-                STRATEGY_COUNTER.load(deps.storage)?,
-            ))?;
+            let strategy_id = STRATEGY_COUNTER.load(deps.storage)? + 1;
+
+            let salt = to_json_binary(&(owner.clone(), strategy_id, env.block.time.seconds()))?;
 
             let contract_address = deps.api.addr_humanize(&instantiate2_address(
-                &config.checksum,
+                &deps
+                    .querier
+                    .query_wasm_code_info(config.code_id)?
+                    .checksum
+                    .as_slice(),
                 &deps.api.addr_canonicalize(env.contract.address.as_str())?,
                 &salt,
             )?)?;
 
-            let strategy_id = STRATEGY_COUNTER.may_load(deps.storage)?.unwrap_or_default() + 1;
             STRATEGY_COUNTER.save(deps.storage, &strategy_id)?;
 
             strategy_store().save(
@@ -91,7 +88,7 @@ pub fn execute(
                 contract_address.clone(),
                 &Strategy {
                     owner: owner.clone(),
-                    contract_address,
+                    contract_address: contract_address.clone(),
                     created_at: env.block.time.seconds(),
                     updated_at: env.block.time.seconds(),
                     executions: 0,
@@ -101,17 +98,21 @@ pub fn execute(
                 },
             )?;
 
-            Ok(Response::default().add_message(WasmMsg::Instantiate2 {
+            let instantiate_strategy_msg = WasmMsg::Instantiate2 {
                 admin: Some(owner.to_string()),
                 code_id: config.code_id,
                 label,
                 msg: to_json_binary(&StrategyInstantiateMsg {
                     fee_collector: config.fee_collector,
-                    strategy,
+                    strategy: strategy.clone(),
                 })?,
                 funds: info.funds,
                 salt,
-            }))
+            };
+
+            Ok(Response::default()
+                .add_message(instantiate_strategy_msg)
+                .add_attribute("strategy_contract_address", contract_address))
         }
         ManagerExecuteMsg::ExecuteStrategy { contract_address } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
@@ -265,34 +266,29 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
         ManagerQueryMsg::Strategies {
             owner,
             status,
-            start_after,
+            start_after: _,
             limit,
         } => to_json_binary(
-            &(match owner {
+            &match owner {
                 Some(owner) => match status {
                     Some(status) => strategy_store()
                         .idx
-                        .owner_status
-                        .prefix((owner, status as u8)),
+                        .owner_status_updated_at
+                        .sub_prefix((owner.into(), status as u8)),
                     None => strategy_store()
                         .idx
                         .owner_updated_at
-                        .prefix((owner, u64::MAX)),
+                        .sub_prefix(owner.into()),
                 },
                 None => match status {
                     Some(status) => strategy_store()
                         .idx
                         .status_updated_at
-                        .prefix((status, u64::MAX)),
-                    None => strategy_store().idx.updated_at.prefix(u64::MAX),
+                        .sub_prefix(status as u8),
+                    None => strategy_store().idx.updated_at.sub_prefix(()),
                 },
             }
-            .range(
-                deps.storage,
-                start_after.map(Bound::exclusive),
-                None,
-                Order::Ascending,
-            )
+            .range(deps.storage, None, None, Order::Descending)
             .take(match limit {
                 Some(limit) => match limit {
                     0..=30 => limit as usize,
@@ -300,8 +296,8 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
                 },
                 None => 30,
             })
-            .flat_map(|result| result.map(|(_, handle)| handle))
-            .collect::<Vec<Strategy>>()),
+            .flat_map(|result| result.map(|(_, strategy)| strategy))
+            .collect::<Vec<Strategy>>(),
         ),
         ManagerQueryMsg::Affiliate { code } => {
             to_json_binary(&AFFILIATES.load(deps.storage, code)?)
@@ -328,4 +324,54 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use calc_rs::{
+        msg::ManagerQueryMsg,
+        types::{Status, Strategy},
+    };
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        to_json_binary, Addr,
+    };
+
+    use crate::{contract::query, state::strategy_store};
+
+    #[test]
+    fn can_fetch_strategies() {
+        let sender = Addr::unchecked("sender");
+
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let contract_address = Addr::unchecked("strategy");
+
+        let strategy = Strategy {
+            owner: sender.clone(),
+            contract_address: contract_address.clone(),
+            created_at: env.block.time.seconds(),
+            updated_at: env.block.time.seconds(),
+            executions: 0,
+            label: "Test Strategy".to_string(),
+            status: Status::Active,
+            affiliates: Vec::new(),
+        };
+
+        strategy_store()
+            .save(&mut deps.storage, sender.clone(), &strategy)
+            .unwrap();
+
+        let strategies = query(
+            deps.as_ref(),
+            env.clone(),
+            ManagerQueryMsg::Strategies {
+                owner: None,
+                status: None,
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(strategies, to_json_binary(&vec![strategy]).unwrap());
+    }
+}

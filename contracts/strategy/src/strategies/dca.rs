@@ -18,7 +18,7 @@ use cosmwasm_std::{
 };
 
 use crate::{
-    state::{FEE_COLLECTOR, IS_EXECUTING, MANAGER},
+    state::{FEE_COLLECTOR, MANAGER},
     types::Runnable,
 };
 
@@ -227,7 +227,7 @@ impl Runnable for DcaStrategyConfig {
 
         self.validate(deps)?;
 
-        let strategy_created_event = DomainEvent::StrategyCreated {
+        let strategy_created_event = DomainEvent::StrategyInstantiated {
             contract_address: env.contract.address.clone(),
             config: StrategyConfig::Dca(self.clone()),
         };
@@ -300,12 +300,6 @@ impl Runnable for DcaStrategyConfig {
     }
 
     fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<()> {
-        if IS_EXECUTING.load(deps.storage)? {
-            return Err(StdError::generic_err(
-                "Strategy is already executing, cannot execute again",
-            ));
-        }
-
         let swap_amount = get_swap_amount(deps, env, self)?;
 
         if swap_amount.amount.is_zero() {
