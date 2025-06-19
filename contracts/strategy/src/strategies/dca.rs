@@ -45,6 +45,7 @@ fn get_swap_message(strategy: &DcaStrategyConfig, deps: Deps, env: &Env) -> StdR
     let swap_msg = Contract(strategy.exchange_contract.clone()).call(
         to_json_binary(&ExchangeExecuteMsg::Swap {
             minimum_receive_amount: strategy.minimum_receive_amount.clone(),
+            recipient: None,
             route: None,
         })?,
         vec![swap_amount],

@@ -235,15 +235,33 @@ const fetchBalances = async (address: string) => {
   return balances;
 };
 
+const canSwap = async () => {
+  const cosmWasmClient = await getSigner();
+  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
+    can_swap: {
+      swap_amount: {
+        denom: "rune",
+        amount: "100000000",
+      },
+      minimum_receive_amount: {
+        denom: "x/ruji",
+        amount: "49000",
+      },
+    },
+  });
+
+  console.log("Can swap response:", response);
+};
+
 const getExpectedReceiveAmount = async () => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     expected_receive_amount: {
       swap_amount: {
-        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
-        amount: "10000000",
+        denom: "rune",
+        amount: "100000000",
       },
-      target_denom: "rune",
+      target_denom: "x/ruji",
     },
   });
 
@@ -254,8 +272,8 @@ const getSpotPrice = async () => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     spot_price: {
-      swap_denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
-      target_denom: "rune",
+      swap_denom: "rune",
+      target_denom: "x/ruji",
       period: 0,
     },
   });
@@ -268,10 +286,10 @@ const getRoute = async () => {
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     route: {
       swap_amount: {
-        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
+        denom: "rune",
         amount: "100000000",
       },
-      target_denom: "rune",
+      target_denom: "x/ruji",
     },
   });
 
@@ -287,7 +305,7 @@ const swap = async () => {
     {
       swap: {
         minimum_receive_amount: {
-          denom: "rune",
+          denom: "x/ruji",
           amount: "0",
         },
       },
@@ -296,7 +314,7 @@ const swap = async () => {
     "Swap",
     [
       {
-        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
+        denom: "rune",
         amount: "10000000",
       },
     ]
@@ -444,6 +462,50 @@ const withdrawFromStrategy = async (address: string) => {
   console.log("Withdraw Response:", response);
 };
 
+const customQuery = async (
+  contractAddress: string,
+  msg: Record<string, unknown>
+) => {
+  const cosmWasmClient = await getSigner();
+  const response = await cosmWasmClient.queryContractSmart(
+    contractAddress,
+    msg
+  );
+  console.log("Custom Query Response:", response);
+  return response;
+};
+
+const customExecute = async (
+  contractAddress: string,
+  msg: Record<string, unknown>,
+  funds: Coin[] = []
+) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWallet());
+  const response = await cosmWasmClient.execute(
+    account,
+    contractAddress,
+    msg,
+    "auto",
+    undefined,
+    funds
+  );
+
+  console.log("Custom Execute Response:", response);
+};
+
+const getFinBook = async (pairAddress: string) => {
+  const cosmWasmClient = await getSigner();
+
+  const book = await cosmWasmClient.queryContractSmart(pairAddress, {
+    book: {
+      limit: 1,
+    },
+  });
+
+  console.log("Financial Book:", book);
+};
+
 const STRATEGY_ADDRESS =
   "sthor1rycyu6frrcpm5ayhvlmheyhg67v4xjdghecpxhv2d3yt67lmwvlqd8r3yt";
 
@@ -458,8 +520,37 @@ const STRATEGY_ADDRESS =
 // uploadAndMigrateExchangeContract();
 // uploadAndMigrateContractSuite();
 // uploadContractSuite();
+// getFinBook("sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r");
+// canSwap();
 // getSpotPrice();
 // getExpectedReceiveAmount();
 // getRoute();
-swap();
+// swap();
 // uploadAndInstantiateExchangeContract();
+// customQuery(EXCHANGE_ADDRESS, {
+//   custom: {},
+// });
+
+// customQuery(
+//   "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r",
+//   {
+//     config: {},
+//   }
+// );
+
+// customExecute(EXCHANGE_ADDRESS, {
+//   custom: Buffer.from(
+//     JSON.stringify({
+//       create_pairs: {
+//         pairs: [
+//           {
+//             quote_denom: "rune",
+//             base_denom: "x/ruji",
+//             address:
+//               "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r",
+//           },
+//         ],
+//       },
+//     })
+//   ).toBase64(),
+// });

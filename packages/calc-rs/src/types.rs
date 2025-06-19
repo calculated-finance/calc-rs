@@ -7,12 +7,11 @@ use cosmwasm_std::{
     StdError, StdResult, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
-use rujira_rs::query::PoolError;
 use thiserror::Error;
 
 use crate::msg::InstantiateStrategyConfig;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
@@ -31,9 +30,6 @@ pub enum ContractError {
 
     #[error("{0}")]
     CoinsError(#[from] CoinsError),
-
-    #[error("{0}")]
-    PoolError(#[from] PoolError),
 
     #[error("Unauthorized")]
     Unauthorized {},

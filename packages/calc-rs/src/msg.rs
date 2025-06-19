@@ -122,6 +122,7 @@ pub enum StrategyQueryMsg {
 pub enum ExchangeExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
+        recipient: Option<Addr>,
         route: Option<Binary>,
     },
     Custom(Binary),
@@ -130,6 +131,11 @@ pub enum ExchangeExecuteMsg {
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum ExchangeQueryMsg {
+    #[returns(bool)]
+    CanSwap {
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+    },
     #[returns(Vec<Coin>)]
     Route {
         swap_amount: Coin,
@@ -139,14 +145,14 @@ pub enum ExchangeQueryMsg {
     SpotPrice {
         swap_denom: String,
         target_denom: String,
-        route: Option<Binary>,
     },
     #[returns(ExpectedReturnAmount)]
     ExpectedReceiveAmount {
         swap_amount: Coin,
         target_denom: String,
-        route: Option<Binary>,
     },
+    #[returns(String)]
+    Custom {},
 }
 
 #[cw_serde]

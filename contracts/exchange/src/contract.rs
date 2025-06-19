@@ -7,10 +7,12 @@ use cosmwasm_std::{
     from_json, to_json_binary, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response, StdError,
     StdResult, Uint128,
 };
+use rujira_rs::proto::types::{QueryQuoteSwapRequest, QueryQuoteSwapResponse};
+use rujira_rs::NativeAsset;
 
-use crate::exchanges::fin::{FinExchange, Pair};
-use crate::exchanges::pool::PoolExchange;
-use crate::state::{delete_pair, save_pair, ADMIN};
+use crate::exchanges::fin::{delete_pair, save_pair, FinExchange, Pair};
+use crate::exchanges::thor::{Queryable, ThorExchange};
+use crate::state::ADMIN;
 use crate::types::Exchange;
 
 #[cw_serde]
@@ -38,19 +40,24 @@ enum CustomMsg {
     DeletePairs { pairs: Vec<Pair> },
 }
 
-#[entry_point]
+#[cfg(not(feature = "library"))]
+pub fn get_exchanges() -> Vec<Box<dyn Exchange>> {
+    vec![Box::new(FinExchange::new()), Box::new(ThorExchange::new())]
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: ExchangeExecuteMsg,
 ) -> ContractResult {
-    let exchanges: Vec<Box<dyn Exchange>> =
-        vec![Box::new(FinExchange::new()), Box::new(PoolExchange::new())];
+    let exchanges = get_exchanges();
 
     match msg {
         ExchangeExecuteMsg::Swap {
             minimum_receive_amount,
+            recipient,
             ..
         } => {
             if info.funds.len() != 1 {
@@ -67,11 +74,30 @@ pub fn execute(
             let best_exchange = exchanges
                 .iter()
                 .filter(|e| {
-                    e.can_swap(deps.as_ref(), &swap_amount.denom, &target_denom)
+                    e.can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
                         .unwrap_or(false)
                 })
                 .max_by(|a, b| {
-                    a.get_expected_receive_amount(deps.as_ref(), swap_amount.clone(), &target_denom)
+                    a.expected_receive_amount(
+                        deps.as_ref(),
+                        &swap_amount,
+                        &NativeAsset::new(&target_denom),
+                    )
+                    .expect(
+                        format!(
+                            "Failed to get expected receive amount for {} to {}",
+                            swap_amount.denom, target_denom
+                        )
+                        .as_str(),
+                    )
+                    .return_amount
+                    .amount
+                    .cmp(
+                        &b.expected_receive_amount(
+                            deps.as_ref(),
+                            &swap_amount,
+                            &NativeAsset::new(&target_denom),
+                        )
                         .expect(
                             format!(
                                 "Failed to get expected receive amount for {} to {}",
@@ -80,32 +106,17 @@ pub fn execute(
                             .as_str(),
                         )
                         .return_amount
-                        .amount
-                        .cmp(
-                            &b.get_expected_receive_amount(
-                                deps.as_ref(),
-                                swap_amount.clone(),
-                                &target_denom,
-                            )
-                            .expect(
-                                format!(
-                                    "Failed to get expected receive amount for {} to {}",
-                                    swap_amount.denom, target_denom
-                                )
-                                .as_str(),
-                            )
-                            .return_amount
-                            .amount,
-                        )
+                        .amount,
+                    )
                 });
 
             match best_exchange {
                 Some(exchange) => exchange.swap(
                     deps.as_ref(),
                     env,
-                    info,
-                    swap_amount.clone(),
-                    minimum_receive_amount,
+                    &swap_amount,
+                    &minimum_receive_amount,
+                    recipient.unwrap_or(info.sender.clone()),
                 ),
                 None => Err(StdError::generic_err(format!(
                     "Unable to find an exchange for swapping {} to {}",
@@ -137,12 +148,39 @@ pub fn execute(
     }
 }
 
-#[entry_point]
-pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
-    let exchanges: Vec<Box<dyn Exchange>> =
-        vec![Box::new(FinExchange::new()), Box::new(PoolExchange::new())];
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn query(deps: Deps, env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
+    let exchanges = get_exchanges();
 
     match msg {
+        ExchangeQueryMsg::Custom {} => {
+            let response = QueryQuoteSwapResponse::get(
+                deps.querier,
+                QueryQuoteSwapRequest {
+                    from_asset: "THOR.RUNE".to_string(),
+                    to_asset: "ETH.ETH".to_string(),
+                    amount: 100000000.to_string(),
+                    streaming_interval: 1.to_string(),
+                    streaming_quantity: 1.to_string(),
+                    destination: env.contract.address.to_string(),
+                    tolerance_bps: 50.to_string(),
+                    refund_address: env.contract.address.to_string(),
+                    affiliate: vec![],
+                    affiliate_bps: vec![],
+                    height: 0.to_string(),
+                },
+            )
+            .unwrap();
+
+            Ok(to_json_binary(&response.expected_amount_out)?)
+        }
+        ExchangeQueryMsg::CanSwap {
+            swap_amount,
+            minimum_receive_amount,
+        } => to_json_binary(&exchanges.iter().any(|e| {
+            e.can_swap(deps, &swap_amount, &minimum_receive_amount)
+                .unwrap_or(false)
+        })),
         ExchangeQueryMsg::Route {
             swap_amount,
             target_denom,
@@ -150,10 +188,20 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
             let route = exchanges
                 .iter()
                 .filter(|e| {
-                    e.can_swap(deps, &swap_amount.denom, &target_denom)
-                        .unwrap_or(false)
+                    e.can_swap(
+                        deps,
+                        &swap_amount,
+                        &Coin {
+                            denom: target_denom.clone(),
+                            amount: Uint128::one(),
+                        },
+                    )
+                    .unwrap_or(false)
                 })
-                .flat_map(|e| e.route(deps, swap_amount.clone(), &target_denom).ok())
+                .flat_map(|e| {
+                    e.route(deps, &swap_amount, &NativeAsset::new(&target_denom))
+                        .ok()
+                })
                 .max_by(|a, b| {
                     let empty = Coin {
                         denom: target_denom.clone(),
@@ -169,8 +217,18 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
 
             if route.is_empty() {
                 return Err(StdError::generic_err(format!(
-                    "Unable to find an exchange for swapping {} to {}",
-                    swap_amount.denom, target_denom
+                    "Unable to find an exchange for swapping {} to {}. Errors: [{}]",
+                    swap_amount.denom,
+                    target_denom,
+                    exchanges
+                        .iter()
+                        .flat_map(|e| {
+                            e.route(deps, &swap_amount, &NativeAsset::new(&target_denom))
+                                .err()
+                                .map(|e| e.to_string())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )));
             }
 
@@ -183,11 +241,18 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
         } => exchanges
             .iter()
             .filter(|e| {
-                e.can_swap(deps, &swap_amount.denom, &target_denom)
-                    .unwrap_or(false)
+                e.can_swap(
+                    deps,
+                    &swap_amount,
+                    &Coin {
+                        denom: target_denom.clone(),
+                        amount: Uint128::one(),
+                    },
+                )
+                .unwrap_or(false)
             })
             .flat_map(|e| {
-                e.get_expected_receive_amount(deps, swap_amount.clone(), &target_denom)
+                e.expected_receive_amount(deps, &swap_amount, &NativeAsset::new(&target_denom))
                     .ok()
             })
             .max_by(|a, b| a.return_amount.amount.cmp(&b.return_amount.amount))
@@ -206,11 +271,14 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
             ..
         } => exchanges
             .iter()
-            .filter(|e| {
-                e.can_swap(deps, &swap_denom, &target_denom)
-                    .unwrap_or(false)
+            .map(|e| {
+                e.spot_price(
+                    deps,
+                    &NativeAsset::new(&swap_denom),
+                    &NativeAsset::new(&target_denom),
+                )
+                .ok()
             })
-            .flat_map(|e| e.get_spot_price(deps, &swap_denom, &target_denom).ok())
             .max_by(|a, b| a.cmp(&b))
             .map_or_else(
                 || {
@@ -223,6 +291,3 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> 
             ),
     }
 }
-
-#[cfg(test)]
-mod tests {}

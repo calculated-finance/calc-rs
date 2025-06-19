@@ -36,6 +36,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecb50559f19eb92f65279f9de03e4625ed0572e7564ef3de5253e13928c55266"
 
 [[package]]
+name = "anybuf"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7658b7ea4a6843aad293ca2d3b0ba4d200b9720b18a5db0cea478dace9a9716"
+
+[[package]]
 name = "anyhow"
 version = "1.0.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -636,7 +642,7 @@ dependencies = [
 name = "exchange"
 version = "0.1.0"
 dependencies = [
- "anybuf",
+ "anybuf 1.0.0",
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -648,6 +654,7 @@ dependencies = [
  "rujira-rs",
  "schemars",
  "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1088,7 +1095,7 @@ name = "rujira-rs"
 version = "0.0.1"
 source = "git+https://gitlab.com/thorchain/rujira.git?rev=171f878c6e524cf5e2817e2fd6e7033bce8216f5#171f878c6e524cf5e2817e2fd6e7033bce8216f5"
 dependencies = [
- "anybuf",
+ "anybuf 0.5.2",
  "cosmos-sdk-proto",
  "cosmwasm-schema",
  "cosmwasm-schema-derive",

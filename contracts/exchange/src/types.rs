@@ -1,27 +1,38 @@
 use calc_rs::types::{ContractResult, ExpectedReturnAmount};
-use cosmwasm_std::{Coin, Decimal, Deps, Env, MessageInfo, StdResult};
+use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, StdResult};
+use rujira_rs::NativeAsset;
 
 pub trait Exchange {
-    fn can_swap(&self, deps: Deps, swap_denom: &str, target_denom: &str) -> StdResult<bool>;
-    fn route(&self, deps: Deps, swap_amount: Coin, target_denom: &str) -> StdResult<Vec<Coin>>;
-    fn get_expected_receive_amount(
+    fn can_swap(
         &self,
         deps: Deps,
-        swap_amount: Coin,
-        target_denom: &str,
+        swap_amount: &Coin,
+        minimum_receive_amount: &Coin,
+    ) -> StdResult<bool>;
+    fn route(
+        &self,
+        deps: Deps,
+        swap_amount: &Coin,
+        target_denom: &NativeAsset,
+    ) -> StdResult<Vec<Coin>>;
+    fn expected_receive_amount(
+        &self,
+        deps: Deps,
+        swap_amount: &Coin,
+        target_denom: &NativeAsset,
     ) -> StdResult<ExpectedReturnAmount>;
-    fn get_spot_price(
+    fn spot_price(
         &self,
         deps: Deps,
-        swap_denom: &str,
-        target_denom: &str,
+        swap_denom: &NativeAsset,
+        target_denom: &NativeAsset,
     ) -> StdResult<Decimal>;
     fn swap(
         &self,
         deps: Deps,
         env: Env,
-        info: MessageInfo,
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
+        swap_amount: &Coin,
+        minimum_receive_amount: &Coin,
+        recipient: Addr,
     ) -> ContractResult;
 }
