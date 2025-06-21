@@ -123,7 +123,6 @@ pub enum ExchangeExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
         recipient: Option<Addr>,
-        route: Option<Binary>,
     },
     Custom(Binary),
 }

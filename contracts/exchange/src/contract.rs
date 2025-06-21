@@ -1,11 +1,11 @@
 use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg, SchedulerInstantiateMsg};
-use calc_rs::types::{ContractError, ContractResult};
+use calc_rs::types::{ContractError, ContractResult, ExpectedReturnAmount};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    from_json, to_json_binary, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response, StdError,
-    StdResult, Uint128,
+    from_json, to_json_binary, Addr, Binary, Coin, Decimal, Deps, DepsMut, Env, MessageInfo,
+    Response, StdError, StdResult, Uint128,
 };
 use rujira_rs::NativeAsset;
 
@@ -45,6 +45,40 @@ pub fn get_exchanges() -> Vec<Box<dyn Exchange>> {
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
+pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
+    let exchanges = get_exchanges();
+
+    match msg {
+        ExchangeQueryMsg::CanSwap {
+            swap_amount,
+            minimum_receive_amount,
+        } => to_json_binary(&can_swap(
+            exchanges,
+            deps,
+            &swap_amount,
+            &minimum_receive_amount,
+        )),
+        ExchangeQueryMsg::Route {
+            swap_amount,
+            target_denom,
+        } => to_json_binary(&route(exchanges, deps, &swap_amount, target_denom)?),
+        ExchangeQueryMsg::ExpectedReceiveAmount {
+            swap_amount,
+            target_denom,
+        } => to_json_binary(&expected_receive_amount(
+            exchanges,
+            deps,
+            &swap_amount,
+            target_denom,
+        )?),
+        ExchangeQueryMsg::SpotPrice {
+            swap_denom,
+            target_denom,
+        } => to_json_binary(&spot_price(exchanges, deps, swap_denom, target_denom)?),
+    }
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
     env: Env,
@@ -57,73 +91,14 @@ pub fn execute(
         ExchangeExecuteMsg::Swap {
             minimum_receive_amount,
             recipient,
-            ..
-        } => {
-            if info.funds.len() != 1 {
-                return Err(StdError::generic_err("Must provide exactly one coin to swap").into());
-            }
-
-            if info.funds[0].amount.is_zero() {
-                return Err(StdError::generic_err("Must provide a non-zero amount to swap").into());
-            }
-
-            let swap_amount = info.funds[0].clone();
-            let target_denom = minimum_receive_amount.denom.clone();
-
-            let best_exchange = exchanges
-                .iter()
-                .filter(|e| {
-                    e.can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
-                        .unwrap_or(false)
-                })
-                .max_by(|a, b| {
-                    a.expected_receive_amount(
-                        deps.as_ref(),
-                        &swap_amount,
-                        &NativeAsset::new(&target_denom),
-                    )
-                    .expect(
-                        format!(
-                            "Failed to get expected receive amount for {} to {}",
-                            swap_amount.denom, target_denom
-                        )
-                        .as_str(),
-                    )
-                    .return_amount
-                    .amount
-                    .cmp(
-                        &b.expected_receive_amount(
-                            deps.as_ref(),
-                            &swap_amount,
-                            &NativeAsset::new(&target_denom),
-                        )
-                        .expect(
-                            format!(
-                                "Failed to get expected receive amount for {} to {}",
-                                swap_amount.denom, target_denom
-                            )
-                            .as_str(),
-                        )
-                        .return_amount
-                        .amount,
-                    )
-                });
-
-            match best_exchange {
-                Some(exchange) => exchange.swap(
-                    deps.as_ref(),
-                    env,
-                    &swap_amount,
-                    &minimum_receive_amount,
-                    recipient.unwrap_or(info.sender.clone()),
-                ),
-                None => Err(StdError::generic_err(format!(
-                    "Unable to find an exchange for swapping {} to {}",
-                    swap_amount.denom, target_denom
-                ))
-                .into()),
-            }
-        }
+        } => swap(
+            exchanges,
+            deps.as_ref(),
+            env,
+            info,
+            &minimum_receive_amount,
+            recipient,
+        ),
         ExchangeExecuteMsg::Custom(custom_msg) => {
             if info.sender != ADMIN.load(deps.storage)? {
                 return Err(ContractError::Unauthorized {});
@@ -147,125 +122,361 @@ pub fn execute(
     }
 }
 
-#[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
-    let exchanges = get_exchanges();
+fn can_swap(
+    exchanges: Vec<Box<dyn Exchange>>,
+    deps: Deps,
+    swap_amount: &Coin,
+    minimum_receive_amount: &Coin,
+) -> bool {
+    exchanges.iter().any(|e| {
+        e.can_swap(deps, swap_amount, minimum_receive_amount)
+            .unwrap_or(false)
+    })
+}
 
-    match msg {
-        ExchangeQueryMsg::CanSwap {
-            swap_amount,
-            minimum_receive_amount,
-        } => to_json_binary(&exchanges.iter().any(|e| {
-            e.can_swap(deps, &swap_amount, &minimum_receive_amount)
-                .unwrap_or(false)
-        })),
-        ExchangeQueryMsg::Route {
-            swap_amount,
+fn route(
+    exchanges: Vec<Box<dyn Exchange>>,
+    deps: Deps,
+    swap_amount: &Coin,
+    target_denom: String,
+) -> StdResult<Vec<Coin>> {
+    let route = exchanges
+        .iter()
+        .filter(|e| {
+            e.can_swap(
+                deps,
+                &swap_amount,
+                &Coin {
+                    denom: target_denom.clone(),
+                    amount: Uint128::one(),
+                },
+            )
+            .unwrap_or(false)
+        })
+        .flat_map(|e| {
+            e.route(deps, &swap_amount, &NativeAsset::new(&target_denom))
+                .ok()
+        })
+        .max_by(|a, b| {
+            let empty = Coin {
+                denom: target_denom.clone(),
+                amount: Uint128::zero(),
+            };
+            a.last()
+                .unwrap_or(&empty)
+                .amount
+                .cmp(&b.last().unwrap_or(&empty).amount)
+        })
+        .unwrap_or_else(|| vec![]);
+
+    if route.is_empty() {
+        return Err(StdError::generic_err(format!(
+            "Unable to find an exchange for swapping {} to {}. Errors: [{}]",
+            swap_amount.denom,
             target_denom,
-        } => {
-            let route = exchanges
+            exchanges
                 .iter()
-                .filter(|e| {
-                    e.can_swap(
-                        deps,
-                        &swap_amount,
-                        &Coin {
-                            denom: target_denom.clone(),
-                            amount: Uint128::one(),
-                        },
-                    )
-                    .unwrap_or(false)
-                })
                 .flat_map(|e| {
                     e.route(deps, &swap_amount, &NativeAsset::new(&target_denom))
-                        .ok()
+                        .err()
+                        .map(|e| e.to_string())
                 })
-                .max_by(|a, b| {
-                    let empty = Coin {
-                        denom: target_denom.clone(),
-                        amount: Uint128::zero(),
-                    };
-                    a.last()
-                        .unwrap_or(&empty)
-                        .amount
-                        .cmp(&b.last().unwrap_or(&empty).amount)
-                })
-                .into_iter()
-                .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
 
-            if route.is_empty() {
-                return Err(StdError::generic_err(format!(
-                    "Unable to find an exchange for swapping {} to {}. Errors: [{}]",
-                    swap_amount.denom,
-                    target_denom,
-                    exchanges
-                        .iter()
-                        .flat_map(|e| {
-                            e.route(deps, &swap_amount, &NativeAsset::new(&target_denom))
-                                .err()
-                                .map(|e| e.to_string())
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
-            }
+    Ok(route)
+}
 
-            to_json_binary(&route)
-        }
-        ExchangeQueryMsg::ExpectedReceiveAmount {
-            swap_amount,
-            target_denom,
-            ..
-        } => exchanges
-            .iter()
-            .filter(|e| {
-                e.can_swap(
-                    deps,
-                    &swap_amount,
-                    &Coin {
-                        denom: target_denom.clone(),
-                        amount: Uint128::one(),
-                    },
-                )
-                .unwrap_or(false)
-            })
-            .flat_map(|e| {
-                e.expected_receive_amount(deps, &swap_amount, &NativeAsset::new(&target_denom))
-                    .ok()
-            })
-            .max_by(|a, b| a.return_amount.amount.cmp(&b.return_amount.amount))
-            .map_or_else(
-                || {
-                    Err(StdError::generic_err(format!(
-                        "Unable to find an exchange for swapping {} to {}",
-                        swap_amount.denom, target_denom
-                    )))
+fn expected_receive_amount(
+    exchanges: Vec<Box<dyn Exchange>>,
+    deps: Deps,
+    swap_amount: &Coin,
+    target_denom: String,
+) -> StdResult<ExpectedReturnAmount> {
+    exchanges
+        .iter()
+        .filter(|e| {
+            e.can_swap(
+                deps,
+                &swap_amount,
+                &Coin {
+                    denom: target_denom.clone(),
+                    amount: Uint128::one(),
                 },
-                |amount| to_json_binary(&amount),
-            ),
-        ExchangeQueryMsg::SpotPrice {
-            swap_denom,
-            target_denom,
-            ..
-        } => exchanges
-            .iter()
-            .map(|e| {
-                e.spot_price(
-                    deps,
-                    &NativeAsset::new(&swap_denom),
-                    &NativeAsset::new(&target_denom),
-                )
+            )
+            .unwrap_or(false)
+        })
+        .flat_map(|e| {
+            e.expected_receive_amount(deps, &swap_amount, &NativeAsset::new(&target_denom))
                 .ok()
-            })
-            .max_by(|a, b| a.cmp(&b))
-            .map_or_else(
-                || {
-                    Err(StdError::generic_err(format!(
-                        "Unable to find an exchange for swapping {} to {}",
-                        swap_denom, target_denom
-                    )))
+        })
+        .max_by(|a, b| a.return_amount.amount.cmp(&b.return_amount.amount))
+        .map_or_else(
+            || {
+                Err(StdError::generic_err(format!(
+                    "Unable to find an exchange for swapping {} to {}",
+                    swap_amount.denom, target_denom
+                )))
+            },
+            |amount| Ok(amount),
+        )
+}
+
+fn spot_price(
+    exchanges: Vec<Box<dyn Exchange>>,
+    deps: Deps,
+    swap_denom: String,
+    target_denom: String,
+) -> StdResult<Decimal> {
+    exchanges
+        .iter()
+        .flat_map(|e| {
+            e.spot_price(
+                deps,
+                &NativeAsset::new(&swap_denom),
+                &NativeAsset::new(&target_denom),
+            )
+            .ok()
+        })
+        .max_by(|a, b| a.cmp(&b))
+        .map_or_else(
+            || {
+                Err(StdError::generic_err(format!(
+                    "Unable to find an exchange for swapping {} to {}",
+                    swap_denom, target_denom
+                )))
+            },
+            |amount| Ok(amount),
+        )
+}
+
+fn swap(
+    exchanges: Vec<Box<dyn Exchange>>,
+    deps: Deps,
+    env: Env,
+    info: MessageInfo,
+    minimum_receive_amount: &Coin,
+    recipient: Option<Addr>,
+) -> ContractResult {
+    if info.funds.len() != 1 {
+        return Err(StdError::generic_err("Must provide exactly one coin to swap").into());
+    }
+
+    if info.funds[0].amount.is_zero() {
+        return Err(StdError::generic_err("Must provide a non-zero amount to swap").into());
+    }
+
+    let swap_amount = info.funds[0].clone();
+    let target_denom = minimum_receive_amount.denom.clone();
+
+    let best_exchange = exchanges
+        .iter()
+        .filter(|e| {
+            e.can_swap(deps, &swap_amount, &minimum_receive_amount)
+                .unwrap_or(false)
+        })
+        .max_by(|a, b| {
+            a.expected_receive_amount(deps, &swap_amount, &NativeAsset::new(&target_denom))
+                .expect(
+                    format!(
+                        "Failed to get expected receive amount for {} to {}",
+                        swap_amount.denom, target_denom
+                    )
+                    .as_str(),
+                )
+                .return_amount
+                .amount
+                .cmp(
+                    &b.expected_receive_amount(
+                        deps,
+                        &swap_amount,
+                        &NativeAsset::new(&target_denom),
+                    )
+                    .expect(
+                        format!(
+                            "Failed to get expected receive amount for {} to {}",
+                            swap_amount.denom, target_denom
+                        )
+                        .as_str(),
+                    )
+                    .return_amount
+                    .amount,
+                )
+        });
+
+    match best_exchange {
+        Some(exchange) => exchange.swap(
+            deps,
+            env,
+            &swap_amount,
+            &minimum_receive_amount,
+            recipient.unwrap_or(info.sender.clone()),
+        ),
+        None => Err(StdError::generic_err(format!(
+            "Unable to find an exchange for swapping {} to {}",
+            swap_amount.denom, target_denom
+        ))
+        .into()),
+    }
+}
+
+#[cfg(test)]
+mod can_swap_tests {
+    use cosmwasm_std::{testing::mock_dependencies, Coin, Uint128};
+
+    use crate::{contract::can_swap, exchanges::mock::MockExchange};
+
+    #[test]
+    fn returns_false_when_no_exchange_can_swap() {
+        let mut mock = Box::new(MockExchange::default());
+        mock.can_swap_fn = Box::new(|_, _, _| Ok(false));
+
+        assert_eq!(
+            can_swap(
+                vec![mock],
+                mock_dependencies().as_ref(),
+                &Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(1000)
                 },
-                |amount| to_json_binary(&amount),
+                &Coin {
+                    denom: "uruji".to_string(),
+                    amount: Uint128::new(100)
+                }
             ),
+            false
+        );
+    }
+
+    #[test]
+    fn returns_true_when_one_exchange_can_swap() {
+        let mut mock = Box::new(MockExchange::default());
+        mock.can_swap_fn = Box::new(|_, _, _| Ok(false));
+
+        assert_eq!(
+            can_swap(
+                vec![mock, Box::new(MockExchange::default())],
+                mock_dependencies().as_ref(),
+                &Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(1000)
+                },
+                &Coin {
+                    denom: "uruji".to_string(),
+                    amount: Uint128::new(100)
+                }
+            ),
+            true
+        );
+    }
+
+    #[test]
+    fn returns_true_when_all_exchanges_can_swap() {
+        assert_eq!(
+            can_swap(
+                vec![
+                    Box::new(MockExchange::default()),
+                    Box::new(MockExchange::default()),
+                ],
+                mock_dependencies().as_ref(),
+                &Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(1000)
+                },
+                &Coin {
+                    denom: "uruji".to_string(),
+                    amount: Uint128::new(100)
+                }
+            ),
+            true
+        );
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use cosmwasm_std::{testing::mock_dependencies, Coin, StdError, Uint128};
+
+    use crate::{contract::route, exchanges::mock::MockExchange};
+
+    #[test]
+    fn returns_error_when_no_route_found() {
+        let mut mock = Box::new(MockExchange::default());
+        mock.route_fn = Box::new(|_, _, _| Err(StdError::generic_err("Not enough liquidity")));
+
+        assert_eq!(
+            route(
+                vec![mock],
+                mock_dependencies().as_ref(),
+                &Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(100)
+                },
+                "uruji".to_string()
+            )
+            .unwrap_err(),
+            StdError::generic_err(
+                "Unable to find an exchange for swapping rune to uruji. Errors: [Generic error: Not enough liquidity]"
+            )
+        )
+    }
+
+    #[test]
+    fn returns_route_from_one_exchange() {
+        let swap_amount = Coin {
+            denom: "rune".to_string(),
+            amount: Uint128::new(100),
+        };
+
+        let target_denom = "uruji".to_string();
+
+        assert_eq!(
+            route(
+                vec![Box::new(MockExchange::default())],
+                mock_dependencies().as_ref(),
+                &swap_amount,
+                target_denom.clone()
+            )
+            .unwrap(),
+            vec![
+                swap_amount.clone(),
+                Coin {
+                    denom: target_denom,
+                    amount: swap_amount.amount
+                }
+            ]
+        )
+    }
+
+    #[test]
+    fn returns_best_route_from_multiple_exchanges() {
+        let swap_amount = Coin {
+            denom: "rune".to_string(),
+            amount: Uint128::new(100),
+        };
+
+        let target_denom = "uruji".to_string();
+
+        let return_amount = Coin {
+            denom: target_denom.clone(),
+            amount: swap_amount.amount.clone() * Uint128::new(2),
+        };
+
+        let mut mock = Box::new(MockExchange::default());
+        mock.route_fn =
+            Box::new(move |_, _, _| Ok(vec![swap_amount.clone(), return_amount.clone()]));
+
+        assert_eq!(
+            route(
+                vec![Box::new(MockExchange::default())],
+                mock_dependencies().as_ref(),
+                &swap_amount,
+                target_denom.clone()
+            )
+            .unwrap(),
+            vec![swap_amount.clone(), return_amount]
+        )
     }
 }

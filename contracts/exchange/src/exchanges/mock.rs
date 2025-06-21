@@ -18,10 +18,21 @@ impl Default for MockExchange {
     fn default() -> Self {
         Self {
             can_swap_fn: Box::new(|_, _, _| Ok(true)),
-            route_fn: Box::new(|_, _, _| Ok(vec![])),
-            get_expected_receive_amount_fn: Box::new(|_, _, _| {
+            route_fn: Box::new(|_, swap_amount, target_denom| {
+                Ok(vec![
+                    swap_amount.clone(),
+                    Coin {
+                        denom: target_denom.denom_string(),
+                        amount: swap_amount.amount,
+                    },
+                ])
+            }),
+            get_expected_receive_amount_fn: Box::new(|_, swap_amount, target_denom| {
                 Ok(ExpectedReturnAmount {
-                    return_amount: Default::default(),
+                    return_amount: Coin {
+                        denom: target_denom.denom_string(),
+                        amount: swap_amount.amount,
+                    },
                     slippage: Default::default(),
                 })
             }),
