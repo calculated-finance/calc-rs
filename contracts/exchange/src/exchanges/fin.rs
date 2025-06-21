@@ -176,7 +176,7 @@ impl Exchange for FinExchange {
 
             Ok(ExpectedReturnAmount {
                 return_amount: Coin {
-                    denom: target_denom.to_string(),
+                    denom: target_denom.denom_string(),
                     amount: simulation.returned,
                 },
                 slippage,
@@ -528,7 +528,7 @@ mod route_tests {
 
         assert_eq!(
             result,
-            StdError::not_found("No pair found for swapping from uruji into usdc")
+            StdError::generic_err("No pair found for swapping from uruji into usdc")
         );
     }
 
@@ -561,7 +561,10 @@ mod route_tests {
                     })
                     .unwrap(),
                     QueryMsg::Book { .. } => to_json_binary(&BookResponse {
-                        base: vec![],
+                        base: vec![BookItemResponse {
+                            price: Decimal::from_str("1.5").unwrap(),
+                            total: Uint128::new(1000),
+                        }],
                         quote: vec![BookItemResponse {
                             price: Decimal::from_str("1.5").unwrap(),
                             total: Uint128::new(1000),
@@ -583,7 +586,7 @@ mod route_tests {
         assert_eq!(
             result[1],
             Coin {
-                denom: target_denom.to_string(),
+                denom: target_denom.denom_string(),
                 amount: Uint128::new(300),
             }
         );
@@ -612,20 +615,20 @@ mod expected_receive_amount_tests {
     fn fails_to_get_expected_receive_amount_from_non_existing_pair() {
         let deps = mock_dependencies();
 
-        let exchange = FinExchange::new();
         let swap_amount = Coin {
             denom: "uruji".to_string(),
             amount: Uint128::new(100),
         };
+
         let target_denom = NativeAsset::new("usdc");
 
-        let result = exchange
+        let result = FinExchange::new()
             .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
             .unwrap_err();
 
         assert_eq!(
             result,
-            StdError::not_found("No pair found for swapping from uruji into usdc")
+            StdError::generic_err("No pair found for swapping from uruji into usdc")
         );
     }
 
@@ -641,12 +644,11 @@ mod expected_receive_amount_tests {
 
         save_pair(deps.as_mut().storage, &pair).unwrap();
 
-        let exchange = FinExchange::new();
-
         let swap_amount = Coin {
             denom: "uruji".to_string(),
             amount: Uint128::new(100),
         };
+
         let target_denom = NativeAsset::new("usdc");
 
         deps.querier.update_wasm(move |query| {
@@ -658,7 +660,10 @@ mod expected_receive_amount_tests {
                     })
                     .unwrap(),
                     QueryMsg::Book { .. } => to_json_binary(&BookResponse {
-                        base: vec![],
+                        base: vec![BookItemResponse {
+                            price: Decimal::from_str("1.5").unwrap(),
+                            total: Uint128::new(1000),
+                        }],
                         quote: vec![BookItemResponse {
                             price: Decimal::from_str("1.5").unwrap(),
                             total: Uint128::new(1000),
@@ -671,17 +676,18 @@ mod expected_receive_amount_tests {
             }))
         });
 
-        let expected_amount = exchange
+        let expected_amount = FinExchange::new()
             .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
             .unwrap();
 
         assert_eq!(
             expected_amount.return_amount,
             Coin {
-                denom: target_denom.to_string(),
+                denom: target_denom.denom_string(),
                 amount: Uint128::new(130),
             }
         );
+
         assert_eq!(
             expected_amount.slippage,
             Decimal::one()
@@ -723,7 +729,7 @@ mod spot_price_tests {
 
         assert_eq!(
             result,
-            StdError::not_found("No pair found for swapping from uruji into usdc")
+            StdError::generic_err("No pair found for swapping from uruji into usdc")
         );
     }
 
@@ -789,8 +795,8 @@ mod swap_tests {
 
     use calc_rs::types::{Contract, ContractError};
     use cosmwasm_std::testing::mock_env;
+    use cosmwasm_std::Uint128;
     use cosmwasm_std::{testing::mock_dependencies, to_json_binary, Addr, Coin};
-    use cosmwasm_std::{StdError, Uint128};
     use rujira_rs::fin::{ExecuteMsg, SwapRequest};
 
     use crate::{
@@ -802,19 +808,17 @@ mod swap_tests {
     fn fails_to_swap_with_non_existing_pair() {
         let deps = mock_dependencies();
 
-        let exchange = FinExchange::new();
-
         let swap_amount = Coin {
             denom: "uruji".to_string(),
             amount: Uint128::new(100),
         };
 
         let minimum_receive_amount = Coin {
-            denom: "minimum_receive_amount".to_string(),
+            denom: "rune".to_string(),
             amount: Uint128::new(50),
         };
 
-        let result = exchange
+        let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 mock_env(),
@@ -824,13 +828,7 @@ mod swap_tests {
             )
             .unwrap_err();
 
-        assert_eq!(
-            result,
-            ContractError::Std(StdError::generic_err(format!(
-                "Pair not found for swapping from {} into {}",
-                swap_amount.denom, minimum_receive_amount.denom
-            )))
-        );
+        assert_eq!(result, ContractError::Generic("Pair not found"));
     }
 
     #[test]

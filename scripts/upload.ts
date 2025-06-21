@@ -259,7 +259,7 @@ const getExpectedReceiveAmount = async () => {
     expected_receive_amount: {
       swap_amount: {
         denom: "rune",
-        amount: "100000000",
+        amount: "100000",
       },
       target_denom: "x/ruji",
     },
@@ -523,7 +523,7 @@ const STRATEGY_ADDRESS =
 // getFinBook("sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r");
 // canSwap();
 // getSpotPrice();
-// getExpectedReceiveAmount();
+getExpectedReceiveAmount();
 // getRoute();
 // swap();
 // uploadAndInstantiateExchangeContract();

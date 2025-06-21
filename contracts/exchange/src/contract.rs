@@ -7,11 +7,10 @@ use cosmwasm_std::{
     from_json, to_json_binary, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response, StdError,
     StdResult, Uint128,
 };
-use rujira_rs::proto::types::{QueryQuoteSwapRequest, QueryQuoteSwapResponse};
 use rujira_rs::NativeAsset;
 
 use crate::exchanges::fin::{delete_pair, save_pair, FinExchange, Pair};
-use crate::exchanges::thor::{Queryable, ThorExchange};
+use crate::exchanges::thor::ThorExchange;
 use crate::state::ADMIN;
 use crate::types::Exchange;
 
@@ -149,31 +148,10 @@ pub fn execute(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
     let exchanges = get_exchanges();
 
     match msg {
-        ExchangeQueryMsg::Custom {} => {
-            let response = QueryQuoteSwapResponse::get(
-                deps.querier,
-                QueryQuoteSwapRequest {
-                    from_asset: "THOR.RUNE".to_string(),
-                    to_asset: "ETH.ETH".to_string(),
-                    amount: 100000000.to_string(),
-                    streaming_interval: 1.to_string(),
-                    streaming_quantity: 1.to_string(),
-                    destination: env.contract.address.to_string(),
-                    tolerance_bps: 50.to_string(),
-                    refund_address: env.contract.address.to_string(),
-                    affiliate: vec![],
-                    affiliate_bps: vec![],
-                    height: 0.to_string(),
-                },
-            )
-            .unwrap();
-
-            Ok(to_json_binary(&response.expected_amount_out)?)
-        }
         ExchangeQueryMsg::CanSwap {
             swap_amount,
             minimum_receive_amount,

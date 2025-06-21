@@ -151,8 +151,6 @@ pub enum ExchangeQueryMsg {
         swap_amount: Coin,
         target_denom: String,
     },
-    #[returns(String)]
-    Custom {},
 }
 
 #[cw_serde]
