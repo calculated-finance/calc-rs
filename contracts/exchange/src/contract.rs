@@ -240,7 +240,7 @@ fn spot_price(
             )
             .ok()
         })
-        .max_by(|a, b| a.cmp(&b))
+        .min_by(|a, b| a.cmp(&b))
         .map_or_else(
             || {
                 Err(StdError::generic_err(format!(
@@ -464,19 +464,365 @@ mod route_tests {
             amount: swap_amount.amount.clone() * Uint128::new(2),
         };
 
+        let expected_route = vec![swap_amount.clone(), return_amount.clone()];
+
         let mut mock = Box::new(MockExchange::default());
-        mock.route_fn =
-            Box::new(move |_, _, _| Ok(vec![swap_amount.clone(), return_amount.clone()]));
+        mock.route_fn = Box::new(move |_, _, _| Ok(expected_route.clone()));
 
         assert_eq!(
             route(
-                vec![Box::new(MockExchange::default())],
+                vec![mock, Box::new(MockExchange::default())],
                 mock_dependencies().as_ref(),
                 &swap_amount,
+                target_denom
+            )
+            .unwrap(),
+            vec![swap_amount, return_amount]
+        )
+    }
+}
+
+#[cfg(test)]
+mod expected_receive_amount_tests {
+    use crate::{contract::expected_receive_amount, exchanges::mock::MockExchange};
+    use calc_rs::types::ExpectedReturnAmount;
+    use cosmwasm_std::{testing::mock_dependencies, Coin, Decimal, StdError, Uint128};
+
+    #[test]
+    fn returns_error_when_no_exchange_can_swap() {
+        let mut mock = Box::new(MockExchange::default());
+        mock.get_expected_receive_amount_fn =
+            Box::new(|_, _, _| Err(StdError::generic_err("Not enough liquidity")));
+
+        assert_eq!(
+            expected_receive_amount(
+                vec![mock],
+                mock_dependencies().as_ref(),
+                &Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(1000)
+                },
+                "uruji".to_string()
+            )
+            .unwrap_err(),
+            StdError::generic_err("Unable to find an exchange for swapping rune to uruji")
+        );
+    }
+
+    #[test]
+    fn returns_expected_amount_from_one_exchange() {
+        let swap_amount = Coin {
+            denom: "rune".to_string(),
+            amount: Uint128::new(1000),
+        };
+
+        let target_denom = "uruji".to_string();
+
+        let expected_return_amount = Coin {
+            denom: target_denom.clone(),
+            amount: Uint128::new(2000),
+        };
+
+        let expected_slippage = Decimal::percent(1);
+
+        let expected_response = ExpectedReturnAmount {
+            return_amount: expected_return_amount.clone(),
+            slippage: expected_slippage.clone(),
+        };
+
+        let mut mock = Box::new(MockExchange::default());
+        mock.get_expected_receive_amount_fn =
+            Box::new(move |_, _, _| Ok(expected_response.clone()));
+
+        assert_eq!(
+            expected_receive_amount(
+                vec![mock],
+                mock_dependencies().as_ref(),
+                &swap_amount,
+                target_denom
+            )
+            .unwrap(),
+            ExpectedReturnAmount {
+                return_amount: expected_return_amount,
+                slippage: expected_slippage,
+            }
+        );
+    }
+
+    #[test]
+    fn returns_best_expected_amount_from_multiple_exchanges() {
+        let swap_amount = Coin {
+            denom: "rune".to_string(),
+            amount: Uint128::new(1000),
+        };
+
+        let target_denom = "uruji".to_string();
+
+        let expected_return_amount = Coin {
+            denom: target_denom.clone(),
+            amount: Uint128::new(2000),
+        };
+
+        let expected_slippage = Decimal::percent(1);
+
+        let expected_response = ExpectedReturnAmount {
+            return_amount: expected_return_amount.clone(),
+            slippage: expected_slippage.clone(),
+        };
+
+        let mut mock = Box::new(MockExchange::default());
+        mock.get_expected_receive_amount_fn =
+            Box::new(move |_, _, _| Ok(expected_response.clone()));
+
+        assert_eq!(
+            expected_receive_amount(
+                vec![mock, Box::new(MockExchange::default())],
+                mock_dependencies().as_ref(),
+                &swap_amount,
+                target_denom.clone(),
+            )
+            .unwrap(),
+            ExpectedReturnAmount {
+                return_amount: expected_return_amount.clone(),
+                slippage: expected_slippage.clone(),
+            }
+        );
+    }
+}
+
+#[cfg(test)]
+mod spot_price_tests {
+    use std::str::FromStr;
+
+    use crate::{contract::spot_price, exchanges::mock::MockExchange};
+    use cosmwasm_std::{testing::mock_dependencies, Decimal, StdError};
+
+    #[test]
+    fn returns_error_when_no_exchange_can_swap() {
+        let mut mock = Box::new(MockExchange::default());
+        mock.get_spot_price_fn =
+            Box::new(|_, _, _| Err(StdError::generic_err("Not enough liquidity")));
+
+        assert_eq!(
+            spot_price(
+                vec![mock],
+                mock_dependencies().as_ref(),
+                "rune".to_string(),
+                "uruji".to_string()
+            )
+            .unwrap_err(),
+            StdError::generic_err("Unable to find an exchange for swapping rune to uruji")
+        );
+    }
+
+    #[test]
+    fn returns_spot_price_from_one_exchange() {
+        let swap_denom = "rune".to_string();
+        let target_denom = "uruji".to_string();
+
+        let expected_spot_price = Decimal::from_str("1.5").unwrap();
+
+        let mut mock = Box::new(MockExchange::default());
+        mock.get_spot_price_fn = Box::new(move |_, _, _| Ok(expected_spot_price.clone()));
+
+        assert_eq!(
+            spot_price(
+                vec![mock],
+                mock_dependencies().as_ref(),
+                swap_denom.clone(),
                 target_denom.clone()
             )
             .unwrap(),
-            vec![swap_amount.clone(), return_amount]
-        )
+            expected_spot_price
+        );
+    }
+
+    #[test]
+    fn returns_best_spot_price_from_multiple_exchanges() {
+        let swap_denom = "rune".to_string();
+        let target_denom = "uruji".to_string();
+
+        let expected_spot_price = Decimal::from_str("2.0").unwrap();
+
+        let mut mock = Box::new(MockExchange::default());
+        mock.get_spot_price_fn = Box::new(move |_, _, _| Ok(expected_spot_price.clone()));
+
+        let deps = mock_dependencies();
+
+        assert_eq!(
+            spot_price(
+                vec![mock, Box::new(MockExchange::default())],
+                deps.as_ref(),
+                swap_denom.clone(),
+                target_denom.clone()
+            )
+            .unwrap(),
+            spot_price(
+                vec![Box::new(MockExchange::default())],
+                deps.as_ref(),
+                swap_denom.clone(),
+                target_denom.clone()
+            )
+            .unwrap(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use calc_rs::types::ExpectedReturnAmount;
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Addr, Coin, MessageInfo, Response, Uint128,
+    };
+    use rujira_rs::NativeAsset;
+
+    use crate::{contract::swap, exchanges::mock::MockExchange, types::Exchange};
+
+    #[test]
+    fn returns_error_when_no_exchange_can_swap() {
+        let mut mock = Box::new(MockExchange::default());
+        mock.can_swap_fn = Box::new(|_, _, _| Ok(false));
+
+        let swap_amount = Coin {
+            denom: "rune".to_string(),
+            amount: Uint128::new(1000),
+        };
+
+        let minimum_receive_amount = Coin {
+            denom: "uruji".to_string(),
+            amount: Uint128::new(100),
+        };
+
+        assert_eq!(
+            swap(
+                vec![mock],
+                mock_dependencies().as_ref(),
+                mock_env(),
+                MessageInfo {
+                    sender: Addr::unchecked("sender"),
+                    funds: vec![swap_amount.clone()],
+                },
+                &minimum_receive_amount,
+                None
+            )
+            .unwrap_err()
+            .to_string(),
+            format!(
+                "Generic error: Unable to find an exchange for swapping {} to {}",
+                swap_amount.denom, minimum_receive_amount.denom
+            )
+        );
+    }
+
+    #[test]
+    fn swaps_when_one_exchange_can_swap() {
+        let mut mock = Box::new(MockExchange::default());
+        mock.can_swap_fn = Box::new(|_, _, _| Ok(false));
+
+        assert_eq!(
+            swap(
+                vec![mock, Box::new(MockExchange::default())],
+                mock_dependencies().as_ref(),
+                mock_env(),
+                MessageInfo {
+                    sender: Addr::unchecked("sender"),
+                    funds: vec![Coin {
+                        denom: "rune".to_string(),
+                        amount: Uint128::new(100)
+                    }],
+                },
+                &Coin {
+                    denom: "uruji".to_string(),
+                    amount: Uint128::new(100)
+                },
+                None
+            )
+            .unwrap(),
+            Response::default()
+        );
+    }
+
+    #[test]
+    fn swaps_when_all_exchanges_can_swap() {
+        assert_eq!(
+            swap(
+                vec![
+                    Box::new(MockExchange::default()),
+                    Box::new(MockExchange::default()),
+                ],
+                mock_dependencies().as_ref(),
+                mock_env(),
+                MessageInfo {
+                    sender: Addr::unchecked("sender"),
+                    funds: vec![Coin {
+                        denom: "rune".to_string(),
+                        amount: Uint128::new(100)
+                    }],
+                },
+                &Coin {
+                    denom: "uruji".to_string(),
+                    amount: Uint128::new(100)
+                },
+                None
+            )
+            .unwrap(),
+            Response::default()
+        );
+    }
+
+    #[test]
+    fn selects_best_exchange_for_swap() {
+        let swap_amount = Coin {
+            denom: "rune".to_string(),
+            amount: Uint128::new(1000),
+        };
+
+        let minimum_receive_amount = Coin {
+            denom: "uruji".to_string(),
+            amount: Uint128::new(100),
+        };
+
+        let deps = mock_dependencies();
+
+        let expected_response = MockExchange::default()
+            .expected_receive_amount(
+                deps.as_ref(),
+                &swap_amount.clone(),
+                &NativeAsset::new(&minimum_receive_amount.denom.clone()),
+            )
+            .unwrap();
+
+        let mut mock = Box::new(MockExchange::default());
+
+        mock.get_expected_receive_amount_fn = Box::new(move |_, _, _| {
+            Ok(ExpectedReturnAmount {
+                return_amount: Coin {
+                    denom: expected_response.return_amount.denom.clone(),
+                    amount: expected_response.return_amount.amount * Uint128::new(2),
+                },
+                slippage: expected_response.slippage,
+            })
+        });
+
+        mock.swap_fn = Box::new(move |_, _, _, _, _| {
+            Ok(Response::default().add_attribute("action", "test-swap"))
+        });
+
+        assert_eq!(
+            swap(
+                vec![mock, Box::new(MockExchange::default())],
+                deps.as_ref(),
+                mock_env(),
+                MessageInfo {
+                    sender: Addr::unchecked("sender"),
+                    funds: vec![swap_amount.clone()],
+                },
+                &minimum_receive_amount,
+                None
+            )
+            .unwrap(),
+            Response::default().add_attribute("action", "test-swap")
+        );
     }
 }

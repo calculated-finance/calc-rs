@@ -377,13 +377,13 @@ mod asset_tests {
         let err = layer_1_asset(&NativeAsset::new("uruji")).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Generic error: Invalid layer 1 asset: uruji"
+            "Generic error: Invalid layer 1 asset: RUNE.uruji"
         );
     }
 
     #[test]
     fn test_secured_asset() {
-        let secured = secured_asset(&layer_1_asset(&NativeAsset::new("ETH.ETH")).unwrap())
+        let secured = secured_asset(&layer_1_asset(&NativeAsset::new("eth-eth")).unwrap())
             .unwrap()
             .denom_string();
         let (chain, symbol) = secured.split_once('-').unwrap();
@@ -972,7 +972,7 @@ mod expected_receive_amount_tests {
             ExpectedReturnAmount {
                 return_amount: Coin {
                     denom: target_denom.denom_string(),
-                    amount: Uint128::new(99)
+                    amount: Uint128::new(98)
                 },
                 slippage: Decimal::from_str("0.02").unwrap()
             }
@@ -992,7 +992,7 @@ mod expected_receive_amount_tests {
             ExpectedReturnAmount {
                 return_amount: Coin {
                     denom: target_denom.denom_string(),
-                    amount: Uint128::new(99)
+                    amount: Uint128::new(98)
                 },
                 slippage: Decimal::from_str("0.02").unwrap()
             }
