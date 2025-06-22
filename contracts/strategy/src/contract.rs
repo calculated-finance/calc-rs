@@ -82,6 +82,3 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {}

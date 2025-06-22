@@ -20,6 +20,7 @@ pub fn instantiate(
     _info: MessageInfo,
     _msg: InstantiateMsg,
 ) -> ContractResult {
+    TRIGGER_COUNTER.save(_deps.storage, &0)?;
     Ok(Response::default())
 }
 

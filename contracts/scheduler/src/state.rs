@@ -101,3 +101,119 @@ pub fn fetch_triggers(deps: Deps, filter: ConditionFilter, limit: Option<usize>)
 pub fn delete_trigger(storage: &mut dyn Storage, id: u64) -> StdResult<()> {
     triggers().remove(storage, id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use cosmwasm_std::to_json_binary;
+    use cosmwasm_std::{testing::mock_dependencies, Addr, Timestamp};
+    use std::vec;
+
+    #[test]
+    fn saves_a_trigger() {
+        let mut deps = mock_dependencies();
+        let owner = Addr::unchecked("owner");
+        let to = Addr::unchecked("to");
+        let condition = Condition::Timestamp {
+            timestamp: Timestamp::from_seconds(1000),
+        };
+        let msg = to_json_binary(&"test message").unwrap();
+        let execution_rebate = vec![Coin::new(1u128, "rune")];
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        save_trigger(
+            deps.as_mut().storage,
+            owner.clone(),
+            condition.clone(),
+            msg.clone(),
+            to.clone(),
+            execution_rebate.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            triggers().load(deps.as_ref().storage, 1).unwrap(),
+            Trigger {
+                id: 1,
+                owner,
+                condition,
+                msg,
+                to,
+                execution_rebate,
+            }
+        );
+    }
+
+    #[test]
+    fn fetches_triggers_by_owner() {
+        let mut deps = mock_dependencies();
+        let owner1 = Addr::unchecked("owner1");
+        let owner2 = Addr::unchecked("owner2");
+        let to = Addr::unchecked("to");
+        let condition = Condition::Timestamp {
+            timestamp: Timestamp::from_seconds(1000),
+        };
+        let msg = to_json_binary(&"test message").unwrap();
+        let execution_rebate = vec![Coin::new(1u128, "rune")];
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        save_trigger(
+            deps.as_mut().storage,
+            owner1.clone(),
+            condition.clone(),
+            msg.clone(),
+            to.clone(),
+            execution_rebate.clone(),
+        )
+        .unwrap();
+
+        save_trigger(
+            deps.as_mut().storage,
+            owner2.clone(),
+            condition.clone(),
+            msg.clone(),
+            to.clone(),
+            execution_rebate.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fetch_triggers(
+                deps.as_ref(),
+                ConditionFilter::Owner {
+                    address: owner1.clone(),
+                },
+                None,
+            ),
+            vec![Trigger {
+                id: 1,
+                owner: owner1,
+                condition: condition.clone(),
+                msg: msg.clone(),
+                to: to.clone(),
+                execution_rebate: execution_rebate.clone(),
+            }]
+        );
+
+        assert_eq!(
+            fetch_triggers(
+                deps.as_ref(),
+                ConditionFilter::Owner {
+                    address: owner2.clone(),
+                },
+                None,
+            ),
+            vec![Trigger {
+                id: 2,
+                owner: owner2,
+                condition: condition.clone(),
+                msg: msg.clone(),
+                to: to.clone(),
+                execution_rebate: execution_rebate.clone(),
+            }]
+        );
+    }
+}

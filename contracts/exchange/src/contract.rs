@@ -1,17 +1,16 @@
-use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg, SchedulerInstantiateMsg};
-use calc_rs::types::{ContractError, ContractResult, ExpectedReturnAmount};
+use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg};
+use calc_rs::types::{ContractResult, ExpectedReturnAmount};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    from_json, to_json_binary, Addr, Binary, Coin, Decimal, Deps, DepsMut, Env, MessageInfo,
-    Response, StdError, StdResult, Uint128,
+    to_json_binary, Addr, Binary, Coin, Decimal, Deps, DepsMut, Env, MessageInfo, Response,
+    StdError, StdResult, Uint128,
 };
 use rujira_rs::NativeAsset;
 
 use crate::exchanges::fin::{delete_pair, save_pair, FinExchange, Pair};
 use crate::exchanges::thor::ThorExchange;
-use crate::state::ADMIN;
 use crate::types::Exchange;
 
 #[cw_serde]
@@ -19,24 +18,44 @@ pub struct InstantiateMsg {}
 
 #[entry_point]
 pub fn instantiate(
-    deps: DepsMut,
+    _deps: DepsMut,
     _env: Env,
-    info: MessageInfo,
+    _info: MessageInfo,
     _msg: InstantiateMsg,
 ) -> ContractResult {
-    ADMIN.save(deps.storage, &info.sender)?;
-    Ok(Response::default())
-}
-
-#[entry_point]
-pub fn migrate(_: DepsMut, __: Env, ___: SchedulerInstantiateMsg) -> ContractResult {
     Ok(Response::default())
 }
 
 #[cw_serde]
-enum CustomMsg {
+pub struct MigrateMsg {}
+
+#[entry_point]
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
+    Ok(Response::default())
+}
+
+#[cw_serde]
+pub enum SudoMsg {
     CreatePairs { pairs: Vec<Pair> },
     DeletePairs { pairs: Vec<Pair> },
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn sudo(deps: DepsMut, _env: Env, msg: SudoMsg) -> ContractResult {
+    match msg {
+        SudoMsg::CreatePairs { pairs } => {
+            for pair in pairs {
+                save_pair(deps.storage, &pair)?;
+            }
+            Ok(Response::default())
+        }
+        SudoMsg::DeletePairs { pairs } => {
+            for pair in pairs {
+                delete_pair(deps.storage, &pair);
+            }
+            Ok(Response::default())
+        }
+    }
 }
 
 #[cfg(not(feature = "library"))]
@@ -99,26 +118,6 @@ pub fn execute(
             &minimum_receive_amount,
             recipient,
         ),
-        ExchangeExecuteMsg::Custom(custom_msg) => {
-            if info.sender != ADMIN.load(deps.storage)? {
-                return Err(ContractError::Unauthorized {});
-            }
-
-            match from_json::<CustomMsg>(&custom_msg)? {
-                CustomMsg::CreatePairs { pairs } => {
-                    for pair in pairs {
-                        save_pair(deps.storage, &pair)?;
-                    }
-                    Ok(Response::default())
-                }
-                CustomMsg::DeletePairs { pairs } => {
-                    for pair in pairs {
-                        delete_pair(deps.storage, &pair);
-                    }
-                    Ok(Response::default())
-                }
-            }
-        }
     }
 }
 

@@ -51,6 +51,7 @@ impl Exchange for MockExchange {
     ) -> StdResult<bool> {
         (self.can_swap_fn)(deps, swap_amount, minimum_receive_amount)
     }
+
     fn route(
         &self,
         deps: Deps,
@@ -59,6 +60,7 @@ impl Exchange for MockExchange {
     ) -> StdResult<Vec<Coin>> {
         (self.route_fn)(deps, swap_amount, target_denom)
     }
+
     fn expected_receive_amount(
         &self,
         deps: Deps,
@@ -67,6 +69,7 @@ impl Exchange for MockExchange {
     ) -> StdResult<ExpectedReturnAmount> {
         (self.get_expected_receive_amount_fn)(deps, swap_amount, target_denom)
     }
+
     fn spot_price(
         &self,
         deps: Deps,
@@ -75,6 +78,7 @@ impl Exchange for MockExchange {
     ) -> StdResult<Decimal> {
         (self.get_spot_price_fn)(deps, swap_denom, target_denom)
     }
+
     fn swap(
         &self,
         deps: Deps,

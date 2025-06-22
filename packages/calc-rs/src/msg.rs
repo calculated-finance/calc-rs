@@ -124,7 +124,6 @@ pub enum ExchangeExecuteMsg {
         minimum_receive_amount: Coin,
         recipient: Option<Addr>,
     },
-    Custom(Binary),
 }
 
 #[cw_serde]
@@ -151,9 +150,6 @@ pub enum ExchangeQueryMsg {
         target_denom: String,
     },
 }
-
-#[cw_serde]
-pub struct SchedulerInstantiateMsg {}
 
 #[cw_serde]
 pub struct CreateTrigger {
