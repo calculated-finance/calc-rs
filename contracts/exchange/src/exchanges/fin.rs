@@ -1,9 +1,6 @@
 use std::{cmp::max, str::FromStr};
 
-use calc_rs::{
-    math::checked_mul,
-    types::{Contract, ContractError, ContractResult, ExpectedReturnAmount},
-};
+use calc_rs::types::{Contract, ContractError, ContractResult, ExpectedReturnAmount};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, Coin, Decimal, Deps, Env, Order, QueryRequest, Response, StdError,
@@ -161,12 +158,7 @@ impl Exchange for FinExchange {
 
             let optimal_return_amount = max(
                 simulation.returned,
-                checked_mul(swap_amount.amount, Decimal::one() / spot_price).map_err(|e| {
-                    StdError::generic_err(format!(
-                        "Failed to calculate return amount without slippage: {}",
-                        e
-                    ))
-                })?,
+                swap_amount.amount.mul_floor(Decimal::one() / spot_price),
             );
 
             let slippage = Decimal::one().checked_sub(Decimal::from_ratio(
@@ -250,7 +242,7 @@ impl Exchange for FinExchange {
                         callback: None,
                     }))?,
                     vec![swap_amount.clone()],
-                )?;
+                );
 
                 Ok(Response::new().add_message(swap_msg))
             }
@@ -870,17 +862,15 @@ mod swap_tests {
         assert_eq!(response.messages.len(), 1);
         assert_eq!(
             response.messages[0].msg,
-            Contract(Addr::unchecked("pair-address"))
-                .call(
-                    to_json_binary(&ExecuteMsg::Swap(SwapRequest {
-                        min_return: Some(minimum_receive_amount.amount),
-                        to: Some(recipient.to_string()),
-                        callback: None,
-                    }))
-                    .unwrap(),
-                    vec![swap_amount.clone()]
-                )
-                .unwrap()
+            Contract(Addr::unchecked("pair-address")).call(
+                to_json_binary(&ExecuteMsg::Swap(SwapRequest {
+                    min_return: Some(minimum_receive_amount.amount),
+                    to: Some(recipient.to_string()),
+                    callback: None,
+                }))
+                .unwrap(),
+                vec![swap_amount.clone()]
+            )
         );
     }
 }

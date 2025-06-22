@@ -20,7 +20,13 @@ pub fn instantiate(
     FEE_COLLECTOR.save(deps.storage, &msg.fee_collector)?;
 
     let mut strategy = StrategyConfig::from(msg.strategy.clone());
-    let response = strategy.instantiate(deps.as_ref(), env, info)?;
+    let response = strategy.instantiate(deps.as_ref(), &env, &info)?;
+
+    strategy.validate(deps.as_ref())?;
+
+    if !info.funds.is_empty() {
+        strategy.deposit(deps.as_ref(), &env, &info)?;
+    }
 
     CONFIG.save(deps.storage, &strategy)?;
 
@@ -47,12 +53,12 @@ pub fn execute(
     let mut strategy = CONFIG.load(deps.storage)?;
 
     let response = match msg {
-        StrategyExecuteMsg::Execute {} => strategy.execute(deps.as_ref(), env),
-        StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), env),
-        StrategyExecuteMsg::Resume {} => strategy.resume(deps.as_ref(), env),
-        StrategyExecuteMsg::Deposit {} => strategy.deposit(deps.as_ref(), env, info),
-        StrategyExecuteMsg::Withdraw { amounts } => strategy.withdraw(deps.as_ref(), env, amounts),
-        StrategyExecuteMsg::Update { update } => strategy.update(deps.as_ref(), env, update),
+        StrategyExecuteMsg::Execute {} => strategy.execute(deps.as_ref(), &env),
+        StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), &env),
+        StrategyExecuteMsg::Resume {} => strategy.resume(deps.as_ref(), &env),
+        StrategyExecuteMsg::Deposit {} => strategy.deposit(deps.as_ref(), &env, &info),
+        StrategyExecuteMsg::Withdraw { amounts } => strategy.withdraw(deps.as_ref(), &env, amounts),
+        StrategyExecuteMsg::Update { update } => strategy.update(deps.as_ref(), &env, update),
     }?;
 
     CONFIG.save(deps.storage, &strategy)?;
@@ -64,7 +70,7 @@ pub fn execute(
 pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
     CONFIG
         .load(deps.storage)?
-        .handle_reply(deps.as_ref(), env, reply)
+        .handle_reply(deps.as_ref(), &env, reply)
 }
 
 #[entry_point]

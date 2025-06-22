@@ -8,17 +8,11 @@ pub struct TriggerIndexes<'a> {
     pub owner: MultiIndex<'a, Addr, Trigger, u64>,
     pub timestamp: MultiIndex<'a, u64, Trigger, u64>,
     pub block_height: MultiIndex<'a, u64, Trigger, u64>,
-    pub limit_order_id: MultiIndex<'a, u64, Trigger, u64>,
 }
 
 impl<'a> IndexList<Trigger> for TriggerIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Trigger>> + '_> {
-        let v: Vec<&dyn Index<Trigger>> = vec![
-            &self.owner,
-            &self.timestamp,
-            &self.block_height,
-            &self.limit_order_id,
-        ];
+        let v: Vec<&dyn Index<Trigger>> = vec![&self.owner, &self.timestamp, &self.block_height];
         Box::new(v.into_iter())
     }
 }
@@ -43,14 +37,6 @@ pub fn triggers<'a>() -> IndexedMap<u64, Trigger, TriggerIndexes<'a>> {
                 },
                 "triggers",
                 "triggers__block_height",
-            ),
-            limit_order_id: MultiIndex::new(
-                |_, t| match &t.condition {
-                    Condition::LimitOrder { .. } => t.id,
-                    _ => u64::MAX,
-                },
-                "triggers",
-                "triggers__limit_order_id",
             ),
         },
     )
@@ -100,12 +86,6 @@ pub fn fetch_triggers(deps: Deps, filter: ConditionFilter, limit: Option<usize>)
             end.map(|e| Bound::inclusive((e, u64::MAX))),
             Order::Ascending,
         ),
-        ConditionFilter::LimitOrder {} => {
-            triggers()
-                .idx
-                .limit_order_id
-                .range(deps.storage, None, None, Order::Ascending)
-        }
     }
     .take(match limit {
         Some(limit) => match limit {

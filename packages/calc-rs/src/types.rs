@@ -4,7 +4,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_string, Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
     CoinsError, CosmosMsg, Decimal, Env, Event, Instantiate2AddressError, OverflowError, Response,
-    StdError, StdResult, Timestamp, Uint128, WasmMsg,
+    StdError, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 use thiserror::Error;
@@ -61,16 +61,8 @@ pub struct ExpectedReturnAmount {
 
 #[cw_serde]
 pub enum Condition {
-    Timestamp {
-        timestamp: Timestamp,
-    },
-    BlockHeight {
-        height: u64,
-    },
-    LimitOrder {
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
-    },
+    Timestamp { timestamp: Timestamp },
+    BlockHeight { height: u64 },
 }
 
 #[cw_serde]
@@ -86,7 +78,6 @@ pub enum ConditionFilter {
         start: Option<u64>,
         end: Option<u64>,
     },
-    LimitOrder {},
 }
 
 #[cw_serde]
@@ -107,9 +98,8 @@ pub trait Executable {
 impl Executable for Trigger {
     fn can_execute(&self, env: Env) -> bool {
         match self.condition {
-            Condition::BlockHeight { height } => height > env.block.height,
-            Condition::LimitOrder { .. } => false,
-            Condition::Timestamp { timestamp } => timestamp > env.block.time,
+            Condition::BlockHeight { height } => height < env.block.height,
+            Condition::Timestamp { timestamp } => timestamp < env.block.time,
         }
     }
 
@@ -125,14 +115,8 @@ impl Executable for Trigger {
 
         match self.condition {
             Condition::Timestamp { .. } | Condition::BlockHeight { .. } => {
-                let execute_message = Contract(self.to.clone()).call(self.msg.clone(), vec![])?;
-
+                let execute_message = Contract(self.to.clone()).call(self.msg.clone(), vec![]);
                 messages.push(execute_message);
-            }
-            Condition::LimitOrder { .. } => {
-                return Err(ContractError::Std(StdError::generic_err(
-                    "Limit order condition not implemented",
-                )));
             }
         }
 
@@ -454,10 +438,10 @@ impl From<DomainEvent> for Event {
                 ),
             DomainEvent::SchedulingFailed {
                 contract_address,
-                reason: error,
+                reason,
             } => Event::new("scheduling_failed")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("error", error),
+                .add_attribute("reason", reason),
             DomainEvent::SchedulingSkipped {
                 contract_address,
                 reason,
@@ -475,12 +459,12 @@ impl Contract {
         self.0.clone()
     }
 
-    pub fn call(&self, msg: Binary, funds: Vec<Coin>) -> StdResult<CosmosMsg> {
-        Ok(WasmMsg::Execute {
+    pub fn call(&self, msg: Binary, funds: Vec<Coin>) -> CosmosMsg {
+        WasmMsg::Execute {
             contract_addr: self.addr().into(),
             msg,
             funds,
         }
-        .into())
+        .into()
     }
 }

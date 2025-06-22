@@ -1,8 +1,5 @@
 use anybuf::Anybuf;
-use calc_rs::{
-    math::checked_mul,
-    types::{ContractError, ContractResult, ExpectedReturnAmount},
-};
+use calc_rs::types::{ContractError, ContractResult, ExpectedReturnAmount};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, AnyMsg, CanonicalAddr, Coin, CosmosMsg, Decimal, Deps, Env, Response, StdError,
@@ -254,10 +251,7 @@ impl Exchange for ThorExchange {
 
         let spot_price = self.spot_price(deps, &swap_asset, target_denom)?;
 
-        let optimal_return_amount = checked_mul(swap_amount.amount, Decimal::one() / spot_price)
-            .map_err(|e| {
-                StdError::generic_err(format!("Failed to calculate optimal return amount: {}", e))
-            })?;
+        let optimal_return_amount = swap_amount.amount.mul_floor(Decimal::one() / spot_price);
 
         let slippage =
             Decimal::one().checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))?;

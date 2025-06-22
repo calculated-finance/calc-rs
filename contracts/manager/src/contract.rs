@@ -129,7 +129,7 @@ pub fn execute(
 
             Ok(Response::default().add_message(
                 Contract(contract_address)
-                    .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds)?,
+                    .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds),
             ))
         }
         ManagerExecuteMsg::PauseStrategy { contract_address } => {
@@ -150,7 +150,7 @@ pub fn execute(
 
             Ok(Response::default().add_message(
                 Contract(contract_address.clone())
-                    .call(to_json_binary(&StrategyExecuteMsg::Pause {})?, info.funds)?,
+                    .call(to_json_binary(&StrategyExecuteMsg::Pause {})?, info.funds),
             ))
         }
         ManagerExecuteMsg::ResumeStrategy { contract_address } => {
@@ -171,7 +171,7 @@ pub fn execute(
 
             Ok(Response::default().add_message(
                 Contract(contract_address.clone())
-                    .call(to_json_binary(&StrategyExecuteMsg::Resume {})?, info.funds)?,
+                    .call(to_json_binary(&StrategyExecuteMsg::Resume {})?, info.funds),
             ))
         }
         ManagerExecuteMsg::WithdrawFromStrategy {
@@ -197,7 +197,7 @@ pub fn execute(
                 Response::default().add_message(Contract(contract_address).call(
                     to_json_binary(&StrategyExecuteMsg::Withdraw { amounts })?,
                     info.funds,
-                )?),
+                )),
             )
         }
         ManagerExecuteMsg::UpdateStrategy {
@@ -223,7 +223,7 @@ pub fn execute(
                 Response::default().add_message(Contract(contract_address).call(
                     to_json_binary(&StrategyExecuteMsg::Update { update })?,
                     info.funds,
-                )?),
+                )),
             )
         }
         ManagerExecuteMsg::UpdateStatus { status } => {
