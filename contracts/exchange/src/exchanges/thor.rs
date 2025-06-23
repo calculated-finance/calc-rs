@@ -590,18 +590,22 @@ mod pools_tests {
 mod can_swap_tests {
 
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{Binary, Coin, ContractResult, SystemResult, Uint128};
+    use cosmwasm_std::{Addr, Binary, Coin, ContractResult, SystemResult, Uint128};
     use prost::Message;
     use rujira_rs::proto::types::{QueryPoolRequest, QueryPoolResponse};
 
     use crate::{
-        exchanges::thor::{default_pool_response, ThorExchange},
+        exchanges::thor::{default_pool_response, ThorExchange, SCHEDULER},
         types::Exchange,
     };
 
     #[test]
     fn cannot_swap_with_no_pools() {
-        let deps = mock_dependencies_with_custom_querier();
+        let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         let swap_amount = Coin {
             denom: "arb-eth".to_string().clone(),
@@ -621,6 +625,10 @@ mod can_swap_tests {
     #[test]
     fn can_swap_with_single_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -655,6 +663,10 @@ mod can_swap_tests {
     #[test]
     fn can_swap_with_multiple_pools() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -691,7 +703,7 @@ mod can_swap_tests {
 mod route_tests {
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
-        Binary, Coin, ContractResult, StdError, SystemError, SystemResult, Uint128,
+        Addr, Binary, Coin, ContractResult, StdError, SystemError, SystemResult, Uint128,
     };
     use prost::Message;
     use rujira_rs::{
@@ -700,13 +712,17 @@ mod route_tests {
     };
 
     use crate::{
-        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange},
+        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange, SCHEDULER},
         types::Exchange,
     };
 
     #[test]
     fn fails_to_get_route_with_no_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(|query| {
             SystemResult::Err(SystemError::InvalidRequest {
@@ -738,6 +754,10 @@ mod route_tests {
     #[test]
     fn gets_route_with_single_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -798,6 +818,10 @@ mod route_tests {
     #[test]
     fn gets_route_with_multiple_pools() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -871,7 +895,7 @@ mod expected_receive_amount_tests {
     use calc_rs::types::ExpectedReceiveAmount;
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
-        Binary, Coin, ContractResult, Decimal, StdError, SystemError, SystemResult, Uint128,
+        Addr, Binary, Coin, ContractResult, Decimal, StdError, SystemError, SystemResult, Uint128,
     };
     use prost::Message;
     use rujira_rs::{
@@ -880,13 +904,17 @@ mod expected_receive_amount_tests {
     };
 
     use crate::{
-        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange},
+        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange, SCHEDULER},
         types::Exchange,
     };
 
     #[test]
     fn fails_to_get_expected_receive_amount_with_no_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(|query| {
             SystemResult::Err(SystemError::InvalidRequest {
@@ -918,6 +946,10 @@ mod expected_receive_amount_tests {
     #[test]
     fn gets_expected_receive_amount_with_single_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -978,6 +1010,10 @@ mod expected_receive_amount_tests {
     #[test]
     fn gets_expected_receive_amount_with_multiple_pools() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -1042,7 +1078,9 @@ mod spot_price_tests {
     use std::str::FromStr;
 
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{Binary, ContractResult, Decimal, StdError, SystemError, SystemResult};
+    use cosmwasm_std::{
+        Addr, Binary, ContractResult, Decimal, StdError, SystemError, SystemResult,
+    };
     use prost::Message;
     use rujira_rs::{
         proto::types::{QueryPoolRequest, QueryPoolResponse},
@@ -1050,13 +1088,17 @@ mod spot_price_tests {
     };
 
     use crate::{
-        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange},
+        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange, SCHEDULER},
         types::Exchange,
     };
 
     #[test]
     fn fails_to_get_spot_price_with_no_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(|query| {
             SystemResult::Err(SystemError::InvalidRequest {
@@ -1082,6 +1124,10 @@ mod spot_price_tests {
     #[test]
     fn gets_spot_price_with_single_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -1124,6 +1170,10 @@ mod spot_price_tests {
     #[test]
     fn gets_spot_price_with_multiple_pools() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -1182,6 +1232,7 @@ mod swap_tests {
     use crate::{
         exchanges::thor::{
             default_pool_response, layer_1_asset, secured_asset, MsgDeposit, ThorExchange,
+            SCHEDULER,
         },
         types::Exchange,
     };
@@ -1189,6 +1240,10 @@ mod swap_tests {
     #[test]
     fn fails_to_swap_with_no_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(|query| {
             SystemResult::Err(SystemError::InvalidRequest {
@@ -1236,6 +1291,10 @@ mod swap_tests {
     fn swaps_with_single_pool() {
         let mut deps = mock_dependencies_with_custom_querier();
         let env = mock_env();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
@@ -1303,6 +1362,10 @@ mod swap_tests {
     fn swaps_with_multiple_pools() {
         let mut deps = mock_dependencies_with_custom_querier();
         let env = mock_env();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
 
         deps.querier.with_grpc_handler(move |query| {
             let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();

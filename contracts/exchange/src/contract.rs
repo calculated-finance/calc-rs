@@ -11,19 +11,23 @@ use cosmwasm_std::{
 use rujira_rs::NativeAsset;
 
 use crate::exchanges::fin::{delete_pair, save_pair, FinExchange, Pair};
-use crate::exchanges::thor::ThorExchange;
+use crate::exchanges::thor::{ThorExchange, SCHEDULER};
 use crate::types::Exchange;
 
 #[cw_serde]
-pub struct InstantiateMsg {}
+pub struct InstantiateMsg {
+    scheduler_address: Addr,
+}
 
 #[entry_point]
 pub fn instantiate(
-    _deps: DepsMut,
+    deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
-    _msg: InstantiateMsg,
+    msg: InstantiateMsg,
 ) -> ContractResult {
+    deps.api.addr_validate(msg.scheduler_address.as_str())?;
+    SCHEDULER.save(deps.storage, &msg.scheduler_address)?;
     Ok(Response::default())
 }
 
