@@ -1,15 +1,13 @@
 use std::{time::Duration, u8};
 
-use cosmwasm_schema::cw_serde;
+use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
     to_json_string, Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
-    CoinsError, CosmosMsg, Decimal, Env, Event, Instantiate2AddressError, OverflowError, Response,
+    CoinsError, CosmosMsg, Decimal, Event, Instantiate2AddressError, OverflowError, Response,
     StdError, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 use thiserror::Error;
-
-use crate::msg::InstantiateStrategyConfig;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
@@ -78,50 +76,6 @@ pub enum ConditionFilter {
         start: Option<u64>,
         end: Option<u64>,
     },
-}
-
-#[cw_serde]
-pub struct Trigger {
-    pub id: u64,
-    pub owner: Addr,
-    pub condition: Condition,
-    pub msg: Binary,
-    pub to: Addr,
-    pub execution_rebate: Vec<Coin>,
-}
-
-pub trait Executable {
-    fn can_execute(&self, env: Env) -> bool;
-    fn execute(&self, env: Env) -> ContractResult;
-}
-
-impl Executable for Trigger {
-    fn can_execute(&self, env: Env) -> bool {
-        match self.condition {
-            Condition::BlockHeight { height } => height < env.block.height,
-            Condition::Timestamp { timestamp } => timestamp < env.block.time,
-        }
-    }
-
-    fn execute(&self, env: Env) -> ContractResult {
-        if !self.can_execute(env) {
-            return Err(ContractError::Std(StdError::generic_err(format!(
-                "Condition not met: {:?}",
-                self.condition
-            ))));
-        }
-
-        let mut messages: Vec<CosmosMsg> = vec![];
-
-        match self.condition {
-            Condition::Timestamp { .. } | Condition::BlockHeight { .. } => {
-                let execute_message = Contract(self.to.clone()).call(self.msg.clone(), vec![]);
-                messages.push(execute_message);
-            }
-        }
-
-        Ok(Response::default().add_messages(messages))
-    }
 }
 
 #[cw_serde]
@@ -250,19 +204,19 @@ impl Owned for StrategyConfig {
 }
 
 #[cw_serde]
-pub enum Status {
+pub enum StrategyStatus {
     Active,
     Paused,
     Archived,
 }
 
-impl<'a> Prefixer<'a> for Status {
+impl<'a> Prefixer<'a> for StrategyStatus {
     fn prefix(&self) -> Vec<Key> {
         vec![Key::Val8([self.clone() as u8])]
     }
 }
 
-impl<'a> PrimaryKey<'a> for Status {
+impl<'a> PrimaryKey<'a> for StrategyStatus {
     type Prefix = Self;
     type SubPrefix = Self;
     type Suffix = ();
@@ -288,7 +242,7 @@ pub struct Strategy {
     pub updated_at: u64,
     pub executions: u64,
     pub label: String,
-    pub status: Status,
+    pub status: StrategyStatus,
     pub affiliates: Vec<Affiliate>,
 }
 
@@ -467,4 +421,185 @@ impl Contract {
         }
         .into()
     }
+}
+
+#[cw_serde]
+pub struct Trigger {
+    pub id: u64,
+    pub owner: Addr,
+    pub condition: Condition,
+    pub msg: Binary,
+    pub to: Addr,
+    pub execution_rebate: Vec<Coin>,
+}
+
+#[cw_serde]
+pub struct ManagerInstantiateMsg {
+    pub code_id: u64,
+    pub fee_collector: Addr,
+}
+
+#[cw_serde]
+pub struct ManagerMigrateMsg {
+    pub code_id: u64,
+    pub fee_collector: Addr,
+}
+
+#[cw_serde]
+pub enum ManagerExecuteMsg {
+    InstantiateStrategy {
+        owner: Addr,
+        label: String,
+        strategy: InstantiateStrategyConfig,
+    },
+    ExecuteStrategy {
+        contract_address: Addr,
+    },
+    PauseStrategy {
+        contract_address: Addr,
+    },
+    ResumeStrategy {
+        contract_address: Addr,
+    },
+    WithdrawFromStrategy {
+        contract_address: Addr,
+        amounts: Vec<Coin>,
+    },
+    UpdateStrategy {
+        contract_address: Addr,
+        update: StrategyConfig,
+    },
+    UpdateStatus {
+        status: StrategyStatus,
+    },
+    AddAffiliate {
+        affiliate: Affiliate,
+    },
+    RemoveAffiliate {
+        code: String,
+    },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum ManagerQueryMsg {
+    #[returns(ManagerConfig)]
+    Config {},
+    #[returns(Strategy)]
+    Strategy { address: Addr },
+    #[returns(Vec<Strategy>)]
+    Strategies {
+        owner: Option<Addr>,
+        status: Option<StrategyStatus>,
+        start_after: Option<Addr>,
+        limit: Option<u16>,
+    },
+    #[returns(Affiliate)]
+    Affiliate { code: String },
+    #[returns(Vec<Affiliate>)]
+    Affiliates {
+        start_after: Option<Addr>,
+        limit: Option<u16>,
+    },
+}
+
+#[cw_serde]
+pub enum InstantiateStrategyConfig {
+    Dca {
+        owner: Addr,
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+        schedule: DcaSchedule,
+        exchange_contract: Addr,
+        scheduler_contract: Addr,
+        execution_rebate: Coin,
+        affiliate_code: Option<String>,
+        mutable_destinations: Vec<Destination>,
+        immutable_destinations: Vec<Destination>,
+    },
+    Custom {},
+}
+
+#[cw_serde]
+pub struct StrategyInstantiateMsg {
+    pub fee_collector: Addr,
+    pub strategy: InstantiateStrategyConfig,
+}
+
+#[cw_serde]
+pub enum StrategyExecuteMsg {
+    Execute {},
+    Deposit {},
+    Withdraw { amounts: Vec<Coin> },
+    Pause {},
+    Resume {},
+    Update { update: StrategyConfig },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum StrategyQueryMsg {
+    #[returns(StrategyConfig)]
+    Config {},
+    #[returns(bool)]
+    CanExecute {},
+}
+
+#[cw_serde]
+pub enum ExchangeExecuteMsg {
+    Swap {
+        minimum_receive_amount: Coin,
+        recipient: Option<Addr>,
+    },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum ExchangeQueryMsg {
+    #[returns(bool)]
+    CanSwap {
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+    },
+    #[returns(Vec<Coin>)]
+    Route {
+        swap_amount: Coin,
+        target_denom: String,
+    },
+    #[returns(Decimal)]
+    SpotPrice {
+        swap_denom: String,
+        target_denom: String,
+    },
+    #[returns(ExpectedReturnAmount)]
+    ExpectedReceiveAmount {
+        swap_amount: Coin,
+        target_denom: String,
+    },
+}
+
+#[cw_serde]
+pub struct CreateTrigger {
+    pub condition: Condition,
+    pub to: Addr,
+    pub msg: Binary,
+}
+
+#[cw_serde]
+pub enum SchedulerExecuteMsg {
+    SetTriggers(Vec<CreateTrigger>),
+    ExecuteTrigger { id: u64 },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum SchedulerQueryMsg {
+    #[returns(Vec<Trigger>)]
+    Triggers {
+        filter: ConditionFilter,
+        limit: Option<usize>,
+        can_execute: Option<bool>,
+    },
+    #[returns(bool)]
+    CanExecute { id: u64 },
 }

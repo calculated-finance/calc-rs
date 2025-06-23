@@ -1,9 +1,7 @@
-use calc_rs::{
-    msg::{
-        ManagerExecuteMsg, ManagerInstantiateMsg, ManagerMigrateMsg, ManagerQueryMsg,
-        StrategyExecuteMsg, StrategyInstantiateMsg,
-    },
-    types::{Contract, ContractError, ContractResult, ManagerConfig, Status, Strategy},
+use calc_rs::types::{
+    Contract, ContractError, ContractResult, ManagerConfig, ManagerExecuteMsg,
+    ManagerInstantiateMsg, ManagerMigrateMsg, ManagerQueryMsg, Strategy, StrategyExecuteMsg,
+    StrategyInstantiateMsg, StrategyStatus,
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -93,7 +91,7 @@ pub fn execute(
                     updated_at: env.block.time.seconds(),
                     executions: 0,
                     label: label.clone(),
-                    status: Status::Active,
+                    status: StrategyStatus::Active,
                     affiliates: Vec::new(),
                 },
             )?;
@@ -325,10 +323,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 #[cfg(test)]
 mod tests {
-    use calc_rs::{
-        msg::ManagerQueryMsg,
-        types::{Status, Strategy},
-    };
+    use calc_rs::types::{ManagerQueryMsg, Strategy, StrategyStatus};
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         to_json_binary, Addr,
@@ -352,7 +347,7 @@ mod tests {
             updated_at: env.block.time.seconds(),
             executions: 0,
             label: "Test Strategy".to_string(),
-            status: Status::Active,
+            status: StrategyStatus::Active,
             affiliates: Vec::new(),
         };
 

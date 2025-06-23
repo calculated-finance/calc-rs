@@ -1,4 +1,4 @@
-use calc_rs::msg::{ManagerExecuteMsg, ManagerInstantiateMsg, ManagerQueryMsg};
+use calc_rs::types::{ManagerExecuteMsg, ManagerInstantiateMsg, ManagerQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {

@@ -1,5 +1,6 @@
-use calc_rs::msg::{SchedulerExecuteMsg, SchedulerQueryMsg};
-use calc_rs::types::{ConditionFilter, ContractResult, Executable, Trigger};
+use calc_rs::types::{
+    ConditionFilter, ContractError, ContractResult, SchedulerExecuteMsg, SchedulerQueryMsg, Trigger,
+};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -9,6 +10,7 @@ use cosmwasm_std::{
 };
 
 use crate::state::{fetch_triggers, triggers, TRIGGER_COUNTER};
+use crate::types::Executable;
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -40,32 +42,22 @@ pub fn execute(
     msg: SchedulerExecuteMsg,
 ) -> ContractResult {
     match msg {
-        SchedulerExecuteMsg::CreateTrigger(trigger_to_create) => {
-            let id = TRIGGER_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
-
-            triggers().save(
-                deps.storage,
-                id,
-                &Trigger {
-                    id,
-                    owner: info.sender,
-                    condition: trigger_to_create.condition,
-                    msg: trigger_to_create.msg,
-                    to: trigger_to_create.to,
-                    execution_rebate: info.funds,
-                },
-            )?;
-
-            Ok(Response::default())
-        }
         SchedulerExecuteMsg::SetTriggers(triggers_to_create) => {
+            if info.funds.len() != triggers_to_create.len() {
+                return Err(ContractError::Std(StdError::generic_err(
+                    "Number of funds must match number of triggers to create",
+                )));
+            }
+
             let triggers_to_delete = fetch_triggers(
                 deps.as_ref(),
+                &env,
                 ConditionFilter::Owner {
                     address: info.sender.clone(),
                 },
                 None,
-            );
+                None,
+            )?;
 
             let mut rebates_to_refund = Coins::default();
 
@@ -77,7 +69,7 @@ pub fn execute(
                 }
             }
 
-            for trigger_to_create in triggers_to_create {
+            for (i, trigger_to_create) in triggers_to_create.iter().enumerate() {
                 let id = TRIGGER_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
 
                 triggers().save(
@@ -86,10 +78,10 @@ pub fn execute(
                     &Trigger {
                         id,
                         owner: info.sender.clone(),
-                        condition: trigger_to_create.condition,
-                        msg: trigger_to_create.msg,
-                        to: trigger_to_create.to,
-                        execution_rebate: info.funds.clone(),
+                        condition: trigger_to_create.condition.clone(),
+                        msg: trigger_to_create.msg.clone(),
+                        to: trigger_to_create.to.clone(),
+                        execution_rebate: vec![info.funds[i].clone()],
                     },
                 )?;
             }
@@ -103,37 +95,15 @@ pub fn execute(
                 amount: rebates_to_refund.into(),
             }))
         }
-        SchedulerExecuteMsg::DeleteTriggers {} => {
-            let triggers_to_delete = fetch_triggers(
-                deps.as_ref(),
-                ConditionFilter::Owner {
-                    address: info.sender.clone(),
-                },
-                None,
-            );
-
-            let mut rebates_to_refund = Coins::default();
-
-            for trigger in triggers_to_delete {
-                triggers().remove(deps.storage, trigger.id)?;
-
-                for coin in &trigger.execution_rebate {
-                    rebates_to_refund.add(coin.clone())?;
-                }
-            }
-
-            if rebates_to_refund.is_empty() {
-                return Ok(Response::default());
-            }
-
-            Ok(Response::default().add_message(BankMsg::Send {
-                to_address: info.sender.to_string(),
-                amount: rebates_to_refund.into(),
-            }))
-        }
         SchedulerExecuteMsg::ExecuteTrigger { id } => {
-            let trigger = triggers().load(deps.storage, id)?;
-            let response = trigger.execute(env)?;
+            let trigger = triggers().load(deps.storage, id).map_err(|_| {
+                ContractError::Std(StdError::generic_err(format!(
+                    "Trigger with id {} does not exist",
+                    id
+                )))
+            })?;
+
+            let response = trigger.execute(&env)?;
 
             triggers().remove(deps.storage, id)?;
 
@@ -148,14 +118,605 @@ pub fn execute(
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
-        SchedulerQueryMsg::Triggers { filter, limit } => {
-            to_json_binary(&fetch_triggers(deps, filter, limit))
-        }
+        SchedulerQueryMsg::Triggers {
+            filter,
+            limit,
+            can_execute,
+        } => to_json_binary(&fetch_triggers(deps, &env, filter, limit, can_execute)?),
         SchedulerQueryMsg::CanExecute { id } => {
-            to_json_binary(&triggers().load(deps.storage, id)?.can_execute(env))
+            to_json_binary(&triggers().load(deps.storage, id)?.can_execute(&env))
         }
     }
 }
 
 #[cfg(test)]
-mod tests {}
+mod set_triggers_tests {
+    use super::*;
+    use calc_rs::types::{Condition, CreateTrigger};
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Coin, SubMsg, Uint128,
+    };
+
+    #[test]
+    fn saves_triggers() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let create_trigger_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![
+                Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(235463),
+                },
+                Coin {
+                    denom: "uruji".to_string(),
+                    amount: Uint128::new(542365),
+                },
+            ],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_commands = vec![
+            CreateTrigger {
+                condition: Condition::BlockHeight {
+                    height: env.block.height + 10,
+                },
+                to: deps.api.addr_make("recipient1"),
+                msg: to_json_binary(&"test message 1").unwrap(),
+            },
+            CreateTrigger {
+                condition: Condition::Timestamp {
+                    timestamp: env.block.time.plus_seconds(100),
+                },
+                to: deps.api.addr_make("recipient2"),
+                msg: to_json_binary(&"test message 2").unwrap(),
+            },
+        ];
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(create_commands.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 2);
+
+        let triggers = fetch_triggers(
+            deps.as_ref(),
+            &env,
+            ConditionFilter::Owner {
+                address: owner.clone(),
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            triggers,
+            vec![
+                Trigger {
+                    id: 1,
+                    owner: owner.clone(),
+                    condition: create_commands[0].condition.clone(),
+                    to: create_commands[0].to.clone(),
+                    msg: create_commands[0].msg.clone(),
+                    execution_rebate: vec![create_trigger_info.funds[0].clone()],
+                },
+                Trigger {
+                    id: 2,
+                    owner: owner.clone(),
+                    condition: create_commands[1].condition.clone(),
+                    to: create_commands[1].to.clone(),
+                    msg: create_commands[1].msg.clone(),
+                    execution_rebate: vec![create_trigger_info.funds[1].clone()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn deletes_existing_triggers() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let create_trigger_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![Coin {
+                denom: "rune".to_string(),
+                amount: Uint128::new(235463),
+            }],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_command = CreateTrigger {
+            condition: Condition::BlockHeight {
+                height: env.block.height + 10,
+            },
+            to: deps.api.addr_make("recipient"),
+            msg: to_json_binary(&"test message").unwrap(),
+        };
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(vec![create_command.clone()]),
+        )
+        .unwrap();
+
+        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 1);
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            MessageInfo {
+                sender: owner.clone(),
+                funds: vec![],
+            }
+            .clone(),
+            SchedulerExecuteMsg::SetTriggers(vec![]),
+        )
+        .unwrap();
+
+        let triggers = fetch_triggers(
+            deps.as_ref(),
+            &env,
+            ConditionFilter::Owner {
+                address: owner.clone(),
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(triggers.is_empty());
+    }
+
+    #[test]
+    fn refunds_existing_execution_rebates() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let create_trigger_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![
+                Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(235463),
+                },
+                Coin {
+                    denom: "uruji".to_string(),
+                    amount: Uint128::new(736328),
+                },
+            ],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_commands = vec![
+            CreateTrigger {
+                condition: Condition::BlockHeight {
+                    height: env.block.height + 10,
+                },
+                to: deps.api.addr_make("recipient1"),
+                msg: to_json_binary(&"test message 1").unwrap(),
+            },
+            CreateTrigger {
+                condition: Condition::Timestamp {
+                    timestamp: env.block.time.plus_seconds(100),
+                },
+                to: deps.api.addr_make("recipient2"),
+                msg: to_json_binary(&"test message 2").unwrap(),
+            },
+        ];
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(create_commands.clone()),
+        )
+        .unwrap();
+
+        let response = execute(
+            deps.as_mut(),
+            env.clone(),
+            MessageInfo {
+                sender: owner.clone(),
+                funds: vec![],
+            }
+            .clone(),
+            SchedulerExecuteMsg::SetTriggers(vec![]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response.messages,
+            vec![SubMsg::reply_never(BankMsg::Send {
+                to_address: owner.to_string(),
+                amount: create_trigger_info.funds.clone(),
+            })]
+        );
+    }
+
+    #[test]
+    fn sets_multiple_triggers() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let create_trigger_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![Coin {
+                denom: "rune".to_string(),
+                amount: Uint128::new(235463),
+            }],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_command = CreateTrigger {
+            condition: Condition::BlockHeight {
+                height: env.block.height + 10,
+            },
+            to: deps.api.addr_make("recipient"),
+            msg: to_json_binary(&"test message").unwrap(),
+        };
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(vec![create_command.clone()]),
+        )
+        .unwrap();
+
+        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 1);
+
+        let set_triggers_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![
+                Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(345345),
+                },
+                Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(876749),
+                },
+            ],
+        };
+
+        let set_triggers_commands = vec![
+            CreateTrigger {
+                condition: Condition::BlockHeight {
+                    height: env.block.height + 10,
+                },
+                to: deps.api.addr_make("recipient1"),
+                msg: to_json_binary(&"test message 1").unwrap(),
+            },
+            CreateTrigger {
+                condition: Condition::BlockHeight {
+                    height: env.block.height + 20,
+                },
+                to: deps.api.addr_make("recipient2"),
+                msg: to_json_binary(&"test message 2").unwrap(),
+            },
+        ];
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            set_triggers_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(set_triggers_commands.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 3);
+
+        let triggers = fetch_triggers(
+            deps.as_ref(),
+            &env,
+            ConditionFilter::Owner {
+                address: owner.clone(),
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            triggers,
+            vec![
+                Trigger {
+                    id: 2,
+                    owner: owner.clone(),
+                    condition: set_triggers_commands[0].condition.clone(),
+                    to: set_triggers_commands[0].to.clone(),
+                    msg: set_triggers_commands[0].msg.clone(),
+                    execution_rebate: vec![set_triggers_info.funds[0].clone()],
+                },
+                Trigger {
+                    id: 3,
+                    owner: owner.clone(),
+                    condition: set_triggers_commands[1].condition.clone(),
+                    to: set_triggers_commands[1].to.clone(),
+                    msg: set_triggers_commands[1].msg.clone(),
+                    execution_rebate: vec![set_triggers_info.funds[1].clone()],
+                },
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod execute_trigger_tests {
+    use super::*;
+    use calc_rs::types::{Condition, CreateTrigger};
+    use cosmwasm_std::WasmMsg;
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Coin, SubMsg, Uint128,
+    };
+
+    #[test]
+    fn returns_error_if_trigger_does_not_exist() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let execution_info = MessageInfo {
+            sender: deps.api.addr_make("executor"),
+            funds: vec![],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let err = execute(
+            deps.as_mut(),
+            env.clone(),
+            execution_info.clone(),
+            SchedulerExecuteMsg::ExecuteTrigger { id: 1 },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            ContractError::Std(StdError::generic_err("Trigger with id 1 does not exist"))
+        );
+    }
+
+    #[test]
+    fn returns_error_if_trigger_cannot_execute() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let execution_info = MessageInfo {
+            sender: deps.api.addr_make("executor"),
+            funds: vec![],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_command = CreateTrigger {
+            condition: Condition::BlockHeight {
+                height: env.block.height + 10,
+            },
+            to: deps.api.addr_make("recipient"),
+            msg: to_json_binary(&"test message").unwrap(),
+        };
+
+        let owner = deps.api.addr_make("creator");
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            MessageInfo {
+                sender: owner,
+                funds: vec![Coin {
+                    denom: "rune".to_string(),
+                    amount: Uint128::new(235463),
+                }],
+            },
+            SchedulerExecuteMsg::SetTriggers(vec![create_command.clone()]),
+        )
+        .unwrap();
+
+        let err = execute(
+            deps.as_mut(),
+            env.clone(),
+            execution_info.clone(),
+            SchedulerExecuteMsg::ExecuteTrigger { id: 1 },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            ContractError::Std(StdError::generic_err(format!(
+                "Condition not met: {:?}",
+                create_command.condition
+            )))
+        );
+    }
+
+    #[test]
+    fn adds_execute_message_if_trigger_can_execute() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let create_trigger_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![Coin {
+                denom: "rune".to_string(),
+                amount: Uint128::new(235463),
+            }],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_command = CreateTrigger {
+            condition: Condition::BlockHeight {
+                height: env.block.height - 10,
+            },
+            to: deps.api.addr_make("recipient"),
+            msg: to_json_binary(&"test message").unwrap(),
+        };
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(vec![create_command.clone()]),
+        )
+        .unwrap();
+
+        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 1);
+
+        let execution_info = MessageInfo {
+            sender: deps.api.addr_make("executor"),
+            funds: vec![],
+        };
+
+        let response = execute(
+            deps.as_mut(),
+            env.clone(),
+            execution_info.clone(),
+            SchedulerExecuteMsg::ExecuteTrigger { id: 1 },
+        )
+        .unwrap();
+
+        assert!(response
+            .messages
+            .contains(&SubMsg::reply_never(WasmMsg::Execute {
+                contract_addr: create_command.to.to_string(),
+                msg: create_command.msg,
+                funds: vec![]
+            })));
+    }
+
+    #[test]
+    fn adds_send_rebate_msg_if_trigger_can_execute() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let create_trigger_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![Coin {
+                denom: "rune".to_string(),
+                amount: Uint128::new(235463),
+            }],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_command = CreateTrigger {
+            condition: Condition::BlockHeight {
+                height: env.block.height - 10,
+            },
+            to: deps.api.addr_make("recipient"),
+            msg: to_json_binary(&"test message").unwrap(),
+        };
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(vec![create_command.clone()]),
+        )
+        .unwrap();
+
+        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 1);
+
+        let execution_info = MessageInfo {
+            sender: deps.api.addr_make("executor"),
+            funds: vec![],
+        };
+
+        let response = execute(
+            deps.as_mut(),
+            env.clone(),
+            execution_info.clone(),
+            SchedulerExecuteMsg::ExecuteTrigger { id: 1 },
+        )
+        .unwrap();
+
+        assert!(response
+            .messages
+            .contains(&SubMsg::reply_never(BankMsg::Send {
+                to_address: execution_info.sender.to_string(),
+                amount: create_trigger_info.funds.clone(),
+            })));
+    }
+
+    #[test]
+    fn deletes_trigger_if_trigger_can_execute() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let create_trigger_info = MessageInfo {
+            sender: owner.clone(),
+            funds: vec![Coin {
+                denom: "rune".to_string(),
+                amount: Uint128::new(235463),
+            }],
+        };
+
+        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+
+        let create_command = CreateTrigger {
+            condition: Condition::BlockHeight {
+                height: env.block.height - 10,
+            },
+            to: deps.api.addr_make("recipient"),
+            msg: to_json_binary(&"test message").unwrap(),
+        };
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::SetTriggers(vec![create_command.clone()]),
+        )
+        .unwrap();
+
+        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 1);
+
+        let execution_info = MessageInfo {
+            sender: deps.api.addr_make("executor"),
+            funds: vec![],
+        };
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            execution_info.clone(),
+            SchedulerExecuteMsg::ExecuteTrigger { id: 1 },
+        )
+        .unwrap();
+
+        let triggers = fetch_triggers(
+            deps.as_ref(),
+            &env,
+            ConditionFilter::Owner {
+                address: owner.clone(),
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(triggers.is_empty());
+    }
+}

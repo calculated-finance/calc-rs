@@ -1,10 +1,11 @@
-use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
+use calc_rs::types::{SchedulerExecuteMsg, SchedulerQueryMsg};
 use cosmwasm_schema::write_api;
+use scheduler::contract::InstantiateMsg;
 
 fn main() {
     write_api! {
-        instantiate: StrategyInstantiateMsg,
-        execute: StrategyExecuteMsg,
-        query: StrategyQueryMsg,
+        instantiate: InstantiateMsg,
+        execute: SchedulerExecuteMsg,
+        query: SchedulerQueryMsg,
     }
 }

@@ -1,5 +1,7 @@
-use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
-use calc_rs::types::{ContractError, ContractResult, StrategyConfig};
+use calc_rs::types::{
+    ContractError, ContractResult, StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg,
+    StrategyQueryMsg,
+};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{

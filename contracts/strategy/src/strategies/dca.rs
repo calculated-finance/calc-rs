@@ -1,15 +1,10 @@
 use std::cmp::min;
 
-use calc_rs::{
-    msg::{
-        CreateTrigger, ExchangeExecuteMsg, ManagerExecuteMsg, ManagerQueryMsg, SchedulerExecuteMsg,
-        SchedulerQueryMsg, StrategyExecuteMsg,
-    },
-    types::{
-        Affiliate, Condition, ConditionFilter, Contract, ContractError, ContractResult,
-        DcaSchedule, DcaStatistics, DcaStrategyConfig, Destination, DomainEvent, Executable,
-        Status, Strategy, StrategyConfig, StrategyStatistics, Trigger,
-    },
+use calc_rs::types::{
+    Affiliate, Condition, ConditionFilter, Contract, ContractError, ContractResult, CreateTrigger,
+    DcaSchedule, DcaStatistics, DcaStrategyConfig, Destination, DomainEvent, ExchangeExecuteMsg,
+    ManagerExecuteMsg, ManagerQueryMsg, SchedulerExecuteMsg, SchedulerQueryMsg, Strategy,
+    StrategyConfig, StrategyExecuteMsg, StrategyStatistics, StrategyStatus, Trigger,
 };
 use cosmwasm_std::{
     from_json, to_json_binary, BankMsg, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo, Reply,
@@ -275,7 +270,7 @@ impl Runnable for DcaStrategyConfig {
             },
         )?;
 
-        if strategy.status != Status::Active {
+        if strategy.status != StrategyStatus::Active {
             return Err(StdError::generic_err(format!(
                 "Strategy is not active, current status: {:?}",
                 strategy.status
@@ -289,16 +284,15 @@ impl Runnable for DcaStrategyConfig {
                     address: env.contract.address.clone(),
                 },
                 limit: None,
+                can_execute: Some(false),
             },
         )?;
 
-        for trigger in triggers {
-            if !trigger.can_execute(env.clone()) {
-                return Err(StdError::generic_err(format!(
-                    "Condition for execution not met: {:?}",
-                    trigger.condition
-                )));
-            }
+        if !triggers.is_empty() {
+            return Err(StdError::generic_err(format!(
+                "Condition for execution not met: {:?}",
+                triggers[0].condition
+            )));
         }
 
         Ok(())
@@ -423,7 +417,7 @@ impl Runnable for DcaStrategyConfig {
                     Err(reason) => {
                         let pause_strategy_msg = Contract(MANAGER.load(deps.storage)?).call(
                             to_json_binary(&ManagerExecuteMsg::UpdateStatus {
-                                status: Status::Paused,
+                                status: StrategyStatus::Paused,
                             })?,
                             vec![],
                         );
@@ -462,6 +456,7 @@ impl Runnable for DcaStrategyConfig {
                                     address: env.contract.address.clone(),
                                 },
                                 limit: None,
+                                can_execute: None,
                             },
                         )?;
 
@@ -473,7 +468,7 @@ impl Runnable for DcaStrategyConfig {
                     SubMsgResult::Err(reason) => {
                         messages.push(Contract(MANAGER.load(deps.storage)?).call(
                             to_json_binary(&ManagerExecuteMsg::UpdateStatus {
-                                status: Status::Paused,
+                                status: StrategyStatus::Paused,
                             })?,
                             vec![],
                         ));
@@ -535,13 +530,13 @@ impl Runnable for DcaStrategyConfig {
 
     fn pause(&mut self, deps: Deps, env: &Env) -> ContractResult {
         let delete_conditions_msg = Contract(self.scheduler_contract.clone()).call(
-            to_json_binary(&SchedulerExecuteMsg::DeleteTriggers {})?,
+            to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![]))?,
             vec![],
         );
 
         let pause_strategy_msg = Contract(MANAGER.load(deps.storage)?).call(
             to_json_binary(&ManagerExecuteMsg::UpdateStatus {
-                status: Status::Paused,
+                status: StrategyStatus::Paused,
             })?,
             vec![],
         );
@@ -573,7 +568,7 @@ impl Runnable for DcaStrategyConfig {
 
         let resume_strategy_msg = Contract(MANAGER.load(deps.storage)?).call(
             to_json_binary(&ManagerExecuteMsg::UpdateStatus {
-                status: Status::Active,
+                status: StrategyStatus::Active,
             })?,
             vec![],
         );
@@ -1042,7 +1037,7 @@ mod instantiate_tests {
                 if contract_addr == &manager_address.to_string() {
                     SystemResult::Ok(ContractResult::Ok(
                         to_json_binary(&Strategy {
-                            status: Status::Active,
+                            status: StrategyStatus::Active,
                             owner: default_strategy_config().owner.clone(),
                             contract_address: strategy_address.clone(),
                             created_at: env.block.time.seconds(),
@@ -1491,7 +1486,7 @@ mod can_execute_tests {
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&Strategy {
-                    status: Status::Paused,
+                    status: StrategyStatus::Paused,
                     owner: strategy_owner.clone(),
                     contract_address: strategy_address.clone(),
                     created_at: env.block.time.seconds(),
@@ -1535,7 +1530,7 @@ mod can_execute_tests {
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&Strategy {
-                    status: Status::Archived,
+                    status: StrategyStatus::Archived,
                     owner: strategy_owner.clone(),
                     contract_address: strategy_address.clone(),
                     created_at: env.block.time.seconds(),
@@ -1582,7 +1577,7 @@ mod can_execute_tests {
                 if contract_addr == &manager_address.to_string() {
                     SystemResult::Ok(ContractResult::Ok(
                         to_json_binary(&Strategy {
-                            status: Status::Active,
+                            status: StrategyStatus::Active,
                             owner: default_strategy.owner.clone(),
                             contract_address: strategy_address.clone(),
                             created_at: env.block.time.seconds(),
@@ -1655,7 +1650,7 @@ mod can_execute_tests {
                 if contract_addr == &manager_address.to_string() {
                     SystemResult::Ok(ContractResult::Ok(
                         to_json_binary(&Strategy {
-                            status: Status::Active,
+                            status: StrategyStatus::Active,
                             owner: default_strategy_config().owner.clone(),
                             contract_address: strategy_address.clone(),
                             created_at: env.block.time.seconds(),
@@ -1700,12 +1695,12 @@ mod can_execute_tests {
             .update_balance(strategy_address.clone(), vec![strategy.swap_amount.clone()]);
 
         deps.querier.update_wasm(move |query| match query {
-            WasmQuery::Smart { contract_addr, .. } => {
+            WasmQuery::Smart { contract_addr, msg } => {
                 let default_strategy = default_strategy_config();
                 if contract_addr == &manager_address.to_string() {
                     SystemResult::Ok(ContractResult::Ok(
                         to_json_binary(&Strategy {
-                            status: Status::Active,
+                            status: StrategyStatus::Active,
                             owner: default_strategy.owner.clone(),
                             contract_address: strategy_address.clone(),
                             created_at: env.block.time.seconds(),
@@ -1717,22 +1712,12 @@ mod can_execute_tests {
                         .unwrap(),
                     ))
                 } else if contract_addr == &scheduler_address.to_string() {
-                    SystemResult::Ok(ContractResult::Ok(
-                        to_json_binary::<Vec<Trigger>>(&vec![Trigger {
-                            id: 1,
-                            owner: strategy_address.clone(),
-                            condition: Condition::BlockHeight {
-                                height: env.block.height - 1,
-                            },
-                            msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                                contract_address: strategy_address.clone(),
-                            })
-                            .unwrap(),
-                            to: manager_address.clone(),
-                            execution_rebate: vec![default_strategy.execution_rebate.clone()],
-                        }])
-                        .unwrap(),
-                    ))
+                    SystemResult::Ok(ContractResult::Ok(match from_json(msg).unwrap() {
+                        SchedulerQueryMsg::Triggers { .. } => {
+                            { to_json_binary::<Vec<Trigger>>(&vec![]) }.unwrap()
+                        }
+                        SchedulerQueryMsg::CanExecute { .. } => to_json_binary(&true).unwrap(),
+                    }))
                 } else {
                     panic!("Unexpected contract address: {}", contract_addr);
                 }
@@ -1800,7 +1785,7 @@ mod execute_tests {
                 if contract_addr == &manager_address.to_string() {
                     SystemResult::Ok(ContractResult::Ok(
                         to_json_binary(&Strategy {
-                            status: Status::Active,
+                            status: StrategyStatus::Active,
                             owner: default_strategy_config().owner.clone(),
                             contract_address: strategy_address.clone(),
                             created_at: env.block.time.seconds(),
@@ -2099,7 +2084,7 @@ mod handle_reply_tests {
                 if contract_addr == &manager_address.to_string() {
                     SystemResult::Ok(ContractResult::Ok(
                         to_json_binary(&Strategy {
-                            status: Status::Active,
+                            status: StrategyStatus::Active,
                             owner: default_strategy_config().owner.clone(),
                             contract_address: strategy_address.clone(),
                             created_at: env.block.time.seconds(),
@@ -2193,7 +2178,7 @@ mod handle_reply_tests {
             SubMsg::reply_never(
                 Contract(manager_address.clone()).call(
                     to_json_binary(&ManagerExecuteMsg::UpdateStatus {
-                        status: Status::Paused
+                        status: StrategyStatus::Paused
                     })
                     .unwrap(),
                     vec![],
@@ -2469,7 +2454,7 @@ mod handle_reply_tests {
             SubMsg::reply_never(
                 Contract(manager_address.clone()).call(
                     to_json_binary(&ManagerExecuteMsg::UpdateStatus {
-                        status: Status::Paused
+                        status: StrategyStatus::Paused
                     })
                     .unwrap(),
                     vec![],

@@ -1,5 +1,5 @@
 [package]
-name = "calc-rs"
+name = "calc-rs-test"
 version = "0.0.1"
 authors = ["james <james@calculated.fi>"]
 edition = "2021"
@@ -12,5 +12,3 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }
-thiserror = { workspace = true }
-cw-storage-plus = { workspace = true }

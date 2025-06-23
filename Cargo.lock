@@ -238,9 +238,15 @@ dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",
- "cw-utils",
- "rujira-rs",
- "thiserror 1.0.69",
+ "thiserror",
+]
+
+[[package]]
+name = "calc-rs-test"
+version = "0.0.1"
+dependencies = [
+ "cosmwasm-schema",
+ "cosmwasm-std",
 ]
 
 [[package]]
@@ -298,7 +304,7 @@ dependencies = [
  "rand_core",
  "rayon",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -322,7 +328,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -357,7 +363,7 @@ dependencies = [
  "serde-json-wasm",
  "sha2",
  "static_assertions",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -450,26 +456,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cw-multi-test"
-version = "2.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "533b31c94b9e10e77e2468a2b1559aa506505d18c4e52eb64cbfc624ca876ad2"
-dependencies = [
- "anyhow",
- "bech32",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "itertools 0.14.0",
- "prost",
- "schemars",
- "serde",
- "sha2",
- "thiserror 2.0.12",
-]
-
-[[package]]
 name = "cw-storage-plus"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -490,7 +476,7 @@ dependencies = [
  "cosmwasm-std",
  "schemars",
  "serde",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -505,7 +491,7 @@ dependencies = [
  "schemars",
  "semver",
  "serde",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -650,9 +636,9 @@ version = "0.1.0"
 dependencies = [
  "anybuf 1.0.0",
  "calc-rs",
+ "calc-rs-test",
  "cosmwasm-schema",
  "cosmwasm-std",
- "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
  "cw2",
@@ -660,7 +646,7 @@ dependencies = [
  "rujira-rs",
  "schemars",
  "serde",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -902,7 +888,6 @@ dependencies = [
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
- "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
  "cw2",
@@ -1236,7 +1221,7 @@ dependencies = [
  "regex",
  "schemars",
  "serde",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -1261,10 +1246,10 @@ dependencies = [
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
- "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
  "cw2",
+ "rstest",
  "rujira-rs",
  "schemars",
  "serde",
@@ -1435,7 +1420,6 @@ dependencies = [
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
- "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
  "cw2",
@@ -1444,7 +1428,7 @@ dependencies = [
  "rujira-rs",
  "schemars",
  "serde",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -1505,16 +1489,7 @@ version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
 dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
-version = "2.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
-dependencies = [
- "thiserror-impl 2.0.12",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -1522,17 +1497,6 @@ name = "thiserror-impl"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "2.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
 dependencies = [
  "proc-macro2",
  "quote",

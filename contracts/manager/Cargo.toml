@@ -32,5 +32,3 @@ calc-rs = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 
-[dev-dependencies]
-cw-multi-test = { workspace = true }

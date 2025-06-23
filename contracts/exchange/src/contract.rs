@@ -1,5 +1,4 @@
-use calc_rs::msg::{ExchangeExecuteMsg, ExchangeQueryMsg};
-use calc_rs::types::{ContractResult, ExpectedReturnAmount};
+use calc_rs::types::{ContractResult, ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReturnAmount};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;

@@ -428,7 +428,7 @@ fn default_pool_response() -> QueryPoolResponse {
 
 #[cfg(test)]
 mod pools_tests {
-    use calc_rs::mock::mock_dependencies_with_custom_querier;
+    use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{Binary, ContractResult, SystemResult};
     use prost::Message;
     use rujira_rs::{
@@ -548,7 +548,7 @@ mod pools_tests {
 #[cfg(test)]
 mod can_swap_tests {
 
-    use calc_rs::mock::mock_dependencies_with_custom_querier;
+    use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{Binary, Coin, ContractResult, SystemResult, Uint128};
     use prost::Message;
     use rujira_rs::proto::types::{QueryPoolRequest, QueryPoolResponse};
@@ -648,7 +648,7 @@ mod can_swap_tests {
 
 #[cfg(test)]
 mod route_tests {
-    use calc_rs::mock::mock_dependencies_with_custom_querier;
+    use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
         Binary, Coin, ContractResult, StdError, SystemError, SystemResult, Uint128,
     };
@@ -827,7 +827,8 @@ mod route_tests {
 mod expected_receive_amount_tests {
     use std::str::FromStr;
 
-    use calc_rs::{mock::mock_dependencies_with_custom_querier, types::ExpectedReturnAmount};
+    use calc_rs::types::ExpectedReturnAmount;
+    use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
         Binary, Coin, ContractResult, Decimal, StdError, SystemError, SystemResult, Uint128,
     };
@@ -999,7 +1000,7 @@ mod spot_price_tests {
 
     use std::str::FromStr;
 
-    use calc_rs::mock::mock_dependencies_with_custom_querier;
+    use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{Binary, ContractResult, Decimal, StdError, SystemError, SystemResult};
     use prost::Message;
     use rujira_rs::{
@@ -1125,7 +1126,8 @@ mod spot_price_tests {
 #[cfg(test)]
 mod swap_tests {
 
-    use calc_rs::{mock::mock_dependencies_with_custom_querier, types::ContractError};
+    use calc_rs::types::ContractError;
+    use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
         testing::mock_env, Addr, Api, Binary, Coin, ContractResult, Response, StdError,
         SystemError, SystemResult, Uint128,

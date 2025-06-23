@@ -16,10 +16,10 @@ overflow-checks = true
 [workspace.dependencies]
 anybuf = "1.0"
 calc-rs = { path = "packages/calc-rs" }
+calc-rs-test = { path = "packages/calc-rs-test" }
 cosmwasm-schema = "2.2.0"
 cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1"] }
 cosmwasm-storage = "1.5.2"
-cw-multi-test = "2.0.0"
 cw-storage-plus = "2.0.0"
 cw-utils = "2.0.0"
 cw2 = "2.0.0"

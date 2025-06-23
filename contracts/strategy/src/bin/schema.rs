@@ -1,4 +1,4 @@
-use calc_rs::msg::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
+use calc_rs::types::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {
