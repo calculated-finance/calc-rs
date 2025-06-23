@@ -1,14 +1,16 @@
 use std::cmp::min;
 
 use calc_rs::types::{
-    Affiliate, Condition, ConditionFilter, Contract, ContractError, ContractResult, CreateTrigger,
-    DcaSchedule, DcaStatistics, DcaStrategyConfig, Destination, DomainEvent, ExchangeExecuteMsg,
-    ManagerExecuteMsg, ManagerQueryMsg, SchedulerExecuteMsg, SchedulerQueryMsg, Strategy,
-    StrategyConfig, StrategyExecuteMsg, StrategyStatistics, StrategyStatus, Trigger,
+    Affiliate, Callback, Condition, ConditionFilter, Contract, ContractError, ContractResult,
+    CreateTrigger, DcaSchedule, DcaStatistics, DcaStrategyConfig, Destination, Distribution,
+    DomainEvent, ExchangeExecuteMsg, ManagerExecuteMsg, ManagerQueryMsg, SchedulerExecuteMsg,
+    SchedulerQueryMsg, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyStatistics,
+    StrategyStatus, Trigger,
 };
+use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    from_json, to_json_binary, BankMsg, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo, Reply,
-    Response, StdError, StdResult, SubMsg, SubMsgResult, Uint128,
+    from_json, to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo,
+    Reply, Response, StdError, StdResult, SubMsg, SubMsgResult, Uint128,
 };
 
 use crate::{
@@ -20,6 +22,11 @@ pub const BASE_FEE_BPS: u64 = 15;
 
 pub const EXECUTE_REPLY_ID: u64 = 1;
 pub const SCHEDULE_REPLY_ID: u64 = 2;
+
+#[cw_serde]
+pub enum DcaExecuteMsg {
+    Distribute {},
+}
 
 fn get_swap_amount(deps: Deps, env: &Env, strategy: &DcaStrategyConfig) -> StdResult<Coin> {
     let balance = deps.querier.query_balance(
@@ -51,12 +58,45 @@ fn get_schedule_msg(strategy: &DcaStrategyConfig, deps: Deps, env: &Env) -> StdR
             to: MANAGER.load(deps.storage)?,
             msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                 contract_address: env.contract.address.clone(),
+                msg: None,
             })?,
         }]))?,
         vec![strategy.execution_rebate.clone()],
     );
 
     Ok(SubMsg::reply_always(set_triggers_msg, SCHEDULE_REPLY_ID))
+}
+
+fn get_distributions(
+    deps: Deps,
+    env: &Env,
+    strategy: &DcaStrategyConfig,
+) -> StdResult<Vec<Distribution>> {
+    let receive_denom_balance = deps.querier.query_balance(
+        env.contract.address.clone(),
+        strategy.minimum_receive_amount.denom.clone(),
+    )?;
+
+    let destinations = strategy
+        .mutable_destinations
+        .iter()
+        .chain(strategy.immutable_destinations.iter());
+
+    let total_shares = destinations
+        .clone()
+        .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
+    Ok(destinations
+        .map(|d| Distribution {
+            destination: d.clone(),
+            amount: vec![Coin {
+                denom: receive_denom_balance.denom.clone(),
+                amount: receive_denom_balance
+                    .amount
+                    .mul_floor(Decimal::from_ratio(d.shares, total_shares)),
+            }],
+        })
+        .collect::<Vec<Distribution>>())
 }
 
 impl Runnable for DcaStrategyConfig {
@@ -68,7 +108,7 @@ impl Runnable for DcaStrategyConfig {
             .into_iter()
             .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
-        let total_shares_with_fee = total_shares.mul_ceil(Decimal::permille(10_000 + BASE_FEE_BPS));
+        let total_shares_with_fee = total_shares.mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
 
         let fee_destinations = match self.affiliate_code.clone() {
             Some(code) => {
@@ -81,13 +121,13 @@ impl Runnable for DcaStrategyConfig {
                     Destination {
                         address: FEE_COLLECTOR.load(deps.storage)?,
                         shares: total_shares_with_fee
-                            .mul_ceil(Decimal::permille(BASE_FEE_BPS - affiliate.bps)),
+                            .mul_ceil(Decimal::bps(BASE_FEE_BPS - affiliate.bps)),
                         msg: None,
                         label: Some("CALC".to_string()),
                     },
                     Destination {
                         address: affiliate.address,
-                        shares: total_shares_with_fee.mul_floor(Decimal::permille(affiliate.bps)),
+                        shares: total_shares_with_fee.mul_floor(Decimal::bps(affiliate.bps)),
                         msg: None,
                         label: Some(format!("Affiliate: {}", affiliate.code).to_string()),
                     },
@@ -95,7 +135,7 @@ impl Runnable for DcaStrategyConfig {
             }
             None => vec![Destination {
                 address: FEE_COLLECTOR.load(deps.storage)?,
-                shares: total_shares_with_fee.mul_ceil(Decimal::permille(BASE_FEE_BPS)),
+                shares: total_shares_with_fee.mul_ceil(Decimal::bps(BASE_FEE_BPS)),
                 msg: None,
                 label: Some("CALC".to_string()),
             }],
@@ -104,6 +144,21 @@ impl Runnable for DcaStrategyConfig {
         self.immutable_destinations =
             [fee_destinations, self.immutable_destinations.clone()].concat();
 
+        self.statistics = DcaStatistics {
+            amount_swapped: Coin {
+                denom: self.swap_amount.denom.clone(),
+                amount: Uint128::zero(),
+            },
+            amount_received: Coin {
+                denom: self.minimum_receive_amount.denom.clone(),
+                amount: Uint128::zero(),
+            },
+            amount_deposited: Coin {
+                denom: self.swap_amount.denom.clone(),
+                amount: Uint128::zero(),
+            },
+        };
+
         let strategy_instantiated_event = DomainEvent::StrategyInstantiated {
             contract_address: env.contract.address.clone(),
             config: StrategyConfig::Dca(self.clone()),
@@ -111,11 +166,11 @@ impl Runnable for DcaStrategyConfig {
 
         let mut messages: Vec<CosmosMsg> = vec![];
 
-        if self.can_execute(deps, &env).is_ok() {
-            messages.push(
-                Contract(env.contract.address.clone())
-                    .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]),
-            );
+        if self.can_execute(deps, &env, None).is_ok() {
+            messages.push(Contract(env.contract.address.clone()).call(
+                to_json_binary(&StrategyExecuteMsg::Execute { msg: None })?,
+                vec![],
+            ));
         }
 
         Ok(Response::default()
@@ -253,72 +308,149 @@ impl Runnable for DcaStrategyConfig {
         }
     }
 
-    fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<()> {
-        let swap_amount = get_swap_amount(deps, env, self)?;
+    fn can_execute(&self, deps: Deps, env: &Env, msg: Option<Binary>) -> StdResult<()> {
+        match msg {
+            Some(msg) => {
+                if let Ok(DcaExecuteMsg::Distribute {}) = from_json(msg) {
+                    let distribute_amount = deps.querier.query_balance(
+                        env.contract.address.clone(),
+                        self.minimum_receive_amount.denom.clone(),
+                    )?;
 
-        if swap_amount.amount.is_zero() {
-            return Err(StdError::generic_err(format!(
-                "Insufficient swap amount of {} ({}) to cover gas fees",
-                self.swap_amount.denom, swap_amount.amount
-            )));
+                    if distribute_amount.amount.is_zero() {
+                        return Err(StdError::generic_err(format!(
+                            "No remaining balance of {} to distribute",
+                            self.minimum_receive_amount.denom
+                        )));
+                    }
+
+                    Ok(())
+                } else {
+                    Err(StdError::generic_err(
+                        "Invalid message for DCA strategy execution",
+                    ))
+                }
+            }
+            None => {
+                let swap_amount = get_swap_amount(deps, env, self)?;
+
+                if swap_amount.amount.is_zero() {
+                    return Err(StdError::generic_err(format!(
+                        "No remaining balance of {} to swap",
+                        self.swap_amount.denom
+                    )));
+                }
+
+                let strategy = deps.querier.query_wasm_smart::<Strategy>(
+                    MANAGER.load(deps.storage)?,
+                    &ManagerQueryMsg::Strategy {
+                        address: env.contract.address.clone(),
+                    },
+                )?;
+
+                if strategy.status != StrategyStatus::Active {
+                    return Err(StdError::generic_err(format!(
+                        "Strategy is not active, current status: {:?}",
+                        strategy.status
+                    )));
+                }
+
+                let triggers = deps.querier.query_wasm_smart::<Vec<Trigger>>(
+                    self.scheduler_contract.clone(),
+                    &SchedulerQueryMsg::Triggers {
+                        filter: ConditionFilter::Owner {
+                            address: env.contract.address.clone(),
+                        },
+                        limit: None,
+                        can_execute: Some(false),
+                    },
+                )?;
+
+                if !triggers.is_empty() {
+                    return Err(StdError::generic_err(format!(
+                        "Condition for execution not met: {:?}",
+                        triggers[0].condition
+                    )));
+                }
+
+                Ok(())
+            }
         }
-
-        let strategy = deps.querier.query_wasm_smart::<Strategy>(
-            MANAGER.load(deps.storage)?,
-            &ManagerQueryMsg::Strategy {
-                address: env.contract.address.clone(),
-            },
-        )?;
-
-        if strategy.status != StrategyStatus::Active {
-            return Err(StdError::generic_err(format!(
-                "Strategy is not active, current status: {:?}",
-                strategy.status
-            )));
-        }
-
-        let triggers = deps.querier.query_wasm_smart::<Vec<Trigger>>(
-            self.scheduler_contract.clone(),
-            &SchedulerQueryMsg::Triggers {
-                filter: ConditionFilter::Owner {
-                    address: env.contract.address.clone(),
-                },
-                limit: None,
-                can_execute: Some(false),
-            },
-        )?;
-
-        if !triggers.is_empty() {
-            return Err(StdError::generic_err(format!(
-                "Condition for execution not met: {:?}",
-                triggers[0].condition
-            )));
-        }
-
-        Ok(())
     }
 
-    fn execute(&mut self, deps: Deps, env: &Env) -> ContractResult {
+    fn execute(&mut self, deps: Deps, env: &Env, msg: Option<Binary>) -> ContractResult {
+        let mut messages: Vec<CosmosMsg> = vec![];
         let mut sub_messages: Vec<SubMsg> = vec![];
         let mut events: Vec<DomainEvent> = vec![];
 
-        match self.can_execute(deps, env) {
-            Ok(_) => {
-                let swap_amount = get_swap_amount(deps, env, &self)?;
+        match self.can_execute(deps, env, msg.clone()) {
+            Ok(_) => match msg {
+                Some(msg) => {
+                    if let Ok(DcaExecuteMsg::Distribute {}) = from_json(msg) {
+                        let receive_denom_balance = deps.querier.query_balance(
+                            env.contract.address.clone(),
+                            self.minimum_receive_amount.denom.clone(),
+                        )?;
 
-                let swap_msg = Contract(self.exchange_contract.clone()).call(
-                    to_json_binary(&ExchangeExecuteMsg::Swap {
-                        minimum_receive_amount: self.minimum_receive_amount.clone(),
-                        recipient: None,
-                    })?,
-                    vec![swap_amount.clone()],
-                );
+                        if receive_denom_balance.amount.is_zero() {
+                            let distributions = get_distributions(deps, env, &self)?;
 
-                sub_messages.push(
-                    SubMsg::reply_always(swap_msg, EXECUTE_REPLY_ID)
-                        .with_payload(to_json_binary(&swap_amount)?),
-                );
-            }
+                            messages.extend(
+                                distributions
+                                    .clone()
+                                    .into_iter()
+                                    .filter(|d| d.amount[0].amount > Uint128::zero())
+                                    .map(Into::into),
+                            );
+
+                            events.push(DomainEvent::FundsDistributed {
+                                contract_address: env.contract.address.clone(),
+                                to: distributions,
+                            });
+
+                            self.statistics = DcaStatistics {
+                                amount_received: Coin {
+                                    denom: self.minimum_receive_amount.denom.clone(),
+                                    amount: self
+                                        .statistics
+                                        .amount_received
+                                        .amount
+                                        .checked_add(receive_denom_balance.amount)?,
+                                },
+                                ..self.statistics.clone()
+                            };
+                        }
+                    } else {
+                        return Err(ContractError::Std(StdError::generic_err(
+                            "Invalid message for DCA strategy execution",
+                        )));
+                    }
+                }
+                None => {
+                    let swap_amount = get_swap_amount(deps, env, &self)?;
+
+                    let swap_msg = Contract(self.exchange_contract.clone()).call(
+                        to_json_binary(&ExchangeExecuteMsg::Swap {
+                            minimum_receive_amount: self.minimum_receive_amount.clone(),
+                            recipient: None,
+                            on_complete: Some(Callback {
+                                contract: MANAGER.load(deps.storage)?,
+                                msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                                    contract_address: env.contract.address.clone(),
+                                    msg: Some(to_json_binary(&DcaExecuteMsg::Distribute {})?),
+                                })?,
+                                execution_rebate: vec![self.execution_rebate.clone()],
+                            }),
+                        })?,
+                        vec![swap_amount.clone()],
+                    );
+
+                    sub_messages.push(
+                        SubMsg::reply_always(swap_msg, EXECUTE_REPLY_ID)
+                            .with_payload(to_json_binary(&swap_amount)?),
+                    );
+                }
+            },
             Err(reason) => {
                 events.push(DomainEvent::ExecutionSkipped {
                     contract_address: env.contract.address.clone(),
@@ -341,36 +473,27 @@ impl Runnable for DcaStrategyConfig {
             EXECUTE_REPLY_ID => {
                 match reply.result {
                     SubMsgResult::Ok(_) => {
-                        let target_denom_balance = deps.querier.query_balance(
+                        let receive_denom_balance = deps.querier.query_balance(
                             env.contract.address.clone(),
                             self.minimum_receive_amount.denom.clone(),
                         )?;
 
-                        let destinations = self
-                            .mutable_destinations
-                            .iter()
-                            .chain(self.immutable_destinations.iter());
+                        if receive_denom_balance.amount.gt(&Uint128::zero()) {
+                            let distributions = get_distributions(deps, &env, &self)?;
 
-                        let total_shares = destinations
-                            .clone()
-                            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+                            messages.extend(
+                                distributions
+                                    .clone()
+                                    .into_iter()
+                                    .filter(|d| d.amount[0].amount > Uint128::zero())
+                                    .map(Into::into),
+                            );
 
-                        let send_messages = &mut destinations
-                            .map(|d| {
-                                BankMsg::Send {
-                                    to_address: d.address.to_string(),
-                                    amount: vec![Coin {
-                                        denom: target_denom_balance.denom.clone(),
-                                        amount: target_denom_balance
-                                            .amount
-                                            .mul_floor(Decimal::from_ratio(d.shares, total_shares)),
-                                    }],
-                                }
-                                .into()
-                            })
-                            .collect::<Vec<CosmosMsg>>();
-
-                        messages.append(send_messages);
+                            events.push(DomainEvent::FundsDistributed {
+                                contract_address: env.contract.address.clone(),
+                                to: distributions,
+                            });
+                        }
 
                         let swap_denom_balance = deps.querier.query_balance(
                             env.contract.address.clone(),
@@ -387,12 +510,12 @@ impl Runnable for DcaStrategyConfig {
                                 )?,
                             },
                             amount_received: Coin {
-                                denom: target_denom_balance.denom,
+                                denom: receive_denom_balance.denom,
                                 amount: self
                                     .statistics
                                     .amount_received
                                     .amount
-                                    .checked_add(target_denom_balance.amount)?,
+                                    .checked_add(receive_denom_balance.amount)?,
                             },
                             ..self.statistics.clone()
                         };
@@ -410,7 +533,7 @@ impl Runnable for DcaStrategyConfig {
                     }
                 }
 
-                match self.can_execute(deps, &env) {
+                match self.can_execute(deps, &env, None) {
                     Ok(_) => {
                         sub_messages.push(get_schedule_msg(self, deps, &env)?);
                     }
@@ -554,7 +677,7 @@ impl Runnable for DcaStrategyConfig {
     fn resume(&mut self, deps: Deps, env: &Env) -> ContractResult {
         let mut sub_messages: Vec<SubMsg> = vec![];
 
-        match self.can_execute(deps, env) {
+        match self.can_execute(deps, env, None) {
             Ok(_) => {
                 sub_messages.push(get_schedule_msg(self, deps, &env)?);
             }
@@ -787,6 +910,7 @@ mod get_schedule_msg_tests {
                         to: MANAGER.load(deps.as_ref().storage).unwrap(),
                         msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                             contract_address: env.contract.address.clone(),
+                            msg: None,
                         })
                         .unwrap(),
                     }]))
@@ -835,6 +959,7 @@ mod get_schedule_msg_tests {
                         to: MANAGER.load(deps.as_ref().storage).unwrap(),
                         msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                             contract_address: env.contract.address.clone(),
+                            msg: None,
                         })
                         .unwrap(),
                     }]))
@@ -844,6 +969,65 @@ mod get_schedule_msg_tests {
                 SCHEDULE_REPLY_ID
             )
         )
+    }
+}
+
+#[cfg(test)]
+mod get_distributions_tests {
+    use super::*;
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Addr,
+    };
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(vec![], 0_u128, vec![])]
+    #[case(vec![], 1000_u128, vec![])]
+    #[case(vec![10_000_u128], 0_u128, vec![0_u128])]
+    #[case(vec![10_000_u128], 1_000_u128, vec![1_000_u128])]
+    #[case(vec![10_000_u128, 20_000_u128], 13_u128, vec![4_u128, 8_u128])]
+    #[case(vec![10_000_u128, 10_000_u128], 501_u128, vec![250_u128, 250_u128])]
+    #[case(vec![10_000_u128, 20_000_u128, 30_000_u128], 60_u128, vec![9_u128, 19_u128, 30_u128])]
+    fn returns_correct_distributions(
+        #[case] shares: Vec<u128>,
+        #[case] balance: u128,
+        #[case] distributions: Vec<u128>,
+    ) {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let strategy = DcaStrategyConfig {
+            mutable_destinations: shares
+                .iter()
+                .map(|s| Destination {
+                    address: Addr::unchecked("destination1"),
+                    msg: None,
+                    label: Some("Destination 1".to_string()),
+                    shares: Uint128::new(*s),
+                })
+                .collect(),
+            immutable_destinations: vec![],
+            minimum_receive_amount: Coin::new(0_u128, "rune"),
+            ..default_strategy_config()
+        };
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![Coin::new(balance, "rune")],
+        );
+
+        assert_eq!(
+            get_distributions(deps.as_ref(), &env, &strategy)
+                .unwrap()
+                .iter()
+                .flat_map(|d| d.amount.clone())
+                .collect::<Vec<Coin>>(),
+            distributions
+                .iter()
+                .map(|d| Coin::new(*d, "rune"))
+                .collect::<Vec<Coin>>()
+        );
     }
 }
 
@@ -909,7 +1093,7 @@ mod instantiate_tests {
             strategy.immutable_destinations,
             vec![Destination {
                 address: fee_collector,
-                shares: Uint128::new(3005),
+                shares: Uint128::new(31),
                 msg: None,
                 label: Some("CALC".to_string()),
             }]
@@ -964,13 +1148,13 @@ mod instantiate_tests {
             vec![
                 Destination {
                     address: fee_collector,
-                    shares: Uint128::new(1603),
+                    shares: Uint128::new(17),
                     msg: None,
                     label: Some("CALC".to_string()),
                 },
                 Destination {
                     address: affiliate_address,
-                    shares: Uint128::new(1402),
+                    shares: Uint128::new(14),
                     msg: None,
                     label: Some("Affiliate: affiliate_code".to_string()),
                 }
@@ -1064,7 +1248,7 @@ mod instantiate_tests {
         assert_eq!(
             response.messages[0].msg,
             Contract(env.contract.address.clone()).call(
-                to_json_binary(&StrategyExecuteMsg::Execute {}).unwrap(),
+                to_json_binary(&StrategyExecuteMsg::Execute { msg: None }).unwrap(),
                 vec![]
             )
         );
@@ -1414,6 +1598,7 @@ mod update_tests {
                             to: manager.clone(),
                             msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                                 contract_address: env.contract.address.clone(),
+                                msg: None,
                             })
                             .unwrap(),
                         }]))
@@ -1454,12 +1639,12 @@ mod can_execute_tests {
 
         assert_eq!(
             strategy
-                .can_execute(deps.as_ref(), &env)
+                .can_execute(deps.as_ref(), &env, None)
                 .unwrap_err()
                 .to_string(),
             format!(
-                "Generic error: Insufficient swap amount of {} ({}) to cover gas fees",
-                strategy.swap_amount.denom, 0
+                "Generic error: No remaining balance of {} to swap",
+                strategy.swap_amount.denom
             )
         );
     }
@@ -1501,7 +1686,7 @@ mod can_execute_tests {
 
         assert_eq!(
             strategy
-                .can_execute(deps.as_ref(), &env)
+                .can_execute(deps.as_ref(), &env, None)
                 .unwrap_err()
                 .to_string(),
             "Generic error: Strategy is not active, current status: Paused",
@@ -1545,7 +1730,7 @@ mod can_execute_tests {
 
         assert_eq!(
             strategy
-                .can_execute(deps.as_ref(), &env)
+                .can_execute(deps.as_ref(), &env, None)
                 .unwrap_err()
                 .to_string(),
             "Generic error: Strategy is not active, current status: Archived",
@@ -1597,6 +1782,7 @@ mod can_execute_tests {
                             to: manager_address.clone(),
                             msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                                 contract_address: strategy_address.clone(),
+                                msg: None,
                             })
                             .unwrap(),
                             id: 1,
@@ -1614,7 +1800,7 @@ mod can_execute_tests {
 
         assert_eq!(
             strategy
-                .can_execute(deps.as_ref(), &env)
+                .can_execute(deps.as_ref(), &env, None)
                 .unwrap_err()
                 .to_string(),
             format!(
@@ -1672,7 +1858,7 @@ mod can_execute_tests {
             _ => panic!("Unexpected query: {:?}", query),
         });
 
-        assert!(strategy.can_execute(deps.as_ref(), &env).is_ok());
+        assert!(strategy.can_execute(deps.as_ref(), &env, None).is_ok());
     }
 
     #[test]
@@ -1725,7 +1911,7 @@ mod can_execute_tests {
             _ => panic!("Unexpected query: {:?}", query),
         });
 
-        assert!(strategy.can_execute(deps.as_ref(), &env).is_ok());
+        assert!(strategy.can_execute(deps.as_ref(), &env, None).is_ok());
     }
 }
 
@@ -1749,14 +1935,16 @@ mod execute_tests {
 
         let mut strategy = default_strategy_config();
 
-        let response = strategy.execute(deps.as_ref(), &env).unwrap();
+        let response = strategy.execute(deps.as_ref(), &env, None).unwrap();
 
         assert_eq!(
             response.events[0],
             Event::from(DomainEvent::ExecutionSkipped {
                 contract_address: env.contract.address,
-                reason: "Generic error: Insufficient swap amount of rune (0) to cover gas fees"
-                    .to_string()
+                reason: format!(
+                    "Generic error: No remaining balance of {} to swap",
+                    strategy.swap_amount.denom
+                ),
             })
         );
     }
@@ -1807,7 +1995,7 @@ mod execute_tests {
             _ => panic!("Unexpected query: {:?}", query),
         });
 
-        let response = strategy.execute(deps.as_ref(), &mock_env()).unwrap();
+        let response = strategy.execute(deps.as_ref(), &mock_env(), None).unwrap();
 
         assert_eq!(
             response.messages[0],
@@ -1816,6 +2004,15 @@ mod execute_tests {
                     to_json_binary(&ExchangeExecuteMsg::Swap {
                         minimum_receive_amount: strategy.minimum_receive_amount.clone(),
                         recipient: None,
+                        on_complete: Some(Callback {
+                            contract: MANAGER.load(&deps.storage).unwrap(),
+                            msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                                contract_address: env.contract.address.clone(),
+                                msg: Some(to_json_binary(&DcaExecuteMsg::Distribute {}).unwrap())
+                            })
+                            .unwrap(),
+                            execution_rebate: vec![strategy.execution_rebate.clone()],
+                        })
                     })
                     .unwrap(),
                     vec![strategy.swap_amount.clone()],
@@ -1935,10 +2132,56 @@ mod handle_reply_tests {
             .unwrap();
 
         assert_eq!(
-            response.events[0],
+            response.events[1],
             Event::from(DomainEvent::ExecutionSucceeded {
                 contract_address: strategy_address,
                 statistics: strategy.statistics()
+            })
+        );
+    }
+
+    #[test]
+    fn publishes_funds_distributed_event_after_swap_succeeds() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let manager_address = deps.api.addr_make("manager");
+        MANAGER
+            .save(deps.as_mut().storage, &manager_address)
+            .unwrap();
+
+        let mut strategy = default_strategy_config();
+
+        let strategy_address = env.contract.address.clone();
+
+        deps.querier.bank.update_balance(
+            strategy_address.clone(),
+            vec![strategy.minimum_receive_amount.clone()],
+        );
+
+        #[allow(deprecated)]
+        let response = strategy
+            .handle_reply(
+                deps.as_ref(),
+                &env,
+                Reply {
+                    id: EXECUTE_REPLY_ID,
+                    payload: to_json_binary(&strategy.swap_amount.clone()).unwrap(),
+                    gas_used: 0,
+                    result: SubMsgResult::Ok(SubMsgResponse {
+                        events: vec![],
+                        data: None,
+                        msg_responses: vec![],
+                    }),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            response.events[0],
+            Event::from(DomainEvent::FundsDistributed {
+                contract_address: strategy_address,
+                to: get_distributions(deps.as_ref(), &env, &strategy).unwrap()
             })
         );
     }
@@ -2133,6 +2376,7 @@ mod handle_reply_tests {
                     to: MANAGER.load(&deps.storage).unwrap().clone(),
                     msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                         contract_address: env.contract.address.clone(),
+                        msg: None,
                     })
                     .unwrap(),
                 }]))
@@ -2174,7 +2418,7 @@ mod handle_reply_tests {
             .unwrap();
 
         assert_eq!(
-            response.messages[2],
+            response.messages[0],
             SubMsg::reply_never(
                 Contract(manager_address.clone()).call(
                     to_json_binary(&ManagerExecuteMsg::UpdateStatus {
@@ -2221,8 +2465,10 @@ mod handle_reply_tests {
             response.events[2],
             Event::from(DomainEvent::StrategyPaused {
                 contract_address: env.contract.address.clone(),
-                reason: "Generic error: Insufficient swap amount of rune (0) to cover gas fees"
-                    .to_string(),
+                reason: format!(
+                    "Generic error: No remaining balance of {} to swap",
+                    strategy.swap_amount.denom
+                ),
             })
         );
     }
@@ -2261,8 +2507,10 @@ mod handle_reply_tests {
             response.events[1],
             Event::from(DomainEvent::SchedulingSkipped {
                 contract_address: env.contract.address.clone(),
-                reason: "Generic error: Insufficient swap amount of rune (0) to cover gas fees"
-                    .to_string(),
+                reason: format!(
+                    "Generic error: No remaining balance of {} to swap",
+                    strategy.swap_amount.denom
+                ),
             })
         );
     }
@@ -2298,6 +2546,7 @@ mod handle_reply_tests {
                             },
                             msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                                 contract_address: strategy_address.clone(),
+                                msg: None,
                             })
                             .unwrap(),
                             to: manager_address.clone(),

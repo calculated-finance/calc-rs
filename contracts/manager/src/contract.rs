@@ -112,7 +112,10 @@ pub fn execute(
                 .add_message(instantiate_strategy_msg)
                 .add_attribute("strategy_contract_address", contract_address))
         }
-        ManagerExecuteMsg::ExecuteStrategy { contract_address } => {
+        ManagerExecuteMsg::ExecuteStrategy {
+            contract_address,
+            msg,
+        } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
 
             strategy_store().save(
@@ -125,10 +128,12 @@ pub fn execute(
                 },
             )?;
 
-            Ok(Response::default().add_message(
-                Contract(contract_address)
-                    .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds),
-            ))
+            Ok(
+                Response::default().add_message(Contract(contract_address).call(
+                    to_json_binary(&StrategyExecuteMsg::Execute { msg })?,
+                    info.funds,
+                )),
+            )
         }
         ManagerExecuteMsg::PauseStrategy { contract_address } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
@@ -163,6 +168,7 @@ pub fn execute(
                 contract_address.clone(),
                 &Strategy {
                     updated_at: env.block.time.seconds(),
+                    status: StrategyStatus::Active,
                     ..strategy
                 },
             )?;
@@ -176,20 +182,20 @@ pub fn execute(
             contract_address,
             amounts,
         } => {
-            // let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
 
-            // if strategy.owner != info.sender {
-            //     return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
-            // }
+            if strategy.owner != info.sender {
+                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
+            }
 
-            // strategy_store().save(
-            //     deps.storage,
-            //     contract_address.clone(),
-            //     &Strategy {
-            //         updated_at: env.block.time.seconds(),
-            //         ..strategy
-            //     },
-            // )?;
+            strategy_store().save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    updated_at: env.block.time.seconds(),
+                    ..strategy
+                },
+            )?;
 
             Ok(
                 Response::default().add_message(Contract(contract_address).call(

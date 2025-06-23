@@ -2,7 +2,7 @@ use std::{time::Duration, u8};
 
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    to_json_string, Addr, BankMsg, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
+    to_json_string, Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
     CoinsError, CosmosMsg, Decimal, Event, Instantiate2AddressError, OverflowError, Response,
     StdError, Timestamp, Uint128, WasmMsg,
 };
@@ -52,8 +52,8 @@ pub struct ManagerConfig {
 }
 
 #[cw_serde]
-pub struct ExpectedReceiveAmount {
-    pub receive_amount: Coin,
+pub struct ExpectedReturnAmount {
+    pub return_amount: Coin,
     pub slippage: Decimal,
 }
 
@@ -102,29 +102,6 @@ pub struct Destination {
     pub shares: Uint128,
     pub msg: Option<Binary>,
     pub label: Option<String>,
-}
-
-#[cw_serde]
-pub struct Distribution {
-    pub destination: Destination,
-    pub amount: Vec<Coin>,
-}
-
-impl Into<CosmosMsg> for Distribution {
-    fn into(self) -> CosmosMsg {
-        match self.destination.msg {
-            Some(msg) => WasmMsg::Execute {
-                contract_addr: self.destination.address.into(),
-                msg,
-                funds: self.amount,
-            }
-            .into(),
-            None => CosmosMsg::Bank(BankMsg::Send {
-                to_address: self.destination.address.into(),
-                amount: self.amount,
-            }),
-        }
-    }
 }
 
 #[cw_serde]
@@ -299,10 +276,6 @@ pub enum DomainEvent {
         to: Addr,
         funds: Vec<Coin>,
     },
-    FundsDistributed {
-        contract_address: Addr,
-        to: Vec<Distribution>,
-    },
     ExecutionSucceeded {
         contract_address: Addr,
         statistics: StrategyStatistics,
@@ -386,15 +359,6 @@ impl From<DomainEvent> for Event {
                 .add_attribute(
                     "amount",
                     to_json_string(&amount).expect("Failed to serialize withdrawn amount"),
-                ),
-            DomainEvent::FundsDistributed {
-                contract_address,
-                to: distributions,
-            } => Event::new("funds_distributed")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "distributions",
-                    to_json_string(&distributions).expect("Failed to serialize distributions"),
                 ),
             DomainEvent::ExecutionSucceeded {
                 contract_address,
@@ -490,7 +454,6 @@ pub enum ManagerExecuteMsg {
     },
     ExecuteStrategy {
         contract_address: Addr,
-        msg: Option<Binary>,
     },
     PauseStrategy {
         contract_address: Addr,
@@ -565,7 +528,7 @@ pub struct StrategyInstantiateMsg {
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
-    Execute { msg: Option<Binary> },
+    Execute {},
     Deposit {},
     Withdraw { amounts: Vec<Coin> },
     Pause {},
@@ -579,14 +542,7 @@ pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
     Config {},
     #[returns(bool)]
-    CanExecute { msg: Option<Binary> },
-}
-
-#[cw_serde]
-pub struct Callback {
-    pub contract: Addr,
-    pub msg: Binary,
-    pub execution_rebate: Vec<Coin>,
+    CanExecute {},
 }
 
 #[cw_serde]
@@ -594,7 +550,6 @@ pub enum ExchangeExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
         recipient: Option<Addr>,
-        on_complete: Option<Callback>,
     },
 }
 
@@ -616,7 +571,7 @@ pub enum ExchangeQueryMsg {
         swap_denom: String,
         target_denom: String,
     },
-    #[returns(ExpectedReceiveAmount)]
+    #[returns(ExpectedReturnAmount)]
     ExpectedReceiveAmount {
         swap_amount: Coin,
         target_denom: String,
@@ -632,9 +587,8 @@ pub struct CreateTrigger {
 
 #[cw_serde]
 pub enum SchedulerExecuteMsg {
-    CreateTrigger(CreateTrigger),
     SetTriggers(Vec<CreateTrigger>),
-    ExecuteTrigger(u64),
+    ExecuteTrigger { id: u64 },
 }
 
 #[cw_serde]

@@ -1,9 +1,11 @@
-use calc_rs::types::{ContractResult, ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReturnAmount};
+use calc_rs::types::{
+    Callback, ContractResult, ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReceiveAmount,
+};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Addr, Binary, Coin, Decimal, Deps, DepsMut, Env, MessageInfo, Response,
+    to_json_binary, Addr, Binary, Coin, Decimal, Deps, DepsMut, Env, MessageInfo, Reply, Response,
     StdError, StdResult, Uint128,
 };
 use rujira_rs::NativeAsset;
@@ -58,13 +60,16 @@ pub fn sudo(deps: DepsMut, _env: Env, msg: SudoMsg) -> ContractResult {
 }
 
 #[cfg(not(feature = "library"))]
-pub fn get_exchanges() -> Vec<Box<dyn Exchange>> {
-    vec![Box::new(FinExchange::new()), Box::new(ThorExchange::new())]
+pub fn get_exchanges(deps: Deps) -> Vec<Box<dyn Exchange>> {
+    vec![
+        Box::new(FinExchange::new()),
+        Box::new(ThorExchange::new(deps)),
+    ]
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
-    let exchanges = get_exchanges();
+    let exchanges = get_exchanges(deps);
 
     match msg {
         ExchangeQueryMsg::CanSwap {
@@ -103,12 +108,13 @@ pub fn execute(
     info: MessageInfo,
     msg: ExchangeExecuteMsg,
 ) -> ContractResult {
-    let exchanges = get_exchanges();
+    let exchanges = get_exchanges(deps.as_ref());
 
     match msg {
         ExchangeExecuteMsg::Swap {
             minimum_receive_amount,
             recipient,
+            on_complete,
         } => swap(
             exchanges,
             deps.as_ref(),
@@ -116,8 +122,16 @@ pub fn execute(
             info,
             &minimum_receive_amount,
             recipient,
+            on_complete,
         ),
     }
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
+    Ok(Response::default()
+        .add_attribute("action", "reply")
+        .add_attribute("payload", format!("{:?}", reply)))
 }
 
 fn can_swap(
@@ -192,7 +206,7 @@ fn expected_receive_amount(
     deps: Deps,
     swap_amount: &Coin,
     target_denom: String,
-) -> StdResult<ExpectedReturnAmount> {
+) -> StdResult<ExpectedReceiveAmount> {
     exchanges
         .iter()
         .filter(|e| {
@@ -210,7 +224,7 @@ fn expected_receive_amount(
             e.expected_receive_amount(deps, &swap_amount, &NativeAsset::new(&target_denom))
                 .ok()
         })
-        .max_by(|a, b| a.return_amount.amount.cmp(&b.return_amount.amount))
+        .max_by(|a, b| a.receive_amount.amount.cmp(&b.receive_amount.amount))
         .map_or_else(
             || {
                 Err(StdError::generic_err(format!(
@@ -257,6 +271,7 @@ fn swap(
     info: MessageInfo,
     minimum_receive_amount: &Coin,
     recipient: Option<Addr>,
+    on_complete: Option<Callback>,
 ) -> ContractResult {
     if info.funds.len() != 1 {
         return Err(StdError::generic_err("Must provide exactly one coin to swap").into());
@@ -284,7 +299,7 @@ fn swap(
                     )
                     .as_str(),
                 )
-                .return_amount
+                .receive_amount
                 .amount
                 .cmp(
                     &b.expected_receive_amount(
@@ -299,7 +314,7 @@ fn swap(
                         )
                         .as_str(),
                     )
-                    .return_amount
+                    .receive_amount
                     .amount,
                 )
         });
@@ -307,10 +322,12 @@ fn swap(
     match best_exchange {
         Some(exchange) => exchange.swap(
             deps,
-            env,
+            &env,
+            &info,
             &swap_amount,
             &minimum_receive_amount,
             recipient.unwrap_or(info.sender.clone()),
+            on_complete,
         ),
         None => Err(StdError::generic_err(format!(
             "Unable to find an exchange for swapping {} to {}",
@@ -457,12 +474,12 @@ mod route_tests {
 
         let target_denom = "uruji".to_string();
 
-        let return_amount = Coin {
+        let receive_amount = Coin {
             denom: target_denom.clone(),
             amount: swap_amount.amount.clone() * Uint128::new(2),
         };
 
-        let expected_route = vec![swap_amount.clone(), return_amount.clone()];
+        let expected_route = vec![swap_amount.clone(), receive_amount.clone()];
 
         let mut mock = Box::new(MockExchange::default());
         mock.route_fn = Box::new(move |_, _, _| Ok(expected_route.clone()));
@@ -475,7 +492,7 @@ mod route_tests {
                 target_denom
             )
             .unwrap(),
-            vec![swap_amount, return_amount]
+            vec![swap_amount, receive_amount]
         )
     }
 }
@@ -483,7 +500,7 @@ mod route_tests {
 #[cfg(test)]
 mod expected_receive_amount_tests {
     use crate::{contract::expected_receive_amount, exchanges::mock::MockExchange};
-    use calc_rs::types::ExpectedReturnAmount;
+    use calc_rs::types::ExpectedReceiveAmount;
     use cosmwasm_std::{testing::mock_dependencies, Coin, Decimal, StdError, Uint128};
 
     #[test]
@@ -516,16 +533,16 @@ mod expected_receive_amount_tests {
 
         let target_denom = "uruji".to_string();
 
-        let expected_return_amount = Coin {
+        let receive_amount = Coin {
             denom: target_denom.clone(),
             amount: Uint128::new(2000),
         };
 
-        let expected_slippage = Decimal::percent(1);
+        let slippage = Decimal::percent(1);
 
-        let expected_response = ExpectedReturnAmount {
-            return_amount: expected_return_amount.clone(),
-            slippage: expected_slippage.clone(),
+        let expected_response = ExpectedReceiveAmount {
+            receive_amount: receive_amount.clone(),
+            slippage: slippage.clone(),
         };
 
         let mut mock = Box::new(MockExchange::default());
@@ -540,9 +557,9 @@ mod expected_receive_amount_tests {
                 target_denom
             )
             .unwrap(),
-            ExpectedReturnAmount {
-                return_amount: expected_return_amount,
-                slippage: expected_slippage,
+            ExpectedReceiveAmount {
+                receive_amount,
+                slippage,
             }
         );
     }
@@ -556,16 +573,16 @@ mod expected_receive_amount_tests {
 
         let target_denom = "uruji".to_string();
 
-        let expected_return_amount = Coin {
+        let receive_amount = Coin {
             denom: target_denom.clone(),
             amount: Uint128::new(2000),
         };
 
-        let expected_slippage = Decimal::percent(1);
+        let slippage = Decimal::percent(1);
 
-        let expected_response = ExpectedReturnAmount {
-            return_amount: expected_return_amount.clone(),
-            slippage: expected_slippage.clone(),
+        let expected_response = ExpectedReceiveAmount {
+            receive_amount: receive_amount.clone(),
+            slippage: slippage.clone(),
         };
 
         let mut mock = Box::new(MockExchange::default());
@@ -580,9 +597,9 @@ mod expected_receive_amount_tests {
                 target_denom.clone(),
             )
             .unwrap(),
-            ExpectedReturnAmount {
-                return_amount: expected_return_amount.clone(),
-                slippage: expected_slippage.clone(),
+            ExpectedReceiveAmount {
+                receive_amount,
+                slippage,
             }
         );
     }
@@ -668,7 +685,7 @@ mod spot_price_tests {
 
 #[cfg(test)]
 mod swap_tests {
-    use calc_rs::types::ExpectedReturnAmount;
+    use calc_rs::types::ExpectedReceiveAmount;
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         Addr, Coin, MessageInfo, Response, Uint128,
@@ -702,6 +719,7 @@ mod swap_tests {
                     funds: vec![swap_amount.clone()],
                 },
                 &minimum_receive_amount,
+                None,
                 None
             )
             .unwrap_err()
@@ -734,6 +752,7 @@ mod swap_tests {
                     denom: "uruji".to_string(),
                     amount: Uint128::new(100)
                 },
+                None,
                 None
             )
             .unwrap(),
@@ -762,6 +781,7 @@ mod swap_tests {
                     denom: "uruji".to_string(),
                     amount: Uint128::new(100)
                 },
+                None,
                 None
             )
             .unwrap(),
@@ -794,16 +814,16 @@ mod swap_tests {
         let mut mock = Box::new(MockExchange::default());
 
         mock.get_expected_receive_amount_fn = Box::new(move |_, _, _| {
-            Ok(ExpectedReturnAmount {
-                return_amount: Coin {
-                    denom: expected_response.return_amount.denom.clone(),
-                    amount: expected_response.return_amount.amount * Uint128::new(2),
+            Ok(ExpectedReceiveAmount {
+                receive_amount: Coin {
+                    denom: expected_response.receive_amount.denom.clone(),
+                    amount: expected_response.receive_amount.amount * Uint128::new(2),
                 },
                 slippage: expected_response.slippage,
             })
         });
 
-        mock.swap_fn = Box::new(move |_, _, _, _, _| {
+        mock.swap_fn = Box::new(move |_, _, _, _, _, _, _| {
             Ok(Response::default().add_attribute("action", "test-swap"))
         });
 
@@ -817,6 +837,7 @@ mod swap_tests {
                     funds: vec![swap_amount.clone()],
                 },
                 &minimum_receive_amount,
+                None,
                 None
             )
             .unwrap(),

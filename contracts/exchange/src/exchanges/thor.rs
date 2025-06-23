@@ -1,22 +1,32 @@
 use anybuf::Anybuf;
-use calc_rs::types::{ContractError, ContractResult, ExpectedReturnAmount};
+use calc_rs::types::{
+    Callback, Condition, Contract, ContractError, ContractResult, CreateTrigger,
+    ExpectedReceiveAmount, SchedulerExecuteMsg,
+};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, AnyMsg, CanonicalAddr, Coin, CosmosMsg, Decimal, Deps, Env, Response, StdError,
-    StdResult, Uint128,
+    to_json_binary, Addr, AnyMsg, CanonicalAddr, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo,
+    Response, StdError, StdResult, Uint128,
 };
+use cw_storage_plus::Item;
 #[cfg(test)]
 use rujira_rs::proto::types::QueryPoolResponse;
 use rujira_rs::{query::Pool, Asset, Layer1Asset, NativeAsset, SecuredAsset};
 
 use crate::types::Exchange;
 
+pub const SCHEDULER: Item<Addr> = Item::new("scheduler");
+
 #[cw_serde]
-pub struct ThorExchange {}
+pub struct ThorExchange {
+    scheduler: Addr,
+}
 
 impl ThorExchange {
-    pub fn new() -> Self {
-        ThorExchange {}
+    pub fn new(deps: Deps) -> Self {
+        ThorExchange {
+            scheduler: SCHEDULER.load(deps.storage).unwrap(),
+        }
     }
 }
 
@@ -84,7 +94,12 @@ pub fn layer_1_asset(denom: &NativeAsset) -> StdResult<Layer1Asset> {
 
 fn secured_asset(asset: &Layer1Asset) -> StdResult<SecuredAsset> {
     match asset.denom_string().to_uppercase().split_once(".") {
-        Some((chain, symbol)) => Ok(SecuredAsset::new(chain, symbol)),
+        Some((chain, symbol)) => {
+            if chain == "THOR" && symbol == "RUNE" {
+                return Ok(SecuredAsset::new("THOR", "RUNE"));
+            }
+            Ok(SecuredAsset::new(chain, symbol))
+        }
         None => Err(StdError::generic_err(format!(
             "Invalid layer 1 asset: {}",
             asset.denom_string()
@@ -165,21 +180,21 @@ impl Exchange for ThorExchange {
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
     ) -> StdResult<bool> {
-        let expected_return_amount = self
+        let expected_receive_amount = self
             .expected_receive_amount(
                 deps,
                 swap_amount,
                 &NativeAsset::new(&minimum_receive_amount.denom),
             )
-            .unwrap_or(ExpectedReturnAmount {
-                return_amount: Coin {
+            .unwrap_or(ExpectedReceiveAmount {
+                receive_amount: Coin {
                     denom: minimum_receive_amount.denom.clone(),
                     amount: Uint128::zero(),
                 },
                 slippage: Decimal::zero(),
             });
 
-        Ok(expected_return_amount.return_amount.amount >= minimum_receive_amount.amount)
+        Ok(expected_receive_amount.receive_amount.amount >= minimum_receive_amount.amount)
     }
 
     fn route(
@@ -225,7 +240,7 @@ impl Exchange for ThorExchange {
         deps: Deps,
         swap_amount: &Coin,
         target_denom: &NativeAsset,
-    ) -> StdResult<ExpectedReturnAmount> {
+    ) -> StdResult<ExpectedReceiveAmount> {
         let swap_asset = NativeAsset::new(&swap_amount.denom);
 
         let pools = get_pools(deps, &swap_asset, target_denom)?;
@@ -256,8 +271,8 @@ impl Exchange for ThorExchange {
         let slippage =
             Decimal::one().checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))?;
 
-        Ok(ExpectedReturnAmount {
-            return_amount: Coin {
+        Ok(ExpectedReceiveAmount {
+            receive_amount: Coin {
                 denom: target_denom.denom_string(),
                 amount: out_amount,
             },
@@ -296,10 +311,12 @@ impl Exchange for ThorExchange {
     fn swap(
         &self,
         deps: Deps,
-        env: Env,
+        env: &Env,
+        _info: &MessageInfo,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
         recipient: Addr,
+        on_complete: Option<Callback>,
     ) -> ContractResult {
         if !self.can_swap(deps, swap_amount, minimum_receive_amount)? {
             return Err(ContractError::Std(StdError::generic_err(format!(
@@ -311,28 +328,52 @@ impl Exchange for ThorExchange {
             ))));
         }
 
-        let swap_asset = secured_asset(&layer_1_asset(&NativeAsset::new(&swap_amount.denom))?)?;
-        let receive_asset = secured_asset(&layer_1_asset(&NativeAsset::new(
-            &minimum_receive_amount.denom,
-        ))?)?;
+        let swap_asset = if swap_amount.denom.to_ascii_lowercase().contains("rune") {
+            "THOR.RUNE".to_string()
+        } else {
+            swap_amount.denom.to_ascii_uppercase()
+        };
+
+        let receive_asset = if minimum_receive_amount
+            .denom
+            .to_ascii_lowercase()
+            .contains("rune")
+        {
+            "THOR.RUNE".to_string()
+        } else {
+            minimum_receive_amount.denom.to_ascii_uppercase()
+        };
 
         let memo = format!(
             "=:{}:{}:{}",
-            receive_asset.denom_string().to_ascii_uppercase(),
-            recipient,
-            minimum_receive_amount.amount
+            receive_asset, recipient, minimum_receive_amount.amount
         );
 
-        let swap_msg = MsgDeposit {
+        let swap_msg = CosmosMsg::from(MsgDeposit {
             memo,
             coins: vec![Coin {
-                denom: swap_asset.denom_string(),
+                denom: swap_asset,
                 amount: swap_amount.amount,
             }],
             signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
-        };
+        });
 
-        Ok(Response::new().add_message(swap_msg))
+        let mut messages = vec![swap_msg];
+
+        if let Some(callback) = on_complete {
+            messages.push(Contract(self.scheduler.clone()).call(
+                to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
+                    condition: Condition::BlockHeight {
+                        height: env.block.height + 5,
+                    },
+                    to: callback.contract,
+                    msg: callback.msg,
+                }))?,
+                callback.execution_rebate,
+            ));
+        }
+
+        Ok(Response::default().add_messages(messages))
     }
 }
 
@@ -572,7 +613,7 @@ mod can_swap_tests {
             amount: Uint128::new(50),
         };
 
-        assert!(!ThorExchange::new()
+        assert!(!ThorExchange::new(deps.as_ref())
             .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
             .unwrap());
     }
@@ -606,7 +647,7 @@ mod can_swap_tests {
             amount: Uint128::new(50),
         };
 
-        assert!(ThorExchange::new()
+        assert!(ThorExchange::new(deps.as_ref())
             .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
             .unwrap());
     }
@@ -640,7 +681,7 @@ mod can_swap_tests {
             amount: Uint128::new(50),
         };
 
-        assert!(ThorExchange::new()
+        assert!(ThorExchange::new(deps.as_ref())
             .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
             .unwrap());
     }
@@ -682,7 +723,7 @@ mod route_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .route(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap_err(),
             StdError::generic_err(format!(
@@ -721,7 +762,7 @@ mod route_tests {
         let target_denom = NativeAsset::new("rune");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .route(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
             vec![
@@ -741,7 +782,7 @@ mod route_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .route(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
             vec![
@@ -781,7 +822,7 @@ mod route_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .route(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
             vec![
@@ -805,7 +846,7 @@ mod route_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .route(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
             vec![
@@ -827,7 +868,7 @@ mod route_tests {
 mod expected_receive_amount_tests {
     use std::str::FromStr;
 
-    use calc_rs::types::ExpectedReturnAmount;
+    use calc_rs::types::ExpectedReceiveAmount;
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
         Binary, Coin, ContractResult, Decimal, StdError, SystemError, SystemResult, Uint128,
@@ -862,7 +903,7 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .route(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap_err(),
             StdError::generic_err(format!(
@@ -901,11 +942,11 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("rune");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
-            ExpectedReturnAmount {
-                return_amount: Coin {
+            ExpectedReceiveAmount {
+                receive_amount: Coin {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(99)
                 },
@@ -921,11 +962,11 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
-            ExpectedReturnAmount {
-                return_amount: Coin {
+            ExpectedReceiveAmount {
+                receive_amount: Coin {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(99)
                 },
@@ -961,11 +1002,11 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
-            ExpectedReturnAmount {
-                return_amount: Coin {
+            ExpectedReceiveAmount {
+                receive_amount: Coin {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(98)
                 },
@@ -981,11 +1022,11 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
                 .unwrap(),
-            ExpectedReturnAmount {
-                return_amount: Coin {
+            ExpectedReceiveAmount {
+                receive_amount: Coin {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(98)
                 },
@@ -1028,7 +1069,7 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .spot_price(deps.as_ref(), &swap_asset, &target_denom)
                 .unwrap_err(),
             StdError::generic_err(format!(
@@ -1063,7 +1104,7 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("rune");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .spot_price(deps.as_ref(), &swap_asset, &target_denom)
                 .unwrap(),
             Decimal::from_str("0.2").unwrap()
@@ -1073,7 +1114,7 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .spot_price(deps.as_ref(), &swap_asset, &target_denom)
                 .unwrap(),
             Decimal::from_str("5").unwrap()
@@ -1105,7 +1146,7 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .spot_price(deps.as_ref(), &swap_asset, &target_denom)
                 .unwrap(),
             Decimal::from_str("1").unwrap()
@@ -1115,7 +1156,7 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .spot_price(deps.as_ref(), &swap_asset, &target_denom)
                 .unwrap(),
             Decimal::from_str("1").unwrap()
@@ -1129,8 +1170,8 @@ mod swap_tests {
     use calc_rs::types::ContractError;
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
-        testing::mock_env, Addr, Api, Binary, Coin, ContractResult, Response, StdError,
-        SystemError, SystemResult, Uint128,
+        testing::mock_env, Addr, Api, Binary, Coin, ContractResult, MessageInfo, Response,
+        StdError, SystemError, SystemResult, Uint128,
     };
     use prost::Message;
     use rujira_rs::{
@@ -1167,13 +1208,18 @@ mod swap_tests {
         };
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .swap(
                     deps.as_ref(),
-                    mock_env(),
+                    &mock_env(),
+                    &MessageInfo {
+                        sender: Addr::unchecked("sender"),
+                        funds: vec![],
+                    },
                     &swap_amount,
                     &minimum_receive_amount,
-                    Addr::unchecked("recipient")
+                    Addr::unchecked("recipient"),
+                    None
                 )
                 .unwrap_err(),
             ContractError::Std(StdError::generic_err(format!(
@@ -1219,25 +1265,24 @@ mod swap_tests {
         let recipient = Addr::unchecked("recipient");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .swap(
                     deps.as_ref(),
-                    env.clone(),
+                    &mock_env(),
+                    &MessageInfo {
+                        sender: Addr::unchecked("sender"),
+                        funds: vec![],
+                    },
                     &swap_amount,
                     &minimum_receive_amount,
-                    recipient.clone()
+                    recipient.clone(),
+                    None
                 )
                 .unwrap(),
             Response::default().add_message(MsgDeposit {
                 memo: format!(
                     "=:{}:{}:{}",
-                    secured_asset(
-                        &layer_1_asset(&NativeAsset::new(&minimum_receive_amount.denom)).unwrap()
-                    )
-                    .unwrap()
-                    .denom_string()
-                    .to_ascii_uppercase()
-                    .to_string(),
+                    "THOR.RUNE".to_string(),
                     recipient.to_string(),
                     minimum_receive_amount.amount
                 )
@@ -1287,13 +1332,18 @@ mod swap_tests {
         let recipient = Addr::unchecked("recipient");
 
         assert_eq!(
-            ThorExchange::new()
+            ThorExchange::new(deps.as_ref())
                 .swap(
                     deps.as_ref(),
-                    env.clone(),
+                    &env,
+                    &MessageInfo {
+                        sender: Addr::unchecked("sender"),
+                        funds: vec![],
+                    },
                     &swap_amount,
                     &minimum_receive_amount,
-                    recipient.clone()
+                    recipient.clone(),
+                    None
                 )
                 .unwrap(),
             Response::default().add_message(MsgDeposit {

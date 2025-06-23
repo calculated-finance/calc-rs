@@ -31,7 +31,6 @@ pub fn instantiate(
     }
 
     CONFIG.save(deps.storage, &strategy)?;
-
     Ok(response)
 }
 
@@ -55,7 +54,7 @@ pub fn execute(
     let mut strategy = CONFIG.load(deps.storage)?;
 
     let response = match msg {
-        StrategyExecuteMsg::Execute {} => strategy.execute(deps.as_ref(), &env),
+        StrategyExecuteMsg::Execute { msg } => strategy.execute(deps.as_ref(), &env, msg),
         StrategyExecuteMsg::Pause {} => strategy.pause(deps.as_ref(), &env),
         StrategyExecuteMsg::Resume {} => strategy.resume(deps.as_ref(), &env),
         StrategyExecuteMsg::Deposit {} => strategy.deposit(deps.as_ref(), &env, &info),
@@ -64,23 +63,28 @@ pub fn execute(
     }?;
 
     CONFIG.save(deps.storage, &strategy)?;
-
     Ok(response)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
-    CONFIG
-        .load(deps.storage)?
-        .handle_reply(deps.as_ref(), &env, reply)
+    let mut strategy = CONFIG.load(deps.storage)?;
+
+    let response = strategy.handle_reply(deps.as_ref(), &env, reply)?;
+
+    CONFIG.save(deps.storage, &strategy)?;
+    Ok(response)
 }
 
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     match msg {
         StrategyQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
-        StrategyQueryMsg::CanExecute {} => {
-            to_json_binary(&CONFIG.load(deps.storage)?.can_execute(deps, &env).is_ok())
-        }
+        StrategyQueryMsg::CanExecute { msg } => to_json_binary(
+            &CONFIG
+                .load(deps.storage)?
+                .can_execute(deps, &env, msg)
+                .is_ok(),
+        ),
     }
 }

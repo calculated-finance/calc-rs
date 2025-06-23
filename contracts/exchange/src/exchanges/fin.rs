@@ -1,10 +1,10 @@
 use std::{cmp::max, str::FromStr};
 
-use calc_rs::types::{Contract, ContractError, ContractResult, ExpectedReturnAmount};
+use calc_rs::types::{Callback, Contract, ContractError, ContractResult, ExpectedReceiveAmount};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Decimal, Deps, Env, Order, QueryRequest, Response, StdError,
-    StdResult, Storage, Uint128, WasmQuery,
+    to_json_binary, Addr, BankMsg, Coin, Decimal, Deps, Env, MessageInfo, Order, QueryRequest,
+    Response, StdError, StdResult, Storage, WasmQuery,
 };
 use cw_storage_plus::{Bound, Map};
 use rujira_rs::{
@@ -107,21 +107,13 @@ impl Exchange for FinExchange {
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
     ) -> StdResult<bool> {
-        let expected_return_amount = self
-            .expected_receive_amount(
-                deps,
-                swap_amount,
-                &NativeAsset::new(&minimum_receive_amount.denom),
-            )
-            .unwrap_or(ExpectedReturnAmount {
-                return_amount: Coin {
-                    denom: minimum_receive_amount.denom.clone(),
-                    amount: Uint128::zero(),
-                },
-                slippage: Decimal::zero(),
-            });
+        let expected_receive_amount = self.expected_receive_amount(
+            deps,
+            swap_amount,
+            &NativeAsset::new(&minimum_receive_amount.denom),
+        )?;
 
-        Ok(expected_return_amount.return_amount.amount >= minimum_receive_amount.amount)
+        Ok(expected_receive_amount.receive_amount.amount >= minimum_receive_amount.amount)
     }
 
     fn route(
@@ -132,7 +124,7 @@ impl Exchange for FinExchange {
     ) -> StdResult<Vec<Coin>> {
         let receive_amount = self.expected_receive_amount(deps, swap_amount, target_denom)?;
 
-        Ok(vec![swap_amount.clone(), receive_amount.return_amount])
+        Ok(vec![swap_amount.clone(), receive_amount.receive_amount])
     }
 
     fn expected_receive_amount(
@@ -140,7 +132,7 @@ impl Exchange for FinExchange {
         deps: Deps,
         swap_amount: &Coin,
         target_denom: &NativeAsset,
-    ) -> StdResult<ExpectedReturnAmount> {
+    ) -> StdResult<ExpectedReceiveAmount> {
         find_pair(
             deps.storage,
             [swap_amount.denom.clone(), target_denom.denom_string()],
@@ -166,8 +158,8 @@ impl Exchange for FinExchange {
                 optimal_return_amount,
             ))?;
 
-            Ok(ExpectedReturnAmount {
-                return_amount: Coin {
+            Ok(ExpectedReceiveAmount {
+                receive_amount: Coin {
                     denom: target_denom.denom_string(),
                     amount: simulation.returned,
                 },
@@ -222,10 +214,12 @@ impl Exchange for FinExchange {
     fn swap(
         &self,
         deps: Deps,
-        _env: Env,
+        _env: &Env,
+        info: &MessageInfo,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
         recipient: Addr,
+        on_complete: Option<Callback>,
     ) -> ContractResult {
         match find_pair(
             deps.storage,
@@ -244,7 +238,18 @@ impl Exchange for FinExchange {
                     vec![swap_amount.clone()],
                 );
 
-                Ok(Response::new().add_message(swap_msg))
+                let mut messages = vec![swap_msg];
+
+                if let Some(callback) = on_complete {
+                    let rebate_msg = BankMsg::Send {
+                        to_address: info.sender.to_string(),
+                        amount: callback.execution_rebate,
+                    };
+
+                    messages.push(rebate_msg.into());
+                }
+
+                Ok(Response::new().add_messages(messages))
             }
             Err(_) => Err(ContractError::Generic("Pair not found")),
         }
@@ -481,7 +486,7 @@ mod can_swap_tests {
 
         assert!(!exchange
             .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
-            .unwrap());
+            .unwrap_or(false));
     }
 }
 
@@ -673,7 +678,7 @@ mod expected_receive_amount_tests {
             .unwrap();
 
         assert_eq!(
-            expected_amount.return_amount,
+            expected_amount.receive_amount,
             Coin {
                 denom: target_denom.denom_string(),
                 amount: Uint128::new(130),
@@ -683,7 +688,7 @@ mod expected_receive_amount_tests {
         assert_eq!(
             expected_amount.slippage,
             Decimal::one()
-                - Decimal::from_ratio(expected_amount.return_amount.amount, Uint128::new(150))
+                - Decimal::from_ratio(expected_amount.receive_amount.amount, Uint128::new(150))
         );
     }
 }
@@ -787,8 +792,8 @@ mod swap_tests {
 
     use calc_rs::types::{Contract, ContractError};
     use cosmwasm_std::testing::mock_env;
-    use cosmwasm_std::Uint128;
     use cosmwasm_std::{testing::mock_dependencies, to_json_binary, Addr, Coin};
+    use cosmwasm_std::{MessageInfo, Uint128};
     use rujira_rs::fin::{ExecuteMsg, SwapRequest};
 
     use crate::{
@@ -813,10 +818,15 @@ mod swap_tests {
         let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
-                mock_env(),
+                &mock_env(),
+                &MessageInfo {
+                    sender: Addr::unchecked("sender-address"),
+                    funds: vec![swap_amount.clone()],
+                },
                 &swap_amount,
                 &minimum_receive_amount,
                 Addr::unchecked("recipient-address"),
+                None,
             )
             .unwrap_err();
 
@@ -852,10 +862,15 @@ mod swap_tests {
         let response = exchange
             .swap(
                 deps.as_ref(),
-                mock_env(),
+                &mock_env(),
+                &MessageInfo {
+                    sender: Addr::unchecked("sender-address"),
+                    funds: vec![swap_amount.clone()],
+                },
                 &swap_amount,
                 &minimum_receive_amount,
                 recipient.clone(),
+                None,
             )
             .unwrap();
 

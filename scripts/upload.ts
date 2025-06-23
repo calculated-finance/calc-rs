@@ -1,4 +1,4 @@
-import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
+import { CodeDetails, SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet, type Coin } from "@cosmjs/proto-signing";
 import { GasPrice, StargateClient } from "@cosmjs/stargate";
@@ -115,7 +115,10 @@ const uploadStrategyContract = async () => {
   return codeId;
 };
 
-const uploadAndInstantiateManagerContract = async (codeId: number) => {
+const uploadAndInstantiateManagerContract = async (config: {
+  code_id: number;
+  checksum: string;
+}) => {
   const wallet = await getWallet();
   const adminAddress = await getAccount(wallet);
 
@@ -123,9 +126,7 @@ const uploadAndInstantiateManagerContract = async (codeId: number) => {
     "artifacts/manager.wasm",
     adminAddress,
     {
-      code_id: codeId,
-      checksum:
-        "5555798dd8a1556f533e2b6aa9aaa1ce933e6f6033b8027d07764be9ca19d0c3",
+      ...config,
       fee_collector: adminAddress,
     },
     "Manager Contract"
@@ -144,7 +145,10 @@ const uploadAndInstantiateExchangeContract = async () => {
   );
 };
 
-const uploadAndMigrateManagerContract = async (codeId: number) => {
+const uploadAndMigrateManagerContract = async (config?: {
+  code_id: number;
+  checksum: string;
+}) => {
   const wallet = await getWallet();
   const adminAddress = await getAccount(wallet);
 
@@ -153,9 +157,7 @@ const uploadAndMigrateManagerContract = async (codeId: number) => {
     adminAddress,
     MANAGER_ADDRESS,
     {
-      code_id: codeId,
-      checksum:
-        "66839ec3b3536bbdc5b714ef7e462fcd0d265f1f8df7f96eb28f8d68934ce8f1",
+      ...(config || (await getConfig(MANAGER_ADDRESS))),
       fee_collector: adminAddress,
     }
   );
@@ -195,16 +197,33 @@ const uploadAndInstantiateSchedulerContract = async () => {
   );
 };
 
+const getCodeDetails = async (codeId: number): Promise<CodeDetails> => {
+  const cosmWasmClient = await getSigner();
+  const info = await cosmWasmClient.getCodeDetails(codeId);
+
+  console.log("Code details:", info);
+
+  return info;
+};
+
 const uploadAndInstantiateContractSuite = async () => {
   const strategyCodeId = await uploadStrategyContract();
-  await uploadAndInstantiateManagerContract(strategyCodeId);
+  const codeDetails = await getCodeDetails(strategyCodeId);
+  await uploadAndInstantiateManagerContract({
+    code_id: strategyCodeId,
+    checksum: codeDetails.checksum,
+  });
   await uploadAndInstantiateExchangeContract();
   await uploadAndInstantiateSchedulerContract();
 };
 
 const uploadAndMigrateContractSuite = async () => {
   const strategyCodeId = await uploadStrategyContract();
-  await uploadAndMigrateManagerContract(strategyCodeId);
+  const codeDetails = await getCodeDetails(strategyCodeId);
+  await uploadAndMigrateManagerContract({
+    code_id: strategyCodeId,
+    checksum: codeDetails.checksum,
+  });
   await uploadAndMigrateExchangeContract();
   await uploadAndMigrateSchedulerContract();
 };
@@ -258,10 +277,10 @@ const getExpectedReceiveAmount = async () => {
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     expected_receive_amount: {
       swap_amount: {
-        denom: "rune",
-        amount: "100000",
+        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
+        amount: "10000000",
       },
-      target_denom: "x/ruji",
+      target_denom: "rune",
     },
   });
 
@@ -305,8 +324,8 @@ const swap = async () => {
     {
       swap: {
         minimum_receive_amount: {
-          denom: "x/ruji",
-          amount: "0",
+          denom: "rune",
+          amount: "1",
         },
       },
     },
@@ -314,7 +333,7 @@ const swap = async () => {
     "Swap",
     [
       {
-        denom: "rune",
+        denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
         amount: "10000000",
       },
     ]
@@ -329,6 +348,8 @@ const getConfig = async (contractAddress: string) => {
   });
 
   console.log("Config:", response);
+
+  return response;
 };
 
 const createStrategy = async () => {
@@ -350,13 +371,13 @@ const createStrategy = async () => {
             },
             minimum_receive_amount: {
               denom: "rune",
-              amount: "0",
+              amount: "1",
             },
             schedule: {
               time: {
                 duration: {
                   nanos: 0,
-                  secs: 60,
+                  secs: 1,
                 },
               },
             },
@@ -383,7 +404,7 @@ const createStrategy = async () => {
     [
       {
         denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
-        amount: "155124758",
+        amount: "100124758",
       },
     ]
   );
@@ -441,6 +462,53 @@ const executeStrategy = async (address: string) => {
   );
 
   console.log("Execute Strategy Response:", response);
+};
+
+const executeTriggers = async (owner: string) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWallet());
+
+  const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
+    triggers: {
+      filter: {
+        owner: {
+          address: owner,
+        },
+      },
+      limit: 10,
+      can_execute: true,
+    },
+  });
+
+  console.log("Triggers to execute:", triggers);
+
+  for (const { id } of triggers) {
+    const response = await cosmWasmClient.execute(
+      account,
+      SCHEDULER_ADDRESS,
+      { execute_trigger: id },
+      "auto"
+    );
+
+    console.log("Execute Trigger Response:", response);
+  }
+};
+
+const resumeStrategy = async (address: string) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWallet());
+  const response = await cosmWasmClient.execute(
+    account,
+    MANAGER_ADDRESS,
+    {
+      resume_strategy: {
+        contract_address: address,
+      },
+    },
+    "auto"
+  );
+
+  console.log("Resume Strategy Response:", response);
 };
 
 const withdrawFromStrategy = async (address: string) => {
@@ -506,38 +574,38 @@ const getFinBook = async (pairAddress: string) => {
   console.log("Financial Book:", book);
 };
 
+const getMyBalances = async () => {
+  await fetchBalances(await getAccount(await getWallet()));
+};
+
 const STRATEGY_ADDRESS =
-  "sthor1rycyu6frrcpm5ayhvlmheyhg67v4xjdghecpxhv2d3yt67lmwvlqd8r3yt";
+  "sthor10tnuxn9u5ylsnn8qnqe2gtu4xhh5lxcwgfmxqw3gj2nhy2c7mylslnv3ue";
 
 // uploadContractSuite();
 // fetchBalances(STRATEGY_ADDRESS);
+// getMyBalances();
 // createStrategy();
 // getStrategy(STRATEGY_ADDRESS);
 // getStrategies();
-// getConfig(MANAGER_ADDRESS);
+// getConfig(STRATEGY_ADDRESS);
 // executeStrategy(STRATEGY_ADDRESS);
+// executeTriggers(STRATEGY_ADDRESS).then(() =>
+//   getStrategyConfig(STRATEGY_ADDRESS)
+// );
 // withdrawFromStrategy(STRATEGY_ADDRESS);
 // uploadAndMigrateExchangeContract();
+// uploadAndMigrateSchedulerContract();
+// uploadAndMigrateManagerContract();
+// resumeStrategy(STRATEGY_ADDRESS);
 // uploadAndMigrateContractSuite();
 // uploadContractSuite();
 // getFinBook("sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r");
 // canSwap();
 // getSpotPrice();
-getExpectedReceiveAmount();
+// getExpectedReceiveAmount();
 // getRoute();
-// swap();
+swap();
 // uploadAndInstantiateExchangeContract();
-// customQuery(EXCHANGE_ADDRESS, {
-//   custom: {},
-// });
-
-// customQuery(
-//   "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r",
-//   {
-//     config: {},
-//   }
-// );
-
 // customExecute(EXCHANGE_ADDRESS, {
 //   custom: Buffer.from(
 //     JSON.stringify({

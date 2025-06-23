@@ -1,5 +1,5 @@
-use calc_rs::types::{ContractResult, ExpectedReturnAmount};
-use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, StdResult};
+use calc_rs::types::{Callback, ContractResult, ExpectedReceiveAmount};
+use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, MessageInfo, StdResult};
 use rujira_rs::NativeAsset;
 
 pub trait Exchange {
@@ -20,7 +20,7 @@ pub trait Exchange {
         deps: Deps,
         swap_amount: &Coin,
         target_denom: &NativeAsset,
-    ) -> StdResult<ExpectedReturnAmount>;
+    ) -> StdResult<ExpectedReceiveAmount>;
     fn spot_price(
         &self,
         deps: Deps,
@@ -30,9 +30,11 @@ pub trait Exchange {
     fn swap(
         &self,
         deps: Deps,
-        env: Env,
+        env: &Env,
+        info: &MessageInfo,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
         recipient: Addr,
+        on_complete: Option<Callback>,
     ) -> ContractResult;
 }

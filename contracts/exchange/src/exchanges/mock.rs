@@ -1,5 +1,5 @@
-use calc_rs::types::{ContractResult, ExpectedReturnAmount};
-use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, StdResult};
+use calc_rs::types::{Callback, ContractResult, ExpectedReceiveAmount};
+use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, MessageInfo, StdResult};
 use rujira_rs::NativeAsset;
 
 use crate::types::Exchange;
@@ -8,10 +8,14 @@ pub struct MockExchange {
     pub can_swap_fn: Box<dyn Fn(Deps, &Coin, &Coin) -> StdResult<bool> + Send + Sync>,
     pub route_fn: Box<dyn Fn(Deps, &Coin, &NativeAsset) -> StdResult<Vec<Coin>> + Send + Sync>,
     pub get_expected_receive_amount_fn:
-        Box<dyn Fn(Deps, &Coin, &NativeAsset) -> StdResult<ExpectedReturnAmount> + Send + Sync>,
+        Box<dyn Fn(Deps, &Coin, &NativeAsset) -> StdResult<ExpectedReceiveAmount> + Send + Sync>,
     pub get_spot_price_fn:
         Box<dyn Fn(Deps, &NativeAsset, &NativeAsset) -> StdResult<Decimal> + Send + Sync>,
-    pub swap_fn: Box<dyn Fn(Deps, Env, &Coin, &Coin, Addr) -> ContractResult + Send + Sync>,
+    pub swap_fn: Box<
+        dyn Fn(Deps, &Env, &MessageInfo, &Coin, &Coin, Addr, Option<Callback>) -> ContractResult
+            + Send
+            + Sync,
+    >,
 }
 
 impl Default for MockExchange {
@@ -28,8 +32,8 @@ impl Default for MockExchange {
                 ])
             }),
             get_expected_receive_amount_fn: Box::new(|_, swap_amount, target_denom| {
-                Ok(ExpectedReturnAmount {
-                    return_amount: Coin {
+                Ok(ExpectedReceiveAmount {
+                    receive_amount: Coin {
                         denom: target_denom.denom_string(),
                         amount: swap_amount.amount,
                     },
@@ -37,7 +41,7 @@ impl Default for MockExchange {
                 })
             }),
             get_spot_price_fn: Box::new(|_, _, _| Ok(Decimal::one())),
-            swap_fn: Box::new(|_, _, _, _, _| Ok(Default::default())),
+            swap_fn: Box::new(|_, _, _, _, _, _, _| Ok(Default::default())),
         }
     }
 }
@@ -66,7 +70,7 @@ impl Exchange for MockExchange {
         deps: Deps,
         swap_amount: &Coin,
         target_denom: &NativeAsset,
-    ) -> StdResult<ExpectedReturnAmount> {
+    ) -> StdResult<ExpectedReceiveAmount> {
         (self.get_expected_receive_amount_fn)(deps, swap_amount, target_denom)
     }
 
@@ -82,11 +86,21 @@ impl Exchange for MockExchange {
     fn swap(
         &self,
         deps: Deps,
-        env: Env,
+        env: &Env,
+        info: &MessageInfo,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
         recipient: Addr,
+        on_complete: Option<Callback>,
     ) -> ContractResult {
-        (self.swap_fn)(deps, env, swap_amount, minimum_receive_amount, recipient)
+        (self.swap_fn)(
+            deps,
+            env,
+            info,
+            swap_amount,
+            minimum_receive_amount,
+            recipient,
+            on_complete,
+        )
     }
 }

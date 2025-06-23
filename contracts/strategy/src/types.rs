@@ -1,14 +1,14 @@
 use calc_rs::types::{
     ContractError, ContractResult, NewStatistics, StrategyConfig, StrategyStatistics,
 };
-use cosmwasm_std::{Coin, Deps, Env, MessageInfo, Reply, StdError, StdResult, Uint128};
+use cosmwasm_std::{Binary, Coin, Deps, Env, MessageInfo, Reply, StdError, StdResult, Uint128};
 
 pub trait Runnable {
     fn instantiate(&mut self, deps: Deps, env: &Env, info: &MessageInfo) -> ContractResult;
     fn validate(&self, deps: Deps) -> StdResult<()>;
     fn update(&mut self, deps: Deps, env: &Env, info: StrategyConfig) -> ContractResult;
-    fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<()>;
-    fn execute(&mut self, deps: Deps, env: &Env) -> ContractResult;
+    fn can_execute(&self, deps: Deps, env: &Env, msg: Option<Binary>) -> StdResult<()>;
+    fn execute(&mut self, deps: Deps, env: &Env, msg: Option<Binary>) -> ContractResult;
     fn handle_reply(&mut self, deps: Deps, env: &Env, reply: Reply) -> ContractResult;
     fn deposit(&mut self, deps: Deps, env: &Env, info: &MessageInfo) -> ContractResult;
     fn withdraw(&mut self, deps: Deps, env: &Env, amounts: Vec<Coin>) -> ContractResult;
@@ -43,16 +43,16 @@ impl Runnable for StrategyConfig {
         }
     }
 
-    fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<()> {
+    fn can_execute(&self, deps: Deps, env: &Env, msg: Option<Binary>) -> StdResult<()> {
         match self {
-            StrategyConfig::Dca(s) => s.can_execute(deps, env),
+            StrategyConfig::Dca(s) => s.can_execute(deps, env, msg),
             StrategyConfig::Custom(_) => Err(StdError::generic_err("New strategy not implemented")),
         }
     }
 
-    fn execute(&mut self, deps: Deps, env: &Env) -> ContractResult {
+    fn execute(&mut self, deps: Deps, env: &Env, msg: Option<Binary>) -> ContractResult {
         match self {
-            StrategyConfig::Dca(s) => s.execute(deps, env),
+            StrategyConfig::Dca(s) => s.execute(deps, env, msg),
             StrategyConfig::Custom(_) => {
                 ContractResult::Err(ContractError::Generic("New strategy not implemented"))
             }
