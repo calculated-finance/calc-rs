@@ -1,17 +1,17 @@
-use anybuf::Anybuf;
 use calc_rs::types::{
-    Callback, Condition, Contract, ContractError, ContractResult, CreateTrigger,
-    ExpectedReceiveAmount, SchedulerExecuteMsg,
+    layer_1_asset, secured_asset, Callback, Condition, Contract, ContractError, ContractResult,
+    CreateTrigger, ExpectedReceiveAmount, MsgDeposit, SchedulerExecuteMsg,
+    TriggerConditionsThreshold,
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, AnyMsg, CanonicalAddr, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo,
-    Response, StdError, StdResult, Uint128,
+    to_json_binary, Addr, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo, Response, StdError,
+    StdResult, Uint128,
 };
 use cw_storage_plus::Item;
 #[cfg(test)]
 use rujira_rs::proto::types::QueryPoolResponse;
-use rujira_rs::{query::Pool, Asset, Layer1Asset, NativeAsset, SecuredAsset};
+use rujira_rs::{query::Pool, Asset, Layer1Asset, NativeAsset};
 
 use crate::types::Exchange;
 
@@ -27,83 +27,6 @@ impl ThorExchange {
         ThorExchange {
             scheduler: SCHEDULER.load(deps.storage).unwrap(),
         }
-    }
-}
-
-struct MsgDeposit {
-    pub memo: String,
-    pub coins: Vec<Coin>,
-    pub signer: CanonicalAddr,
-}
-
-impl From<MsgDeposit> for CosmosMsg {
-    fn from(value: MsgDeposit) -> Self {
-        let coins: Vec<Anybuf> = value
-            .coins
-            .iter()
-            .map(|c| {
-                let asset = layer_1_asset(&NativeAsset::new(&c.denom))
-                    .unwrap()
-                    .denom_string()
-                    .to_ascii_uppercase();
-                let (chain, symbol) = asset.split_once('.').unwrap();
-
-                Anybuf::new()
-                    .append_message(
-                        1,
-                        &Anybuf::new()
-                            .append_string(1, chain)
-                            .append_string(2, symbol)
-                            .append_string(3, symbol)
-                            .append_bool(4, false)
-                            .append_bool(5, false)
-                            .append_bool(6, c.denom.to_lowercase() != "rune"),
-                    )
-                    .append_string(2, c.amount.to_string())
-            })
-            .collect();
-
-        let value = Anybuf::new()
-            .append_repeated_message(1, &coins)
-            .append_string(2, value.memo)
-            .append_bytes(3, value.signer.to_vec());
-
-        CosmosMsg::Any(AnyMsg {
-            type_url: "/types.MsgDeposit".to_string(),
-            value: value.as_bytes().into(),
-        })
-    }
-}
-
-pub fn layer_1_asset(denom: &NativeAsset) -> StdResult<Layer1Asset> {
-    let denom_string = denom.denom_string();
-
-    if denom_string.contains("rune") {
-        return Ok(Layer1Asset::new("THOR", "RUNE"));
-    }
-
-    let (chain, symbol) = denom_string
-        .split_once('-')
-        .ok_or_else(|| StdError::generic_err(format!("Invalid layer 1 asset: {}", denom)))?;
-
-    Ok(Layer1Asset::new(
-        &chain.to_ascii_uppercase(),
-        &symbol.to_ascii_uppercase(),
-    ))
-}
-
-fn secured_asset(asset: &Layer1Asset) -> StdResult<SecuredAsset> {
-    match asset.denom_string().to_uppercase().split_once(".") {
-        Some((chain, symbol)) => {
-            if chain == "THOR" && symbol == "RUNE" {
-                return Ok(SecuredAsset::new("THOR", "RUNE"));
-            }
-            Ok(SecuredAsset::new(chain, symbol))
-        }
-        None => Err(StdError::generic_err(format!(
-            "Invalid layer 1 asset: {}",
-            asset.denom_string()
-        ))),
     }
 }
 
@@ -345,7 +268,7 @@ impl Exchange for ThorExchange {
         };
 
         let memo = format!(
-            "=:{}:{}:{}",
+            "=:{}:{}:{}:rj:10:calc-swap",
             receive_asset, recipient, minimum_receive_amount.amount
         );
 
@@ -363,9 +286,8 @@ impl Exchange for ThorExchange {
         if let Some(callback) = on_complete {
             messages.push(Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                    condition: Condition::BlockHeight {
-                        height: env.block.height + 5,
-                    },
+                    conditions: vec![Condition::BlocksCompleted(env.block.height + 5)],
+                    threshold: TriggerConditionsThreshold::All,
                     to: callback.contract,
                     msg: callback.msg,
                 }))?,

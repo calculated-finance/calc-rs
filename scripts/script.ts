@@ -604,7 +604,7 @@ const STRATEGY_ADDRESS =
 // getSpotPrice();
 // getExpectedReceiveAmount();
 // getRoute();
-swap();
+// swap();
 // uploadAndInstantiateExchangeContract();
 // customExecute(EXCHANGE_ADDRESS, {
 //   custom: Buffer.from(

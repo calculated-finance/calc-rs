@@ -235,9 +235,11 @@ dependencies = [
 name = "calc-rs"
 version = "0.0.1"
 dependencies = [
+ "anybuf 1.0.0",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",
+ "rujira-rs",
  "thiserror",
 ]
 
@@ -495,6 +497,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dca"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "prost",
+ "rstest",
+ "rujira-rs",
+ "schemars",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "der"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,6 +575,24 @@ dependencies = [
  "const-oid",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "distribute"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "prost",
+ "rstest",
+ "rujira-rs",
+ "schemars",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,12 +1,18 @@
-use std::{time::Duration, u8};
+use std::{collections::HashMap, time::Duration, u8};
 
+use anybuf::Anybuf;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    to_json_string, Addr, BankMsg, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
-    CoinsError, CosmosMsg, Decimal, Event, Instantiate2AddressError, OverflowError, Response,
-    StdError, Timestamp, Uint128, WasmMsg,
+    to_json_string, Addr, AnyMsg, BankMsg, Binary, BlockInfo, CanonicalAddr, CheckedFromRatioError,
+    CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg, Decimal, Deps, Env, Event,
+    Instantiate2AddressError, MessageInfo, OverflowError, Response, StdError, StdResult, Timestamp,
+    Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
+use rujira_rs::{
+    fin::{OrderResponse, Price, QueryMsg, Side},
+    Layer1Asset, NativeAsset, SecuredAsset,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
@@ -59,8 +65,79 @@ pub struct ExpectedReceiveAmount {
 
 #[cw_serde]
 pub enum Condition {
-    Timestamp { timestamp: Timestamp },
-    BlockHeight { height: u64 },
+    TimestampElapsed(Timestamp),
+    BlocksCompleted(u64),
+    LimitOrderFilled {
+        owner: Addr,
+        pair_address: Addr,
+        side: Side,
+        price: Price,
+    },
+    PriceThresholdMet {
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+    },
+    SlippageLimitMet {
+        swap_amount: Coin,
+        target_denom: String,
+        slippage_bps: u64,
+    },
+    BalanceMet {
+        address: Addr,
+        balance: Coin,
+    },
+}
+
+impl Condition {
+    pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {
+        match self {
+            Condition::TimestampElapsed(timestamp) => Ok(env.block.time >= *timestamp),
+            Condition::BlocksCompleted(height) => Ok(env.block.height >= *height),
+            Condition::LimitOrderFilled {
+                owner,
+                pair_address,
+                side,
+                price,
+            } => deps
+                .querier
+                .query_wasm_smart::<OrderResponse>(
+                    pair_address,
+                    &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
+                )
+                .map(|r| r.remaining.is_zero()),
+            Condition::PriceThresholdMet {
+                swap_amount,
+                minimum_receive_amount,
+            } => deps
+                .querier
+                .query_wasm_smart::<ExpectedReceiveAmount>(
+                    swap_amount.denom.clone(),
+                    &ExchangeQueryMsg::ExpectedReceiveAmount {
+                        swap_amount: swap_amount.clone(),
+                        target_denom: minimum_receive_amount.denom.clone(),
+                    },
+                )
+                .map(|r| r.receive_amount.amount >= minimum_receive_amount.amount),
+            Condition::SlippageLimitMet {
+                swap_amount,
+                target_denom,
+                slippage_bps,
+            } => deps
+                .querier
+                .query_wasm_smart::<ExpectedReceiveAmount>(
+                    swap_amount.denom.clone(),
+                    &ExchangeQueryMsg::ExpectedReceiveAmount {
+                        swap_amount: swap_amount.clone(),
+                        target_denom: target_denom.clone(),
+                    },
+                )
+                .map(|r| r.slippage <= Decimal::bps(*slippage_bps)),
+            Condition::BalanceMet { address, balance } => deps
+                .querier
+                .query_balance(address, balance.denom.clone())
+                .map(|r| r.amount >= balance.amount),
+        }
+    }
 }
 
 #[cw_serde]
@@ -79,10 +156,16 @@ pub enum ConditionFilter {
 }
 
 #[cw_serde]
-pub struct DcaStatistics {
+pub struct AccumulateStatistics {
     pub amount_deposited: Coin,
     pub amount_swapped: Coin,
     pub amount_received: Coin,
+}
+
+#[cw_serde]
+pub struct DistributeStatistics {
+    pub amount_distributed: HashMap<String, Vec<Coin>>,
+    pub amount_withdrawn: Vec<Coin>,
 }
 
 #[cw_serde]
@@ -92,15 +175,107 @@ pub struct NewStatistics {
 
 #[cw_serde]
 pub enum StrategyStatistics {
-    Dca(DcaStatistics),
+    Accumulate(AccumulateStatistics),
     New(NewStatistics),
+}
+
+pub fn layer_1_asset(denom: &NativeAsset) -> StdResult<Layer1Asset> {
+    let denom_string = denom.denom_string();
+
+    if denom_string.contains("rune") {
+        return Ok(Layer1Asset::new("THOR", "RUNE"));
+    }
+
+    let (chain, symbol) = denom_string
+        .split_once('-')
+        .ok_or_else(|| StdError::generic_err(format!("Invalid layer 1 asset: {}", denom)))?;
+
+    Ok(Layer1Asset::new(
+        &chain.to_ascii_uppercase(),
+        &symbol.to_ascii_uppercase(),
+    ))
+}
+
+pub fn secured_asset(asset: &Layer1Asset) -> StdResult<SecuredAsset> {
+    match asset.denom_string().to_uppercase().split_once(".") {
+        Some((chain, symbol)) => {
+            if chain == "THOR" && symbol == "RUNE" {
+                return Ok(SecuredAsset::new("THOR", "RUNE"));
+            }
+            Ok(SecuredAsset::new(chain, symbol))
+        }
+        None => Err(StdError::generic_err(format!(
+            "Invalid layer 1 asset: {}",
+            asset.denom_string()
+        ))),
+    }
+}
+
+pub struct MsgDeposit {
+    pub memo: String,
+    pub coins: Vec<Coin>,
+    pub signer: CanonicalAddr,
+}
+
+impl From<MsgDeposit> for CosmosMsg {
+    fn from(value: MsgDeposit) -> Self {
+        let coins: Vec<Anybuf> = value
+            .coins
+            .iter()
+            .map(|c| {
+                let asset = layer_1_asset(&NativeAsset::new(&c.denom))
+                    .unwrap()
+                    .denom_string()
+                    .to_ascii_uppercase();
+                let (chain, symbol) = asset.split_once('.').unwrap();
+
+                Anybuf::new()
+                    .append_message(
+                        1,
+                        &Anybuf::new()
+                            .append_string(1, chain)
+                            .append_string(2, symbol)
+                            .append_string(3, symbol)
+                            .append_bool(4, false)
+                            .append_bool(5, false)
+                            .append_bool(6, c.denom.to_lowercase() != "rune"),
+                    )
+                    .append_string(2, c.amount.to_string())
+            })
+            .collect();
+
+        let value = Anybuf::new()
+            .append_repeated_message(1, &coins)
+            .append_string(2, value.memo)
+            .append_bytes(3, value.signer.to_vec());
+
+        CosmosMsg::Any(AnyMsg {
+            type_url: "/types.MsgDeposit".to_string(),
+            value: value.as_bytes().into(),
+        })
+    }
+}
+
+#[cw_serde]
+pub enum Recipient {
+    Bank { address: Addr },
+    Wasm { address: Addr, msg: Binary },
+    Withdraw { address: String },
+}
+
+impl Recipient {
+    pub fn address(&self) -> String {
+        match self {
+            Recipient::Bank { address } | Recipient::Wasm { address, .. } => address.to_string(),
+            Recipient::Withdraw { address } => address.clone(),
+        }
+    }
 }
 
 #[cw_serde]
 pub struct Destination {
-    pub address: Addr,
     pub shares: Uint128,
-    pub msg: Option<Binary>,
+    pub recipient: Recipient,
     pub label: Option<String>,
 }
 
@@ -110,25 +285,32 @@ pub struct Distribution {
     pub amount: Vec<Coin>,
 }
 
-impl Into<CosmosMsg> for Distribution {
-    fn into(self) -> CosmosMsg {
-        match self.destination.msg {
-            Some(msg) => WasmMsg::Execute {
-                contract_addr: self.destination.address.into(),
+impl Distribution {
+    pub fn get_msg(self, deps: Deps, env: &Env) -> StdResult<CosmosMsg> {
+        match self.destination.recipient {
+            Recipient::Bank { address, .. } => Ok(BankMsg::Send {
+                to_address: address.into(),
+                amount: self.amount,
+            }
+            .into()),
+            Recipient::Wasm { address, msg, .. } => Ok(WasmMsg::Execute {
+                contract_addr: address.into(),
                 msg,
                 funds: self.amount,
             }
-            .into(),
-            None => CosmosMsg::Bank(BankMsg::Send {
-                to_address: self.destination.address.into(),
-                amount: self.amount,
-            }),
+            .into()),
+            Recipient::Withdraw { address, .. } => Ok(MsgDeposit {
+                memo: format!("SECURE-:{}", address),
+                coins: self.amount,
+                signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
+            }
+            .into()),
         }
     }
 }
 
 #[cw_serde]
-pub enum DcaSchedule {
+pub enum Schedule {
     Blocks {
         interval: u64,
         previous: Option<u64>,
@@ -139,79 +321,116 @@ pub enum DcaSchedule {
     },
 }
 
+impl Schedule {
+    pub fn is_due(&self, block: &BlockInfo) -> bool {
+        match self {
+            Schedule::Blocks { interval, previous } => {
+                let last_block = previous.unwrap_or(0);
+                block.height >= last_block + interval
+            }
+            Schedule::Time { duration, previous } => {
+                let last_time = previous.unwrap_or(Timestamp::from_seconds(0));
+                block.time.seconds() >= last_time.seconds() + duration.as_secs()
+            }
+        }
+    }
+
+    pub fn to_conditions(&self, env: &Env) -> Vec<Condition> {
+        match self {
+            Schedule::Blocks { interval, previous } => {
+                let last_block = previous.unwrap_or(env.block.height);
+                vec![Condition::BlocksCompleted(last_block + interval)]
+            }
+            Schedule::Time { duration, previous } => {
+                let last_time =
+                    previous.unwrap_or(Timestamp::from_seconds(env.block.time.seconds()));
+                vec![Condition::TimestampElapsed(Timestamp::from_seconds(
+                    last_time.seconds() + duration.as_secs(),
+                ))]
+            }
+        }
+    }
+}
+
 #[cw_serde]
-pub struct DcaStrategyConfig {
+pub struct AccumulateStrategyConfig {
     pub owner: Addr,
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
-    pub schedule: DcaSchedule,
+    pub schedule: Schedule,
     pub exchange_contract: Addr,
     pub scheduler_contract: Addr,
     pub execution_rebate: Coin,
     pub affiliate_code: Option<String>,
     pub mutable_destinations: Vec<Destination>,
     pub immutable_destinations: Vec<Destination>,
-    pub statistics: DcaStatistics,
+    pub statistics: AccumulateStatistics,
 }
 
 #[cw_serde]
-pub struct CustomStrategyConfig {
+pub struct DistributeStrategyConfig {
     pub owner: Addr,
+    pub denoms: Vec<String>,
+    pub mutable_destinations: Vec<Destination>,
+    pub immutable_destinations: Vec<Destination>,
+    pub conditions: Vec<Condition>,
 }
 
 #[derive()]
 #[cw_serde]
 pub enum StrategyConfig {
-    Dca(DcaStrategyConfig),
-    Custom(CustomStrategyConfig),
+    Accumulate(AccumulateStrategyConfig),
+    // Custom(DistributeStrategyConfig),
 }
 
-impl From<InstantiateStrategyConfig> for StrategyConfig {
-    fn from(config: InstantiateStrategyConfig) -> Self {
-        match config {
-            InstantiateStrategyConfig::Dca {
-                owner,
-                swap_amount,
-                minimum_receive_amount,
-                schedule,
-                exchange_contract,
-                scheduler_contract,
-                execution_rebate,
-                mutable_destinations,
-                immutable_destinations,
-                affiliate_code,
-            } => StrategyConfig::Dca(DcaStrategyConfig {
-                owner,
-                swap_amount,
-                minimum_receive_amount,
-                schedule,
-                exchange_contract,
-                scheduler_contract,
-                execution_rebate,
-                mutable_destinations,
-                immutable_destinations,
-                affiliate_code,
-                statistics: DcaStatistics {
-                    amount_deposited: Coin {
-                        denom: "uusd".to_string(),
-                        amount: Uint128::zero(),
-                    },
-                    amount_swapped: Coin {
-                        denom: "uusd".to_string(),
-                        amount: Uint128::zero(),
-                    },
-                    amount_received: Coin {
-                        denom: "uusd".to_string(),
-                        amount: Uint128::zero(),
-                    },
-                },
-            }),
-            InstantiateStrategyConfig::Custom {} => StrategyConfig::Custom(CustomStrategyConfig {
-                owner: Addr::unchecked("custom_strategy_owner"),
-            }),
-        }
-    }
-}
+// impl From<InstantiateStrategyCommand> for StrategyConfig {
+//     fn from(config: InstantiateStrategyCommand) -> Self {
+//         match config {
+//             InstantiateStrategyCommand::Accumulate {
+//                 owner,
+//                 swap_amount,
+//                 minimum_receive_amount,
+//                 schedule,
+//                 exchange_contract,
+//                 scheduler_contract,
+//                 execution_rebate,
+//                 mutable_destinations,
+//                 immutable_destinations,
+//                 affiliate_code,
+//             } => StrategyConfig::Accumulate(AccumulateStrategyConfig {
+//                 owner,
+//                 swap_amount,
+//                 minimum_receive_amount,
+//                 schedule,
+//                 exchange_contract,
+//                 scheduler_contract,
+//                 execution_rebate,
+//                 mutable_destinations,
+//                 immutable_destinations,
+//                 affiliate_code,
+//                 statistics: AccumulateStatistics {
+//                     amount_deposited: Coin {
+//                         denom: swap_amount.denom.to_string(),
+//                         amount: Uint128::zero(),
+//                     },
+//                     amount_swapped: Coin {
+//                         denom: swap_amount.denom.to_string(),
+//                         amount: Uint128::zero(),
+//                     },
+//                     amount_received: Coin {
+//                         denom: minimum_receive_amount.denom.to_string(),
+//                         amount: Uint128::zero(),
+//                     },
+//                 },
+//             }),
+//             InstantiateStrategyCommand::Distribute {} => {
+//                 StrategyConfig::Custom(DistributeStrategyConfig {
+//                     owner: Addr::unchecked("custom_strategy_owner"),
+//                 })
+//             }
+//         }
+//     }
+// }
 
 pub trait Owned {
     fn owner(&self) -> Addr;
@@ -220,8 +439,8 @@ pub trait Owned {
 impl Owned for StrategyConfig {
     fn owner(&self) -> Addr {
         match self {
-            StrategyConfig::Dca(dca_strategy) => dca_strategy.owner.clone(),
-            StrategyConfig::Custom(new_strategy) => new_strategy.owner.clone(),
+            StrategyConfig::Accumulate(strategy) => strategy.owner.clone(),
+            // StrategyConfig::Custom(strategy) => strategy.owner.clone(),
         }
     }
 }
@@ -263,7 +482,6 @@ pub struct Strategy {
     pub contract_address: Addr,
     pub created_at: u64,
     pub updated_at: u64,
-    pub executions: u64,
     pub label: String,
     pub status: StrategyStatus,
     pub affiliates: Vec<Affiliate>,
@@ -460,13 +678,47 @@ impl Contract {
 }
 
 #[cw_serde]
+pub enum TriggerConditionsThreshold {
+    Any,
+    All,
+}
+
+#[cw_serde]
 pub struct Trigger {
     pub id: u64,
     pub owner: Addr,
-    pub condition: Condition,
+    pub conditions: Vec<Condition>,
+    pub threshold: TriggerConditionsThreshold,
     pub msg: Binary,
     pub to: Addr,
     pub execution_rebate: Vec<Coin>,
+}
+
+impl Trigger {
+    pub fn from_command(info: &MessageInfo, command: CreateTrigger, rebate: Vec<Coin>) -> Self {
+        Self {
+            id: 0,
+            owner: info.sender.clone(),
+            conditions: command.conditions,
+            threshold: command.threshold,
+            msg: command.msg,
+            to: command.to,
+            execution_rebate: rebate,
+        }
+    }
+
+    pub fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<bool> {
+        Ok(match self.threshold {
+            TriggerConditionsThreshold::All => self
+                .conditions
+                .iter()
+                .all(|c| c.is_satisfied(deps, env).unwrap_or(false)),
+            TriggerConditionsThreshold::Any => self
+                .conditions
+                .iter()
+                .any(|c| c.is_satisfied(deps, env).unwrap_or(false)),
+        })
+    }
 }
 
 #[cw_serde]
@@ -486,7 +738,7 @@ pub enum ManagerExecuteMsg {
     InstantiateStrategy {
         owner: Addr,
         label: String,
-        strategy: InstantiateStrategyConfig,
+        strategy: InstantiateStrategyCommand,
     },
     ExecuteStrategy {
         contract_address: Addr,
@@ -541,12 +793,12 @@ pub enum ManagerQueryMsg {
 }
 
 #[cw_serde]
-pub enum InstantiateStrategyConfig {
-    Dca {
+pub enum InstantiateStrategyCommand {
+    Accumulate {
         owner: Addr,
         swap_amount: Coin,
         minimum_receive_amount: Coin,
-        schedule: DcaSchedule,
+        schedule: Schedule,
         exchange_contract: Addr,
         scheduler_contract: Addr,
         execution_rebate: Coin,
@@ -554,13 +806,13 @@ pub enum InstantiateStrategyConfig {
         mutable_destinations: Vec<Destination>,
         immutable_destinations: Vec<Destination>,
     },
-    Custom {},
+    Distribute {},
 }
 
 #[cw_serde]
 pub struct StrategyInstantiateMsg {
     pub fee_collector: Addr,
-    pub strategy: InstantiateStrategyConfig,
+    pub strategy: InstantiateStrategyCommand,
 }
 
 #[cw_serde]
@@ -625,7 +877,8 @@ pub enum ExchangeQueryMsg {
 
 #[cw_serde]
 pub struct CreateTrigger {
-    pub condition: Condition,
+    pub conditions: Vec<Condition>,
+    pub threshold: TriggerConditionsThreshold,
     pub to: Addr,
     pub msg: Binary,
 }
@@ -648,4 +901,55 @@ pub enum SchedulerQueryMsg {
     },
     #[returns(bool)]
     CanExecute { id: u64 },
+}
+
+#[cw_serde]
+pub struct DistributorInstantiateMsg {
+    pub owner: Addr,
+    pub denoms: Vec<String>,
+    pub schedule: Option<Schedule>,
+    pub mutable_destinations: Vec<Destination>,
+    pub immutable_destinations: Vec<Destination>,
+}
+
+#[cw_serde]
+pub enum DistributorExecuteMsg {
+    Distribute {},
+    Withdraw { amounts: Vec<Coin> },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum DistributorQueryMsg {
+    #[returns(DistributeStrategyConfig)]
+    Config {},
+}
+
+#[cw_serde]
+pub struct DcaInstantiateMsg {
+    pub owner: Addr,
+    pub swap_amount: Coin,
+    pub minimum_receive_amount: Coin,
+    pub schedule: Schedule,
+    pub exchange_contract: Addr,
+    pub scheduler_contract: Addr,
+    pub execution_rebate: Coin,
+    pub affiliate_code: Option<String>,
+    pub mutable_destinations: Vec<Destination>,
+    pub immutable_destinations: Vec<Destination>,
+}
+
+#[cw_serde]
+pub enum AccumulatorExecuteMsg {
+    Execute {},
+    Withdraw { amounts: Vec<Coin> },
+}
+
+#[cw_serde]
+#[derive(QueryResponses)]
+pub enum AccumulatorQueryMsg {
+    #[returns(AccumulateStrategyConfig)]
+    Config {},
+    #[returns(bool)]
+    CanExecute {},
 }

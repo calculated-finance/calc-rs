@@ -1,11 +1,11 @@
 use std::cmp::min;
 
 use calc_rs::types::{
-    Affiliate, Callback, Condition, ConditionFilter, Contract, ContractError, ContractResult,
-    CreateTrigger, DcaSchedule, DcaStatistics, DcaStrategyConfig, Destination, Distribution,
-    DomainEvent, ExchangeExecuteMsg, ManagerExecuteMsg, ManagerQueryMsg, SchedulerExecuteMsg,
-    SchedulerQueryMsg, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyStatistics,
-    StrategyStatus, Trigger,
+    AccumulateStatistics, AccumulateStrategyConfig, Affiliate, Callback, Condition,
+    ConditionFilter, Contract, ContractError, ContractResult, CreateTrigger, Destination,
+    Distribution, DomainEvent, ExchangeExecuteMsg, ManagerExecuteMsg, ManagerQueryMsg, Schedule,
+    SchedulerExecuteMsg, SchedulerQueryMsg, Strategy, StrategyConfig, StrategyExecuteMsg,
+    StrategyStatistics, StrategyStatus, Trigger,
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -24,11 +24,11 @@ pub const EXECUTE_REPLY_ID: u64 = 1;
 pub const SCHEDULE_REPLY_ID: u64 = 2;
 
 #[cw_serde]
-pub enum DcaExecuteMsg {
+pub enum AccumulateExecuteMsg {
     Distribute {},
 }
 
-fn get_swap_amount(deps: Deps, env: &Env, strategy: &DcaStrategyConfig) -> StdResult<Coin> {
+fn get_swap_amount(deps: Deps, env: &Env, strategy: &AccumulateStrategyConfig) -> StdResult<Coin> {
     let balance = deps.querier.query_balance(
         env.contract.address.clone(),
         strategy.swap_amount.denom.clone(),
@@ -40,12 +40,16 @@ fn get_swap_amount(deps: Deps, env: &Env, strategy: &DcaStrategyConfig) -> StdRe
     })
 }
 
-fn get_schedule_msg(strategy: &DcaStrategyConfig, deps: Deps, env: &Env) -> StdResult<SubMsg> {
+fn get_schedule_msg(
+    strategy: &AccumulateStrategyConfig,
+    deps: Deps,
+    env: &Env,
+) -> StdResult<SubMsg> {
     let condition = match strategy.schedule {
-        DcaSchedule::Blocks { interval, previous } => Condition::BlockHeight {
+        Schedule::Blocks { interval, previous } => Condition::BlocksCompleted {
             height: previous.unwrap_or(env.block.height) + interval,
         },
-        DcaSchedule::Time { duration, previous } => Condition::Timestamp {
+        Schedule::Time { duration, previous } => Condition::TimestampElapsed {
             timestamp: previous
                 .unwrap_or(env.block.time)
                 .plus_seconds(duration.as_secs()),
@@ -70,7 +74,7 @@ fn get_schedule_msg(strategy: &DcaStrategyConfig, deps: Deps, env: &Env) -> StdR
 fn get_distributions(
     deps: Deps,
     env: &Env,
-    strategy: &DcaStrategyConfig,
+    strategy: &AccumulateStrategyConfig,
 ) -> StdResult<Vec<Distribution>> {
     let receive_denom_balance = deps.querier.query_balance(
         env.contract.address.clone(),
@@ -99,7 +103,7 @@ fn get_distributions(
         .collect::<Vec<Distribution>>())
 }
 
-impl Runnable for DcaStrategyConfig {
+impl Runnable for AccumulateStrategyConfig {
     fn instantiate(&mut self, deps: Deps, env: &Env, _info: &MessageInfo) -> ContractResult {
         let total_shares = self
             .mutable_destinations
@@ -144,7 +148,7 @@ impl Runnable for DcaStrategyConfig {
         self.immutable_destinations =
             [fee_destinations, self.immutable_destinations.clone()].concat();
 
-        self.statistics = DcaStatistics {
+        self.statistics = AccumulateStatistics {
             amount_swapped: Coin {
                 denom: self.swap_amount.denom.clone(),
                 amount: Uint128::zero(),
@@ -161,7 +165,7 @@ impl Runnable for DcaStrategyConfig {
 
         let strategy_instantiated_event = DomainEvent::StrategyInstantiated {
             contract_address: env.contract.address.clone(),
-            config: StrategyConfig::Dca(self.clone()),
+            config: StrategyConfig::Accumulate(self.clone()),
         };
 
         let mut messages: Vec<CosmosMsg> = vec![];
@@ -248,7 +252,7 @@ impl Runnable for DcaStrategyConfig {
 
     fn update(&mut self, deps: Deps, env: &Env, update: StrategyConfig) -> ContractResult {
         match update {
-            StrategyConfig::Dca(update) => {
+            StrategyConfig::Accumulate(update) => {
                 if (update.swap_amount.denom != self.swap_amount.denom)
                     || (update.minimum_receive_amount.denom != self.minimum_receive_amount.denom)
                 {
@@ -294,24 +298,21 @@ impl Runnable for DcaStrategyConfig {
 
                 let strategy_updated_event = DomainEvent::StrategyUpdated {
                     contract_address: env.contract.address.clone(),
-                    old_config: StrategyConfig::Dca(previous_config),
-                    new_config: StrategyConfig::Dca(self.clone()),
+                    old_config: StrategyConfig::Accumulate(previous_config),
+                    new_config: StrategyConfig::Accumulate(self.clone()),
                 };
 
                 Ok(Response::default()
                     .add_submessages(sub_messages)
                     .add_event(strategy_updated_event))
             }
-            _ => Err(ContractError::Std(StdError::generic_err(
-                "Invalid update type for DCA strategy",
-            ))),
         }
     }
 
     fn can_execute(&self, deps: Deps, env: &Env, msg: Option<Binary>) -> StdResult<()> {
         match msg {
             Some(msg) => {
-                if let Ok(DcaExecuteMsg::Distribute {}) = from_json(msg) {
+                if let Ok(AccumulateExecuteMsg::Distribute {}) = from_json(msg) {
                     let distribute_amount = deps.querier.query_balance(
                         env.contract.address.clone(),
                         self.minimum_receive_amount.denom.clone(),
@@ -327,7 +328,7 @@ impl Runnable for DcaStrategyConfig {
                     Ok(())
                 } else {
                     Err(StdError::generic_err(
-                        "Invalid message for DCA strategy execution",
+                        "Invalid message for accumulate strategy execution",
                     ))
                 }
             }
@@ -386,7 +387,7 @@ impl Runnable for DcaStrategyConfig {
         match self.can_execute(deps, env, msg.clone()) {
             Ok(_) => match msg {
                 Some(msg) => {
-                    if let Ok(DcaExecuteMsg::Distribute {}) = from_json(msg) {
+                    if let Ok(AccumulateExecuteMsg::Distribute {}) = from_json(msg) {
                         let receive_denom_balance = deps.querier.query_balance(
                             env.contract.address.clone(),
                             self.minimum_receive_amount.denom.clone(),
@@ -408,7 +409,7 @@ impl Runnable for DcaStrategyConfig {
                                 to: distributions,
                             });
 
-                            self.statistics = DcaStatistics {
+                            self.statistics = AccumulateStatistics {
                                 amount_received: Coin {
                                     denom: self.minimum_receive_amount.denom.clone(),
                                     amount: self
@@ -422,7 +423,7 @@ impl Runnable for DcaStrategyConfig {
                         }
                     } else {
                         return Err(ContractError::Std(StdError::generic_err(
-                            "Invalid message for DCA strategy execution",
+                            "Invalid message for accumulate strategy execution",
                         )));
                     }
                 }
@@ -437,7 +438,9 @@ impl Runnable for DcaStrategyConfig {
                                 contract: MANAGER.load(deps.storage)?,
                                 msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                                     contract_address: env.contract.address.clone(),
-                                    msg: Some(to_json_binary(&DcaExecuteMsg::Distribute {})?),
+                                    msg: Some(to_json_binary(
+                                        &AccumulateExecuteMsg::Distribute {},
+                                    )?),
                                 })?,
                                 execution_rebate: vec![self.execution_rebate.clone()],
                             }),
@@ -500,7 +503,7 @@ impl Runnable for DcaStrategyConfig {
                             self.swap_amount.denom.clone(),
                         )?;
 
-                        self.statistics = DcaStatistics {
+                        self.statistics = AccumulateStatistics {
                             amount_swapped: Coin {
                                 denom: swap_denom_balance.denom.clone(),
                                 amount: self.statistics.amount_swapped.amount.checked_add(
@@ -522,7 +525,7 @@ impl Runnable for DcaStrategyConfig {
 
                         events.push(DomainEvent::ExecutionSucceeded {
                             contract_address: env.contract.address.clone(),
-                            statistics: StrategyStatistics::Dca(self.statistics.clone()),
+                            statistics: StrategyStatistics::Accumulate(self.statistics.clone()),
                         });
                     }
                     SubMsgResult::Err(reason) => {
@@ -738,16 +741,16 @@ impl Runnable for DcaStrategyConfig {
     }
 
     fn statistics(&self) -> StrategyStatistics {
-        StrategyStatistics::Dca(self.statistics.clone())
+        StrategyStatistics::Accumulate(self.statistics.clone())
     }
 }
 
 #[cfg(test)]
-fn default_strategy_config() -> DcaStrategyConfig {
+fn default_strategy_config() -> AccumulateStrategyConfig {
     use cosmwasm_std::testing::mock_dependencies;
 
     let deps = mock_dependencies();
-    DcaStrategyConfig {
+    AccumulateStrategyConfig {
         owner: deps.api.addr_make("owner"),
         swap_amount: Coin {
             denom: "rune".to_string(),
@@ -757,7 +760,7 @@ fn default_strategy_config() -> DcaStrategyConfig {
             denom: "btc-btc".to_string(),
             amount: Uint128::new(900),
         },
-        schedule: DcaSchedule::Blocks {
+        schedule: Schedule::Blocks {
             interval: 10,
             previous: None,
         },
@@ -778,7 +781,7 @@ fn default_strategy_config() -> DcaStrategyConfig {
             amount: Uint128::new(10),
         },
         affiliate_code: None,
-        statistics: DcaStatistics {
+        statistics: AccumulateStatistics {
             amount_swapped: Coin {
                 denom: "rune".to_string(),
                 amount: Uint128::zero(),
@@ -892,8 +895,8 @@ mod get_schedule_msg_tests {
         let manager = deps.api.addr_make("manager");
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
 
-        let strategy = DcaStrategyConfig {
-            schedule: DcaSchedule::Blocks { interval, previous },
+        let strategy = AccumulateStrategyConfig {
+            schedule: Schedule::Blocks { interval, previous },
             ..default_strategy_config()
         };
 
@@ -904,7 +907,7 @@ mod get_schedule_msg_tests {
             SubMsg::reply_always(
                 Contract(strategy.scheduler_contract.clone()).call(
                     to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                        condition: Condition::BlockHeight {
+                        condition: Condition::BlocksCompleted {
                             height: previous.unwrap_or(env.block.height) + interval,
                         },
                         to: MANAGER.load(deps.as_ref().storage).unwrap(),
@@ -939,8 +942,8 @@ mod get_schedule_msg_tests {
         let manager = deps.api.addr_make("manager");
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
 
-        let strategy = DcaStrategyConfig {
-            schedule: DcaSchedule::Time { duration, previous },
+        let strategy = AccumulateStrategyConfig {
+            schedule: Schedule::Time { duration, previous },
             ..default_strategy_config()
         };
 
@@ -951,7 +954,7 @@ mod get_schedule_msg_tests {
             SubMsg::reply_always(
                 Contract(strategy.scheduler_contract.clone()).call(
                     to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                        condition: Condition::Timestamp {
+                        condition: Condition::TimestampElapsed {
                             timestamp: previous
                                 .unwrap_or(env.block.time)
                                 .plus_seconds(duration.as_secs())
@@ -997,7 +1000,7 @@ mod get_distributions_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             mutable_destinations: shares
                 .iter()
                 .map(|s| Destination {
@@ -1074,7 +1077,7 @@ mod instantiate_tests {
 
         let info = message_info(&manager, &[]);
 
-        let mut strategy = DcaStrategyConfig {
+        let mut strategy = AccumulateStrategyConfig {
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("mutable_destination"),
                 shares: Uint128::new(20_000),
@@ -1127,7 +1130,7 @@ mod instantiate_tests {
             SystemResult::Ok(ContractResult::Ok(to_json_binary(&affiliate).unwrap()))
         });
 
-        let mut strategy = DcaStrategyConfig {
+        let mut strategy = AccumulateStrategyConfig {
             affiliate_code: Some(affiliate_code),
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("mutable_destination"),
@@ -1185,7 +1188,7 @@ mod instantiate_tests {
             response.events[0],
             Event::from(DomainEvent::StrategyInstantiated {
                 contract_address: env.contract.address.clone(),
-                config: StrategyConfig::Dca(strategy),
+                config: StrategyConfig::Accumulate(strategy),
             })
         );
     }
@@ -1268,7 +1271,7 @@ mod validate_tests {
         let deps = mock_dependencies();
 
         let info = message_info(&Addr::unchecked("owner"), &[]);
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             owner: info.sender,
             ..default_strategy_config()
         };
@@ -1283,7 +1286,7 @@ mod validate_tests {
     fn no_destinations_fails() {
         let deps = mock_dependencies();
 
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             mutable_destinations: vec![],
             immutable_destinations: vec![],
             ..default_strategy_config()
@@ -1308,7 +1311,7 @@ mod validate_tests {
             })
             .collect();
 
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             mutable_destinations: destinations.clone(),
             ..default_strategy_config()
         };
@@ -1323,7 +1326,7 @@ mod validate_tests {
     fn invalid_destination_address_fails() {
         let deps = mock_dependencies();
 
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             mutable_destinations: vec![Destination {
                 address: Addr::unchecked("invalid_address"),
                 shares: Uint128::new(10000),
@@ -1343,7 +1346,7 @@ mod validate_tests {
     fn total_shares_below_minimum_fails() {
         let deps = mock_dependencies();
 
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("destination"),
                 shares: Uint128::new(5000),
@@ -1364,7 +1367,7 @@ mod validate_tests {
     fn missing_affiliate_code_fails() {
         let mut deps = mock_dependencies();
 
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             affiliate_code: Some("invalid_code".to_string()),
             ..default_strategy_config()
         };
@@ -1385,7 +1388,7 @@ mod validate_tests {
     #[test]
     fn affiliate_bps_too_high_fails() {
         let mut deps = mock_dependencies();
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             affiliate_code: Some("high_bps_code".to_string()),
             ..default_strategy_config()
         };
@@ -1429,7 +1432,7 @@ mod validate_tests {
             SystemResult::Ok(ContractResult::Ok(to_json_binary(&affiliate).unwrap()))
         });
 
-        let strategy = DcaStrategyConfig {
+        let strategy = AccumulateStrategyConfig {
             affiliate_code: Some(affiliate_code),
             ..default_strategy_config()
         };
@@ -1456,7 +1459,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = DcaStrategyConfig {
+        let update = AccumulateStrategyConfig {
             swap_amount: Coin {
                 denom: "new-denom".to_string(),
                 amount: Uint128::new(1000),
@@ -1466,7 +1469,7 @@ mod update_tests {
 
         assert_eq!(
             strategy
-                .update(deps.as_ref(), &env, StrategyConfig::Dca(update))
+                .update(deps.as_ref(), &env, StrategyConfig::Accumulate(update))
                 .unwrap_err()
                 .to_string(),
             "Generic error: Cannot change swap or receive denom"
@@ -1483,7 +1486,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = DcaStrategyConfig {
+        let update = AccumulateStrategyConfig {
             minimum_receive_amount: Coin {
                 denom: "new-denom".to_string(),
                 amount: Uint128::new(1000),
@@ -1493,7 +1496,7 @@ mod update_tests {
 
         assert_eq!(
             strategy
-                .update(deps.as_ref(), &env, StrategyConfig::Dca(update))
+                .update(deps.as_ref(), &env, StrategyConfig::Accumulate(update))
                 .unwrap_err()
                 .to_string(),
             "Generic error: Cannot change swap or receive denom"
@@ -1510,7 +1513,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = DcaStrategyConfig {
+        let update = AccumulateStrategyConfig {
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("mutable_destination_updated"),
                 shares: Uint128::new(823764283),
@@ -1522,7 +1525,7 @@ mod update_tests {
 
         assert_eq!(
             strategy
-                .update(deps.as_ref(), &env, StrategyConfig::Dca(update.clone()))
+                .update(deps.as_ref(), &env, StrategyConfig::Accumulate(update.clone()))
                 .unwrap_err()
                 .to_string(),
             format!(
@@ -1551,7 +1554,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = DcaStrategyConfig {
+        let update = AccumulateStrategyConfig {
             swap_amount: Coin {
                 denom: "rune".to_string(),
                 amount: Uint128::new(378269234),
@@ -1560,7 +1563,7 @@ mod update_tests {
                 denom: "btc-btc".to_string(),
                 amount: Uint128::new(23742342),
             },
-            schedule: DcaSchedule::Blocks {
+            schedule: Schedule::Blocks {
                 interval: 128123,
                 previous: None,
             },
@@ -1581,7 +1584,7 @@ mod update_tests {
             .update(
                 deps.as_ref(),
                 &mock_env(),
-                StrategyConfig::Dca(update.clone()),
+                StrategyConfig::Accumulate(update.clone()),
             )
             .unwrap();
 
@@ -1592,7 +1595,7 @@ mod update_tests {
                 .add_submessage(SubMsg::reply_always(
                     Contract(strategy.scheduler_contract.clone()).call(
                         to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                            condition: Condition::BlockHeight {
+                            condition: Condition::BlocksCompleted {
                                 height: env.block.height + 128123
                             },
                             to: manager.clone(),
@@ -1609,8 +1612,8 @@ mod update_tests {
                 ))
                 .add_event(Event::from(DomainEvent::StrategyUpdated {
                     contract_address: env.contract.address.clone(),
-                    old_config: StrategyConfig::Dca(default_strategy_config().clone()),
-                    new_config: StrategyConfig::Dca(strategy.clone()),
+                    old_config: StrategyConfig::Accumulate(default_strategy_config().clone()),
+                    new_config: StrategyConfig::Accumulate(strategy.clone()),
                 }))
         );
     }
@@ -1776,7 +1779,7 @@ mod can_execute_tests {
                 } else if contract_addr == &scheduler_address.to_string() {
                     SystemResult::Ok(ContractResult::Ok(
                         to_json_binary::<Vec<Trigger>>(&vec![Trigger {
-                            condition: Condition::BlockHeight {
+                            condition: Condition::BlocksCompleted {
                                 height: env.block.height + 1,
                             },
                             to: manager_address.clone(),
@@ -1805,7 +1808,7 @@ mod can_execute_tests {
                 .to_string(),
             format!(
                 "Generic error: Condition for execution not met: {:?}",
-                Condition::BlockHeight {
+                Condition::BlocksCompleted {
                     height: env.block.height + 1
                 }
             )
@@ -2008,7 +2011,9 @@ mod execute_tests {
                             contract: MANAGER.load(&deps.storage).unwrap(),
                             msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                                 contract_address: env.contract.address.clone(),
-                                msg: Some(to_json_binary(&DcaExecuteMsg::Distribute {}).unwrap())
+                                msg: Some(
+                                    to_json_binary(&AccumulateExecuteMsg::Distribute {}).unwrap()
+                                )
                             })
                             .unwrap(),
                             execution_rebate: vec![strategy.execution_rebate.clone()],
@@ -2207,7 +2212,7 @@ mod handle_reply_tests {
 
         assert_eq!(
             strategy.statistics,
-            DcaStatistics {
+            AccumulateStatistics {
                 amount_deposited: Coin {
                     denom: strategy.swap_amount.denom.clone(),
                     amount: Uint128::zero()
@@ -2243,7 +2248,7 @@ mod handle_reply_tests {
 
         assert_eq!(
             strategy.statistics,
-            DcaStatistics {
+            AccumulateStatistics {
                 amount_deposited: Coin {
                     denom: strategy.swap_amount.denom.clone(),
                     amount: Uint128::zero()
@@ -2307,8 +2312,8 @@ mod handle_reply_tests {
             .save(deps.as_mut().storage, &manager_address)
             .unwrap();
 
-        let mut strategy = DcaStrategyConfig {
-            schedule: DcaSchedule::Blocks {
+        let mut strategy = AccumulateStrategyConfig {
+            schedule: Schedule::Blocks {
                 interval: 100,
                 previous: None,
             },
@@ -2370,7 +2375,7 @@ mod handle_reply_tests {
         assert!(response.messages.contains(&SubMsg::reply_always(
             Contract(strategy.scheduler_contract.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                    condition: Condition::BlockHeight {
+                    condition: Condition::BlocksCompleted {
                         height: env.block.height + 100
                     },
                     to: MANAGER.load(&deps.storage).unwrap().clone(),
@@ -2541,7 +2546,7 @@ mod handle_reply_tests {
                         to_json_binary::<Vec<Trigger>>(&vec![Trigger {
                             id: 1,
                             owner: strategy_address.clone(),
-                            condition: Condition::BlockHeight {
+                            condition: Condition::BlocksCompleted {
                                 height: env.block.height + 128123,
                             },
                             msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
@@ -2583,7 +2588,7 @@ mod handle_reply_tests {
             response.events[0],
             Event::from(DomainEvent::SchedulingSucceeded {
                 contract_address: env.contract.address.clone(),
-                conditions: vec![Condition::BlockHeight {
+                conditions: vec![Condition::BlocksCompleted {
                     height: env.block.height + 128123
                 }],
             })

@@ -1,8 +1,6 @@
 use calc_rs::types::{Condition, ConditionFilter, Trigger};
-use cosmwasm_std::{Addr, Binary, Coin, Deps, Env, Order, StdError, StdResult, Storage, Uint64};
+use cosmwasm_std::{Addr, Deps, Env, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
-
-use crate::types::Executable;
 
 pub const TRIGGER_COUNTER: Item<u64> = Item::new("trigger_counter");
 
@@ -19,23 +17,35 @@ impl<'a> IndexList<Trigger> for TriggerIndexes<'a> {
     }
 }
 
-pub fn triggers<'a>() -> IndexedMap<u64, Trigger, TriggerIndexes<'a>> {
+fn triggers<'a>() -> IndexedMap<u64, Trigger, TriggerIndexes<'a>> {
     IndexedMap::new(
         "triggers",
         TriggerIndexes {
             owner: MultiIndex::new(|_, t| t.owner.clone(), "triggers", "triggers__owner"),
             timestamp: MultiIndex::new(
-                |_, t| match &t.condition {
-                    Condition::Timestamp { timestamp } => timestamp.seconds(),
-                    _ => Uint64::MAX.into(),
+                |_, t| {
+                    t.conditions
+                        .iter()
+                        .map(|c| match c {
+                            Condition::TimestampElapsed(timestamp) => timestamp.seconds(),
+                            _ => u64::MAX,
+                        })
+                        .min()
+                        .unwrap_or(u64::MAX)
                 },
                 "triggers",
                 "triggers__timestamp",
             ),
             block_height: MultiIndex::new(
-                |_, t| match &t.condition {
-                    Condition::BlockHeight { height } => *height,
-                    _ => Uint64::MAX.into(),
+                |_, t| {
+                    t.conditions
+                        .iter()
+                        .map(|c| match c {
+                            Condition::BlocksCompleted(height) => *height,
+                            _ => u64::MAX,
+                        })
+                        .min()
+                        .unwrap_or(u64::MAX)
                 },
                 "triggers",
                 "triggers__block_height",
@@ -44,27 +54,21 @@ pub fn triggers<'a>() -> IndexedMap<u64, Trigger, TriggerIndexes<'a>> {
     )
 }
 
-pub fn save_trigger(
-    storage: &mut dyn Storage,
-    owner: Addr,
-    condition: Condition,
-    msg: Binary,
-    to: Addr,
-    execution_rebate: Vec<Coin>,
-) -> StdResult<()> {
-    let id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
-    triggers().save(
-        storage,
-        id,
-        &Trigger {
-            id,
-            owner,
-            condition,
-            msg,
-            to,
-            execution_rebate,
-        },
-    )
+pub fn save_trigger(storage: &mut dyn Storage, trigger: Trigger) -> StdResult<()> {
+    let id = TRIGGER_COUNTER
+        .update(storage, |id| Ok::<u64, StdError>(id + 1))
+        .unwrap_or_else(|_| {
+            TRIGGER_COUNTER.save(storage, &1).unwrap();
+            1
+        });
+
+    triggers().save(storage, id, &Trigger { id, ..trigger })
+}
+
+pub fn fetch_trigger(storage: &dyn Storage, id: u64) -> StdResult<Trigger> {
+    triggers()
+        .load(storage, id)
+        .map_err(|_| StdError::not_found(format!("Trigger with id {} not found", id)))
 }
 
 pub fn fetch_triggers(
@@ -116,17 +120,15 @@ pub fn fetch_triggers(
         },
         _ => 50,
     })
-    .flat_map(|r| r.map(|(_, v)| v))
-    .filter(|trigger| {
-        if let Some(can_execute) = can_execute {
-            trigger.can_execute(env) == can_execute
-        } else {
-            true
-        }
-    })
-    .collect::<Vec<Trigger>>();
+    .flat_map(|r| r.map(|(_, v)| v));
 
-    Ok(triggers)
+    Ok(if let Some(can_execute) = can_execute {
+        triggers
+            .filter(|trigger| trigger.can_execute(deps, env).unwrap_or(false) == can_execute)
+            .collect::<Vec<Trigger>>()
+    } else {
+        triggers.collect::<Vec<Trigger>>()
+    })
 }
 
 pub fn delete_trigger(storage: &mut dyn Storage, id: u64) -> StdResult<()> {
@@ -134,47 +136,57 @@ pub fn delete_trigger(storage: &mut dyn Storage, id: u64) -> StdResult<()> {
 }
 
 #[cfg(test)]
-mod tests {
+mod trigger_state_tests {
     use super::*;
 
+    use calc_rs::types::TriggerConditionsThreshold;
     use cosmwasm_std::testing::mock_env;
-    use cosmwasm_std::to_json_binary;
     use cosmwasm_std::{testing::mock_dependencies, Addr, Timestamp};
+    use cosmwasm_std::{to_json_binary, Coin};
     use std::vec;
+
+    fn default_trigger() -> Trigger {
+        Trigger {
+            id: 1,
+            owner: Addr::unchecked("owner"),
+            conditions: vec![Condition::TimestampElapsed(Timestamp::from_seconds(
+                mock_env().block.time.seconds() + 10,
+            ))],
+            threshold: TriggerConditionsThreshold::All,
+            msg: to_json_binary(&"default message").unwrap(),
+            to: Addr::unchecked("to"),
+            execution_rebate: vec![Coin::new(1u128, "rune")],
+        }
+    }
 
     #[test]
     fn saves_a_trigger() {
         let mut deps = mock_dependencies();
-        let owner = Addr::unchecked("owner");
-        let to = Addr::unchecked("to");
-        let condition = Condition::Timestamp {
-            timestamp: Timestamp::from_seconds(1000),
-        };
-        let msg = to_json_binary(&"test message").unwrap();
-        let execution_rebate = vec![Coin::new(1u128, "rune")];
+        let trigger = default_trigger();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+        save_trigger(deps.as_mut().storage, trigger.clone()).unwrap();
 
-        save_trigger(
-            deps.as_mut().storage,
-            owner.clone(),
-            condition.clone(),
-            msg.clone(),
-            to.clone(),
-            execution_rebate.clone(),
-        )
-        .unwrap();
+        assert_eq!(triggers().load(deps.as_ref().storage, 1).unwrap(), trigger);
+    }
+
+    #[test]
+    fn saves_two_identical_triggers() {
+        let mut deps = mock_dependencies();
+        let trigger = default_trigger();
+
+        save_trigger(deps.as_mut().storage, trigger.clone()).unwrap();
+        save_trigger(deps.as_mut().storage, trigger.clone()).unwrap();
 
         assert_eq!(
             triggers().load(deps.as_ref().storage, 1).unwrap(),
             Trigger {
                 id: 1,
-                owner,
-                condition,
-                msg,
-                to,
-                execution_rebate,
+                ..trigger.clone()
             }
+        );
+        assert_eq!(
+            triggers().load(deps.as_ref().storage, 2).unwrap(),
+            Trigger { id: 2, ..trigger }
         );
     }
 
@@ -184,32 +196,24 @@ mod tests {
         let mut env = mock_env();
         let owner1 = Addr::unchecked("owner1");
         let owner2 = Addr::unchecked("owner2");
-        let to = Addr::unchecked("to");
-        let condition = Condition::Timestamp {
-            timestamp: Timestamp::from_seconds(1000),
-        };
-        let msg = to_json_binary(&"test message").unwrap();
-        let execution_rebate = vec![Coin::new(1u128, "rune")];
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+        let trigger = default_trigger();
 
         save_trigger(
             deps.as_mut().storage,
-            owner1.clone(),
-            condition.clone(),
-            msg.clone(),
-            to.clone(),
-            execution_rebate.clone(),
+            Trigger {
+                owner: owner1.clone(),
+                ..trigger.clone()
+            },
         )
         .unwrap();
 
         save_trigger(
             deps.as_mut().storage,
-            owner2.clone(),
-            condition.clone(),
-            msg.clone(),
-            to.clone(),
-            execution_rebate.clone(),
+            Trigger {
+                owner: owner2.clone(),
+                ..trigger.clone()
+            },
         )
         .unwrap();
 
@@ -221,16 +225,13 @@ mod tests {
                     address: owner1.clone(),
                 },
                 None,
-                None
+                None,
             )
             .unwrap(),
             vec![Trigger {
                 id: 1,
-                owner: owner1,
-                condition: condition.clone(),
-                msg: msg.clone(),
-                to: to.clone(),
-                execution_rebate: execution_rebate.clone(),
+                owner: owner1.clone(),
+                ..trigger.clone()
             }]
         );
 
@@ -248,10 +249,7 @@ mod tests {
             vec![Trigger {
                 id: 2,
                 owner: owner2.clone(),
-                condition: condition.clone(),
-                msg: msg.clone(),
-                to: to.clone(),
-                execution_rebate: execution_rebate.clone(),
+                ..trigger.clone()
             }]
         );
 
@@ -299,10 +297,7 @@ mod tests {
             vec![Trigger {
                 id: 2,
                 owner: owner2.clone(),
-                condition: condition.clone(),
-                msg: msg.clone(),
-                to: to.clone(),
-                execution_rebate: execution_rebate.clone(),
+                ..trigger.clone()
             }]
         );
 
@@ -320,10 +315,7 @@ mod tests {
             vec![Trigger {
                 id: 2,
                 owner: owner2.clone(),
-                condition: condition.clone(),
-                msg: msg.clone(),
-                to: to.clone(),
-                execution_rebate: execution_rebate.clone(),
+                ..trigger.clone()
             }]
         );
     }
@@ -332,30 +324,21 @@ mod tests {
     fn fetches_triggers_by_timestamp() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let owner = Addr::unchecked("owner");
-        let to = Addr::unchecked("to");
-        let msg = to_json_binary(&"test message").unwrap();
-        let execution_rebate = vec![Coin::new(1u128, "rune")];
 
         let conditions = vec![
-            Condition::Timestamp {
-                timestamp: Timestamp::from_seconds(1000),
-            },
-            Condition::Timestamp {
-                timestamp: Timestamp::from_seconds(2000),
-            },
+            Condition::TimestampElapsed(Timestamp::from_seconds(env.block.time.seconds() + 1000)),
+            Condition::TimestampElapsed(Timestamp::from_seconds(env.block.time.seconds() + 2000)),
         ];
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+        let trigger = default_trigger();
 
         for condition in conditions.clone() {
             save_trigger(
                 deps.as_mut().storage,
-                owner.clone(),
-                condition.clone(),
-                msg.clone(),
-                to.clone(),
-                execution_rebate.clone(),
+                Trigger {
+                    conditions: vec![condition.clone()],
+                    ..trigger.clone()
+                },
             )
             .unwrap();
         }
@@ -375,19 +358,13 @@ mod tests {
             vec![
                 Trigger {
                     id: 1,
-                    owner: owner.clone(),
-                    condition: conditions[0].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[0].clone()],
+                    ..trigger.clone()
                 },
                 Trigger {
                     id: 2,
-                    owner: owner.clone(),
-                    condition: conditions[1].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[1].clone()],
+                    ..trigger.clone()
                 }
             ]
         );
@@ -398,7 +375,7 @@ mod tests {
                 &env,
                 ConditionFilter::Timestamp {
                     start: None,
-                    end: Some(Timestamp::from_seconds(2500)),
+                    end: Some(env.block.time.plus_seconds(2500)),
                 },
                 None,
                 None
@@ -407,19 +384,13 @@ mod tests {
             vec![
                 Trigger {
                     id: 1,
-                    owner: owner.clone(),
-                    condition: conditions[0].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[0].clone()],
+                    ..trigger.clone()
                 },
                 Trigger {
                     id: 2,
-                    owner: owner.clone(),
-                    condition: conditions[1].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[1].clone()],
+                    ..trigger.clone()
                 }
             ]
         );
@@ -429,7 +400,7 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Timestamp {
-                    start: Some(Timestamp::from_seconds(0)),
+                    start: Some(env.block.time),
                     end: None,
                 },
                 None,
@@ -439,19 +410,13 @@ mod tests {
             vec![
                 Trigger {
                     id: 1,
-                    owner: owner.clone(),
-                    condition: conditions[0].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[0].clone()],
+                    ..trigger.clone()
                 },
                 Trigger {
                     id: 2,
-                    owner: owner.clone(),
-                    condition: conditions[1].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[1].clone()],
+                    ..trigger.clone()
                 }
             ]
         );
@@ -461,8 +426,8 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Timestamp {
-                    start: Some(Timestamp::from_seconds(500)),
-                    end: Some(Timestamp::from_seconds(1500)),
+                    start: Some(env.block.time.plus_seconds(500)),
+                    end: Some(env.block.time.plus_seconds(1500)),
                 },
                 None,
                 None
@@ -470,11 +435,8 @@ mod tests {
             .unwrap(),
             vec![Trigger {
                 id: 1,
-                owner: owner.clone(),
-                condition: conditions[0].clone(),
-                msg: msg.clone(),
-                to: to.clone(),
-                execution_rebate: execution_rebate.clone(),
+                conditions: vec![conditions[0].clone()],
+                ..trigger.clone()
             }]
         );
 
@@ -483,8 +445,8 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Timestamp {
-                    start: Some(Timestamp::from_seconds(1500)),
-                    end: Some(Timestamp::from_seconds(2500)),
+                    start: Some(env.block.time.plus_seconds(1500)),
+                    end: Some(env.block.time.plus_seconds(2500)),
                 },
                 None,
                 None
@@ -492,11 +454,8 @@ mod tests {
             .unwrap(),
             vec![Trigger {
                 id: 2,
-                owner: owner.clone(),
-                condition: conditions[1].clone(),
-                msg: msg.clone(),
-                to: to.clone(),
-                execution_rebate: execution_rebate.clone(),
+                conditions: vec![conditions[1].clone()],
+                ..trigger.clone()
             }]
         );
 
@@ -505,7 +464,7 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Timestamp {
-                    start: Some(Timestamp::from_seconds(2500)),
+                    start: Some(env.block.time.plus_seconds(2500)),
                     end: None,
                 },
                 None,
@@ -520,7 +479,7 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Timestamp {
-                    start: Some(Timestamp::from_seconds(2500)),
+                    start: Some(env.block.time.plus_seconds(2500)),
                     end: None,
                 },
                 None,
@@ -537,7 +496,7 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Timestamp {
-                    start: Some(Timestamp::from_seconds(2500)),
+                    start: Some(env.block.time.plus_seconds(2500)),
                     end: None,
                 },
                 None,
@@ -554,26 +513,21 @@ mod tests {
     fn fetches_triggers_by_block_height() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let owner = Addr::unchecked("owner");
-        let to = Addr::unchecked("to");
-        let msg = to_json_binary(&"test message").unwrap();
-        let execution_rebate = vec![Coin::new(1u128, "rune")];
 
         let conditions = vec![
-            Condition::BlockHeight { height: 1000 },
-            Condition::BlockHeight { height: 2000 },
+            Condition::BlocksCompleted(env.block.height + 1000),
+            Condition::BlocksCompleted(env.block.height + 2000),
         ];
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+        let trigger = default_trigger();
 
         for condition in conditions.clone() {
             save_trigger(
                 deps.as_mut().storage,
-                owner.clone(),
-                condition.clone(),
-                msg.clone(),
-                to.clone(),
-                execution_rebate.clone(),
+                Trigger {
+                    conditions: vec![condition.clone()],
+                    ..trigger.clone()
+                },
             )
             .unwrap();
         }
@@ -593,19 +547,13 @@ mod tests {
             vec![
                 Trigger {
                     id: 1,
-                    owner: owner.clone(),
-                    condition: conditions[0].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[0].clone()],
+                    ..trigger.clone()
                 },
                 Trigger {
                     id: 2,
-                    owner: owner.clone(),
-                    condition: conditions[1].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[1].clone()],
+                    ..trigger.clone()
                 }
             ]
         );
@@ -615,7 +563,7 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::BlockHeight {
-                    start: Some(0),
+                    start: Some(env.block.height),
                     end: None,
                 },
                 None,
@@ -625,19 +573,13 @@ mod tests {
             vec![
                 Trigger {
                     id: 1,
-                    owner: owner.clone(),
-                    condition: conditions[0].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[0].clone()],
+                    ..trigger.clone()
                 },
                 Trigger {
                     id: 2,
-                    owner: owner.clone(),
-                    condition: conditions[1].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[1].clone()],
+                    ..trigger.clone()
                 }
             ]
         );
@@ -648,7 +590,7 @@ mod tests {
                 &env,
                 ConditionFilter::BlockHeight {
                     start: None,
-                    end: Some(2500),
+                    end: Some(env.block.height + 2500),
                 },
                 None,
                 None
@@ -657,19 +599,13 @@ mod tests {
             vec![
                 Trigger {
                     id: 1,
-                    owner: owner.clone(),
-                    condition: conditions[0].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[0].clone()],
+                    ..trigger.clone()
                 },
                 Trigger {
                     id: 2,
-                    owner: owner.clone(),
-                    condition: conditions[1].clone(),
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![conditions[1].clone()],
+                    ..trigger.clone()
                 }
             ]
         );
@@ -679,8 +615,8 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::BlockHeight {
-                    start: Some(1000),
-                    end: Some(1500),
+                    start: Some(env.block.height + 1000),
+                    end: Some(env.block.height + 1500),
                 },
                 None,
                 Some(true)
@@ -696,8 +632,8 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::BlockHeight {
-                    start: Some(1000),
-                    end: Some(1500),
+                    start: Some(env.block.height + 1000),
+                    end: Some(env.block.height + 1500),
                 },
                 None,
                 Some(false)
@@ -710,26 +646,22 @@ mod tests {
     }
 
     #[test]
-    fn fetches_triggers_up_to_limit() {
+    fn fetches_triggers_with_limit() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let owner = Addr::unchecked("owner");
-        let to = Addr::unchecked("to");
-        let msg = to_json_binary(&"test message").unwrap();
-        let execution_rebate = vec![Coin::new(1u128, "rune")];
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+        let trigger = default_trigger();
 
         for i in 0..100 {
             save_trigger(
                 deps.as_mut().storage,
-                owner.clone(),
-                Condition::Timestamp {
-                    timestamp: Timestamp::from_seconds(i as u64),
+                Trigger {
+                    id: (i + 1) as u64,
+                    conditions: vec![Condition::TimestampElapsed(Timestamp::from_seconds(
+                        i * 100,
+                    ))],
+                    ..trigger.clone()
                 },
-                msg.clone(),
-                to.clone(),
-                execution_rebate.clone(),
             )
             .unwrap();
         }
@@ -739,22 +671,19 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Owner {
-                    address: owner.clone()
+                    address: trigger.owner.clone()
                 },
-                Some(10),
                 None,
+                None
             )
             .unwrap(),
-            (0..10)
+            (0..50)
                 .map(|i| Trigger {
                     id: (i + 1) as u64,
-                    owner: owner.clone(),
-                    condition: Condition::Timestamp {
-                        timestamp: Timestamp::from_seconds(i as u64),
-                    },
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![Condition::TimestampElapsed(Timestamp::from_seconds(
+                        i * 100,
+                    ))],
+                    ..trigger.clone()
                 })
                 .collect::<Vec<Trigger>>()
         );
@@ -764,22 +693,19 @@ mod tests {
                 deps.as_ref(),
                 &env,
                 ConditionFilter::Owner {
-                    address: owner.clone()
+                    address: trigger.owner.clone()
                 },
+                Some(10),
                 None,
-                None
             )
             .unwrap(),
-            (0..50)
+            (0..10)
                 .map(|i| Trigger {
                     id: (i + 1) as u64,
-                    owner: owner.clone(),
-                    condition: Condition::Timestamp {
-                        timestamp: Timestamp::from_seconds(i as u64),
-                    },
-                    msg: msg.clone(),
-                    to: to.clone(),
-                    execution_rebate: execution_rebate.clone(),
+                    conditions: vec![Condition::TimestampElapsed(Timestamp::from_seconds(
+                        i * 100 as u64,
+                    ))],
+                    ..trigger.clone()
                 })
                 .collect::<Vec<Trigger>>()
         );

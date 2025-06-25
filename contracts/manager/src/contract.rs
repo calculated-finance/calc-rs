@@ -89,7 +89,6 @@ pub fn execute(
                     contract_address: contract_address.clone(),
                     created_at: env.block.time.seconds(),
                     updated_at: env.block.time.seconds(),
-                    executions: 0,
                     label: label.clone(),
                     status: StrategyStatus::Active,
                     affiliates: Vec::new(),
@@ -122,7 +121,6 @@ pub fn execute(
                 deps.storage,
                 contract_address.clone(),
                 &Strategy {
-                    executions: strategy.executions + 1,
                     updated_at: env.block.time.seconds(),
                     ..strategy
                 },
@@ -351,7 +349,6 @@ mod tests {
             contract_address: contract_address.clone(),
             created_at: env.block.time.seconds(),
             updated_at: env.block.time.seconds(),
-            executions: 0,
             label: "Test Strategy".to_string(),
             status: StrategyStatus::Active,
             affiliates: Vec::new(),
