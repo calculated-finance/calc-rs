@@ -442,12 +442,13 @@ impl Schedule {
     pub fn into_condition(&self, env: &Env) -> Condition {
         match self {
             Schedule::Blocks { interval, previous } => {
-                let last_block = previous.unwrap_or(env.block.height);
+                let last_block = previous.unwrap_or(env.block.height - *interval);
                 Condition::BlocksCompleted(last_block + interval)
             }
             Schedule::Time { duration, previous } => {
-                let last_time =
-                    previous.unwrap_or(Timestamp::from_seconds(env.block.time.seconds()));
+                let last_time = previous.unwrap_or(Timestamp::from_seconds(
+                    env.block.time.seconds() - duration.as_secs(),
+                ));
                 Condition::TimestampElapsed(Timestamp::from_seconds(
                     last_time.seconds() + duration.as_secs(),
                 ))

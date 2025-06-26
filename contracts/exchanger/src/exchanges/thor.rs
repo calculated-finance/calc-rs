@@ -1261,7 +1261,7 @@ mod swap_tests {
                 .unwrap(),
             Response::default().add_message(MsgDeposit {
                 memo: format!(
-                    "=:{}:{}:{}",
+                    "=:{}:{}:{}:rj:10:calc-swap",
                     "THOR.RUNE".to_string(),
                     recipient.to_string(),
                     minimum_receive_amount.amount
@@ -1332,7 +1332,7 @@ mod swap_tests {
                 .unwrap(),
             Response::default().add_message(MsgDeposit {
                 memo: format!(
-                    "=:{}:{}:{}",
+                    "=:{}:{}:{}:rj:10:calc-swap",
                     secured_asset(
                         &layer_1_asset(&NativeAsset::new(&minimum_receive_amount.denom)).unwrap()
                     )

@@ -13,7 +13,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     instantiate2_address, to_json_binary, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps,
-    DepsMut, Env, MessageInfo, Response, StdResult, SubMsg, Uint128, WasmMsg,
+    DepsMut, Env, MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg,
 };
 
 use crate::state::{CONFIG, STATE, STATS};
@@ -171,6 +171,8 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
     }
 
     let mut config = CONFIG.load(deps.storage)?;
+
+    println!("Config: {:?}", config);
 
     if info.funds.len() > 1
         || (info.funds.len() == 1 && info.funds[0].denom != config.swap_amount.denom)
@@ -478,9 +480,15 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
         .add_events(events))
 }
 
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn reply(_deps: DepsMut, _env: Env, _reply: Reply) -> ContractResult {
+    Ok(Response::default())
+}
+
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: TwapQueryMsg) -> StdResult<Binary> {
     let config = CONFIG.load(deps.storage)?;
+
     match msg {
         TwapQueryMsg::Config {} => to_json_binary(&config),
     }
@@ -1263,7 +1271,7 @@ mod execute_tests {
         execute(
             deps.as_mut(),
             env.clone(),
-            message_info(&config.manager_contract, &[]),
+            message_info(&env.contract.address, &[]),
             TwapExecuteMsg::Clear {},
         )
         .unwrap();
