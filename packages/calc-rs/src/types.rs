@@ -15,6 +15,8 @@ use rujira_rs::{
 };
 use thiserror::Error;
 
+pub const DEPOSIT_FEE: u128 = 2_000_000; // 0.02 RUNE
+
 #[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
     #[error("{0}")]
@@ -163,7 +165,7 @@ pub struct AccumulateStatistics {
 }
 
 #[cw_serde]
-pub struct DistributeStatistics {
+pub struct DistributorStatistics {
     pub amount_distributed: HashMap<String, Vec<Coin>>,
     pub amount_withdrawn: Vec<Coin>,
 }
@@ -260,14 +262,14 @@ impl From<MsgDeposit> for CosmosMsg {
 pub enum Recipient {
     Bank { address: Addr },
     Wasm { address: Addr, msg: Binary },
-    Withdraw { address: String },
+    Deposit { memo: String },
 }
 
 impl Recipient {
-    pub fn address(&self) -> String {
+    pub fn key(&self) -> String {
         match self {
             Recipient::Bank { address } | Recipient::Wasm { address, .. } => address.to_string(),
-            Recipient::Withdraw { address } => address.clone(),
+            Recipient::Deposit { memo } => memo.clone(),
         }
     }
 }
@@ -299,8 +301,8 @@ impl Distribution {
                 funds: self.amount,
             }
             .into()),
-            Recipient::Withdraw { address, .. } => Ok(MsgDeposit {
-                memo: format!("SECURE-:{}", address),
+            Recipient::Deposit { memo } => Ok(MsgDeposit {
+                memo: memo,
                 coins: self.amount,
                 signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
             }
@@ -368,7 +370,7 @@ pub struct AccumulateStrategyConfig {
 }
 
 #[cw_serde]
-pub struct DistributeStrategyConfig {
+pub struct DistributorConfig {
     pub owner: Addr,
     pub denoms: Vec<String>,
     pub mutable_destinations: Vec<Destination>,
@@ -912,17 +914,24 @@ pub struct DistributorInstantiateMsg {
     pub immutable_destinations: Vec<Destination>,
 }
 
+pub trait Validate {
+    fn validate(&self) -> StdResult<()>;
+}
+
 #[cw_serde]
 pub enum DistributorExecuteMsg {
     Distribute {},
     Withdraw { amounts: Vec<Coin> },
+    Update(DistributorConfig),
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum DistributorQueryMsg {
-    #[returns(DistributeStrategyConfig)]
-    Config {},
+    #[returns(DistributorConfig)]
+    Config,
+    #[returns(DistributorStatistics)]
+    Statistics,
 }
 
 #[cw_serde]

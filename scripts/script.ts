@@ -583,7 +583,7 @@ const STRATEGY_ADDRESS =
 
 // uploadContractSuite();
 // fetchBalances(STRATEGY_ADDRESS);
-// getMyBalances();
+getMyBalances();
 // createStrategy();
 // getStrategy(STRATEGY_ADDRESS);
 // getStrategies();

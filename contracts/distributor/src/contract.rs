@@ -1,87 +1,30 @@
 use std::collections::HashMap;
 
 use calc_rs::types::{
-    ContractError, ContractResult, DistributeStatistics, DistributeStrategyConfig, Distribution,
-    DistributorExecuteMsg, DistributorQueryMsg, DomainEvent, Recipient,
+    ContractError, ContractResult, Distribution, DistributorConfig, DistributorExecuteMsg,
+    DistributorQueryMsg, DistributorStatistics, DomainEvent,
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, DepsMut, Env,
-    MessageInfo, Response, StdError, StdResult, Uint128,
+    MessageInfo, Response, StdResult, Uint128,
 };
 
-use crate::state::{CONFIG, STATISTICS};
+use crate::state::{get_config, save_config, STATISTICS};
 
 #[entry_point]
 pub fn instantiate(
-    deps: DepsMut,
-    _env: Env,
+    mut deps: DepsMut,
+    env: Env,
     _info: MessageInfo,
-    msg: DistributeStrategyConfig,
+    mut msg: DistributorConfig,
 ) -> ContractResult {
-    deps.api
-        .addr_validate(&msg.owner.to_string())
-        .map_err(|_| ContractError::generic_err(format!("Invalid owner address: {}", msg.owner)))?;
-
-    let destinations = msg
-        .mutable_destinations
-        .iter()
-        .chain(msg.immutable_destinations.iter())
-        .collect::<Vec<_>>();
-
-    if destinations.is_empty() {
-        return Err(ContractError::generic_err(
-            "Must provide at least one destination",
-        ));
-    }
-
-    if destinations.len() > 20 {
-        return Err(ContractError::generic_err(
-            "Cannot provide more than 20 total destinations",
-        ));
-    }
-
-    let has_native_denoms = msg.denoms.iter().any(|d| !d.contains("-"));
-    let mut total_shares = Uint128::zero();
-
-    for destination in destinations.clone() {
-        if destination.shares.is_zero() {
-            return Err(ContractError::generic_err(
-                "Shares for each destination must be greater than zero",
-            ));
-        }
-
-        match destination.recipient.clone() {
-            Recipient::Bank { address, .. } | Recipient::Wasm { address, .. } => {
-                deps.api.addr_validate(&address.to_string()).map_err(|_| {
-                    ContractError::generic_err(format!("Invalid destination address: {}", address))
-                })?;
-            }
-            Recipient::Withdraw { address, .. } => {
-                if has_native_denoms && !address.contains("thor") {
-                    return Err(ContractError::generic_err(format!(
-                        "Cannot distribute native assets to a non thor address: {}",
-                        address
-                    )));
-                }
-            }
-        }
-
-        total_shares += destination.shares;
-    }
-
-    if total_shares < Uint128::new(10_000) {
-        return Err(ContractError::generic_err(
-            "Total shares must be at least 10,000",
-        ));
-    }
-
-    CONFIG.save(deps.storage, &msg)?;
+    save_config(&mut deps, &env, &mut msg)?;
 
     STATISTICS.save(
         deps.storage,
-        &DistributeStatistics {
+        &DistributorStatistics {
             amount_distributed: HashMap::new(),
             amount_withdrawn: vec![],
         },
@@ -92,14 +35,28 @@ pub fn instantiate(
 
 #[entry_point]
 pub fn execute(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: DistributorExecuteMsg,
 ) -> ContractResult {
     match msg {
+        DistributorExecuteMsg::Update(config) => {
+            let current_config = get_config(deps.as_ref())?;
+
+            save_config(
+                &mut deps,
+                &env,
+                &mut DistributorConfig {
+                    immutable_destinations: current_config.immutable_destinations,
+                    ..config
+                },
+            )?;
+
+            Ok(Response::default())
+        }
         DistributorExecuteMsg::Distribute {} => {
-            let config = CONFIG.load(deps.storage)?;
+            let config = get_config(deps.as_ref())?;
 
             if !config
                 .conditions
@@ -111,6 +68,17 @@ pub fn execute(
 
             let mut distributions: Vec<Distribution> = vec![];
 
+            let destinations = config
+                .mutable_destinations
+                .iter()
+                .chain(config.immutable_destinations.iter());
+
+            let total_shares = destinations
+                .clone()
+                .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
+            let mut statistics = STATISTICS.load(deps.storage)?;
+
             for denom in config.denoms {
                 let balance = deps.querier.query_balance(&env.contract.address, &denom)?;
 
@@ -118,128 +86,99 @@ pub fn execute(
                     continue;
                 }
 
-                let destinations = config
-                    .mutable_destinations
-                    .iter()
-                    .chain(config.immutable_destinations.iter());
+                for destination in destinations.clone() {
+                    let distribution = Distribution {
+                        destination: destination.clone(),
+                        amount: vec![Coin {
+                            denom: balance.denom.clone(),
+                            amount: balance
+                                .amount
+                                .mul_floor(Decimal::from_ratio(destination.shares, total_shares)),
+                        }],
+                    };
 
-                let total_shares = destinations
-                    .clone()
-                    .fold(Uint128::zero(), |acc, d| acc + d.shares);
-
-                distributions.extend(
-                    destinations
-                        .map(|d| Distribution {
-                            destination: d.clone(),
-                            amount: vec![Coin {
-                                denom: balance.denom.clone(),
-                                amount: balance
-                                    .amount
-                                    .mul_floor(Decimal::from_ratio(d.shares, total_shares)),
-                            }],
+                    statistics
+                        .amount_distributed
+                        .entry(distribution.destination.recipient.key())
+                        .and_modify(|existing| {
+                            let mut coins =
+                                Coins::try_from(existing.as_ref()).unwrap_or(Coins::default());
+                            for c in distribution.amount.iter() {
+                                coins.add(c.clone()).unwrap_or(());
+                            }
                         })
-                        .collect::<Vec<Distribution>>(),
-                );
-            }
+                        .or_insert(distribution.amount.clone());
 
-            let distribution_event = DomainEvent::FundsDistributed {
-                contract_address: env.contract.address.clone(),
-                to: distributions.clone(),
-            };
-
-            let mut messages: Vec<CosmosMsg> = vec![];
-
-            let mut statistics = STATISTICS
-                .load(deps.storage)
-                .unwrap_or(DistributeStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
-                });
-
-            for distribution in distributions.into_iter() {
-                messages.push(distribution.clone().get_msg(deps.as_ref(), &env)?);
-
-                statistics
-                    .amount_distributed
-                    .entry(distribution.destination.recipient.address())
-                    .and_modify(|existing| {
-                        let mut coins =
-                            Coins::try_from(existing.as_ref()).unwrap_or(Coins::default());
-                        for c in distribution.amount.iter() {
-                            coins.add(c.clone()).unwrap_or(());
-                        }
-                    })
-                    .or_insert(distribution.amount.clone());
+                    distributions.push(distribution);
+                }
             }
 
             STATISTICS.save(deps.storage, &statistics)?;
 
+            let distribution_messages = distributions
+                .clone()
+                .into_iter()
+                .flat_map(|d| d.get_msg(deps.as_ref(), &env))
+                .collect::<Vec<CosmosMsg>>();
+
+            let funds_distributed_event = DomainEvent::FundsDistributed {
+                contract_address: env.contract.address,
+                to: distributions,
+            };
+
             Ok(Response::default()
-                .add_messages(messages)
-                .add_event(distribution_event))
+                .add_messages(distribution_messages)
+                .add_event(funds_distributed_event))
         }
         DistributorExecuteMsg::Withdraw { amounts } => {
-            let config = CONFIG.load(deps.storage)?;
+            let config = get_config(deps.as_ref())?;
 
             if config.owner != info.sender {
                 return Err(ContractError::Unauthorized {});
             }
 
-            let funds = amounts
-                .iter()
-                .filter_map(|amount| {
-                    match deps
-                        .querier
-                        .query_balance(env.contract.address.clone(), amount.denom.clone())
-                    {
-                        Ok(balance) => {
-                            if balance.amount < amount.amount {
-                                return Some(Err(StdError::generic_err(format!(
-                                    "Insufficient funds for withdrawal: {}",
-                                    amount.denom
-                                ))));
-                            }
-                            if balance.amount.is_zero() {
-                                return None;
-                            }
-                            Some(Ok(amount.clone()))
-                        }
-                        Err(e) => Some(Err(e)),
-                    }
-                })
-                .collect::<StdResult<Vec<Coin>>>()?;
+            let statistics = STATISTICS.load(deps.storage)?;
+
+            let mut withdrawals = Coins::default();
+            let mut amount_withdrawn = Coins::try_from(statistics.amount_withdrawn)?;
+
+            for amount in amounts.clone() {
+                let balance = deps
+                    .querier
+                    .query_balance(env.contract.address.clone(), amount.denom.clone())?;
+
+                if balance.amount.is_zero() {
+                    continue;
+                }
+
+                let withdrawal = if balance.amount < amount.amount {
+                    balance
+                } else {
+                    amount
+                };
+
+                withdrawals.add(withdrawal.clone()).unwrap_or(());
+                amount_withdrawn.add(withdrawal.clone()).unwrap_or(());
+            }
+
+            STATISTICS.save(
+                deps.storage,
+                &DistributorStatistics {
+                    amount_withdrawn: amount_withdrawn.into_vec(),
+                    ..statistics
+                },
+            )?;
 
             let send_assets_msg = BankMsg::Send {
                 to_address: config.owner.to_string(),
-                amount: funds.clone(),
+                amount: withdrawals.to_vec(),
             };
 
             let funds_withdrawn_event = DomainEvent::FundsWithdrawn {
                 contract_address: env.contract.address.clone(),
                 to: config.owner.clone(),
-                funds,
+                funds: withdrawals.to_vec(),
             };
-
-            let statistics = STATISTICS
-                .load(deps.storage)
-                .unwrap_or(DistributeStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
-                });
-
-            let mut amount_withdrawn = Coins::try_from(statistics.amount_withdrawn)?;
-
-            for amount in amounts.iter() {
-                amount_withdrawn.add(amount.clone()).unwrap_or(());
-            }
-
-            STATISTICS.save(
-                deps.storage,
-                &DistributeStatistics {
-                    amount_withdrawn: amount_withdrawn.into_vec(),
-                    ..statistics
-                },
-            )?;
 
             Ok(Response::default()
                 .add_message(send_assets_msg)
@@ -251,163 +190,109 @@ pub fn execute(
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: DistributorQueryMsg) -> StdResult<Binary> {
     match msg {
-        DistributorQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
-    }
-}
-
-#[cfg(test)]
-fn default_destination() -> calc_rs::types::Destination {
-    calc_rs::types::Destination {
-        shares: Uint128::new(10000),
-        recipient: Recipient::Bank {
-            address: cosmwasm_std::testing::mock_dependencies()
-                .api
-                .addr_make("destination1"),
-        },
-        label: None,
-    }
-}
-
-#[cfg(test)]
-fn default_config() -> DistributeStrategyConfig {
-    DistributeStrategyConfig {
-        owner: cosmwasm_std::testing::mock_dependencies()
-            .api
-            .addr_make("owner"),
-        denoms: vec!["rune".to_string()],
-        mutable_destinations: vec![default_destination()],
-        immutable_destinations: vec![default_destination()],
-        conditions: vec![],
+        DistributorQueryMsg::Config {} => to_json_binary(&get_config(deps)?),
+        DistributorQueryMsg::Statistics {} => to_json_binary(&STATISTICS.load(deps.storage)?),
     }
 }
 
 #[cfg(test)]
 mod instantiate_tests {
+    use crate::test::default_config;
+
     use super::*;
-    use calc_rs::types::Destination;
-    use cosmwasm_std::{
-        testing::{message_info, mock_dependencies, mock_env},
-        Addr,
-    };
-    use rstest::rstest;
+    use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
 
-    #[rstest]
-    #[case(
-        DistributeStrategyConfig {
-            owner: Addr::unchecked("owner"),
-            ..default_config()
-        },
-        "Generic error: Invalid owner address: owner"
-    )]
-    #[case(
-        DistributeStrategyConfig {
-            mutable_destinations: vec![],
-            immutable_destinations: vec![],
-            ..default_config()
-        },
-        "Generic error: Must provide at least one destination"
-    )]
-    #[case(
-        DistributeStrategyConfig {
-            mutable_destinations: (0..30).map(|_| default_destination()).collect(),
-            ..default_config()
-        },
-        "Generic error: Cannot provide more than 20 total destinations"
-    )]
-    #[case(
-        DistributeStrategyConfig {
-            mutable_destinations: vec![
-                Destination {
-                    shares: Uint128::zero(),
-                    ..default_destination()
-                },
-                Destination {
-                    shares: Uint128::new(10_000),
-                    ..default_destination()
-                }
-            ],
-            immutable_destinations: vec![],
-            ..default_config()
-        },
-        "Generic error: Shares for each destination must be greater than zero"
-    )]
-    #[case(
-        DistributeStrategyConfig {
-            mutable_destinations: vec![Destination {
-                shares: Uint128::new(10_000),
-                recipient: Recipient::Bank {
-                    address: Addr::unchecked("invalid_address"),
-                },
-                ..default_destination()
-            }],
-            immutable_destinations: vec![],
-            ..default_config()
-        },
-        "Generic error: Invalid destination address: invalid_address"
-    )]
-    #[case(
-        DistributeStrategyConfig {
-            mutable_destinations: vec![Destination {
-                shares: Uint128::new(10_000),
-                recipient: Recipient::Withdraw {
-                    address: "evm-address".to_string(),
-                },
-                ..default_destination()
-            }],
-            immutable_destinations: vec![],
-            denoms: vec!["rune".to_string(), "eth-eth".to_string()],
-            ..default_config()
-        },
-        "Generic error: Cannot distribute native assets to a non thor address: evm-address"
-    )]
-    #[case(
-        DistributeStrategyConfig {
-            mutable_destinations: vec![Destination {
-                shares: Uint128::new(5000),
-                ..default_destination()
-            }],
-            immutable_destinations: vec![],
-            ..default_config()
-        },
-        "Generic error: Total shares must be at least 10,000"
-    )]
-    fn invalid_config_fails(#[case] msg: DistributeStrategyConfig, #[case] expected_error: &str) {
+    #[test]
+    fn saves_config_and_statistics() {
         let mut deps = mock_dependencies();
+        let env = mock_env();
 
-        assert_eq!(
-            instantiate(
-                deps.as_mut(),
-                mock_env(),
-                message_info(&msg.owner, &[]),
-                msg
-            )
-            .unwrap_err()
-            .to_string(),
-            expected_error
-        );
-    }
-
-    #[rstest]
-    fn valid_config_succeeds() {
-        let mut deps = mock_dependencies();
         let msg = default_config();
 
         instantiate(
             deps.as_mut(),
-            mock_env(),
+            env,
             message_info(&msg.owner, &[]),
             msg.clone(),
         )
         .unwrap();
 
-        assert_eq!(CONFIG.load(&deps.storage).unwrap(), msg);
+        let config = get_config(deps.as_ref()).unwrap();
+        assert_eq!(config, msg);
+
+        let statistics = STATISTICS.load(deps.as_ref().storage).unwrap();
+        assert_eq!(
+            statistics,
+            DistributorStatistics {
+                amount_distributed: HashMap::new(),
+                amount_withdrawn: vec![],
+            }
+        );
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use crate::test::default_config;
+
+    use super::*;
+    use calc_rs::types::{Destination, Recipient};
+    use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+    #[test]
+    fn updates_config() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let mut config = default_config();
+        save_config(&mut deps.as_mut(), &env, &mut config).unwrap();
+
+        let new_config = DistributorConfig {
+            owner: deps.api.addr_make(&"new-owner"),
+            mutable_destinations: vec![Destination {
+                shares: Uint128::new(483723423),
+                recipient: Recipient::Bank {
+                    address: deps.api.addr_make(&"new-destination"),
+                },
+                label: Some("new-label".to_string()),
+            }],
+            immutable_destinations: vec![Destination {
+                shares: Uint128::new(735243223),
+                recipient: Recipient::Deposit {
+                    memo: "new-memo".to_string(),
+                },
+                label: Some("new-label".to_string()),
+            }],
+            conditions: vec![],
+            ..config
+        };
+
+        execute(
+            deps.as_mut(),
+            env,
+            message_info(&config.owner, &[]),
+            DistributorExecuteMsg::Update(new_config.clone()),
+        )
+        .unwrap();
+
+        let updated_config = get_config(deps.as_ref()).unwrap();
+
+        assert_eq!(
+            updated_config,
+            DistributorConfig {
+                immutable_destinations: config.immutable_destinations,
+                ..new_config
+            }
+        );
     }
 }
 
 #[cfg(test)]
 mod distribute_tests {
+    use crate::test::default_config;
+
     use super::*;
-    use calc_rs::types::{Condition, Destination, MsgDeposit};
+    use calc_rs::types::{Condition, Destination, MsgDeposit, Recipient, DEPOSIT_FEE};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr, CosmosMsg, Event, SubMsg, WasmMsg,
@@ -419,7 +304,7 @@ mod distribute_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let config = DistributeStrategyConfig {
+        let mut config = DistributorConfig {
             conditions: vec![Condition::BalanceMet {
                 address: env.contract.address.clone(),
                 balance: Coin::new(1_000_u128, "rune"),
@@ -427,7 +312,7 @@ mod distribute_tests {
             ..default_config()
         };
 
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
+        save_config(&mut deps.as_mut(), &mock_env(), &mut config).unwrap();
 
         deps.querier
             .bank
@@ -449,7 +334,7 @@ mod distribute_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let config = DistributeStrategyConfig {
+        let mut config = DistributorConfig {
             conditions: vec![Condition::BalanceMet {
                 address: env.contract.address.clone(),
                 balance: Coin::new(1_000_u128, "rune"),
@@ -457,7 +342,17 @@ mod distribute_tests {
             ..default_config()
         };
 
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
+        STATISTICS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        save_config(&mut deps.as_mut(), &env, &mut config).unwrap();
 
         let balance = Coin::new(1_000_u128, "rune");
 
@@ -507,107 +402,107 @@ mod distribute_tests {
     #[rstest]
     #[case(
         0_u128,
-        vec![(Addr::unchecked("destination1"), 10_000, None)],
+        vec![("destination1".to_string(), 10_000, None)],
         vec![],
         vec![],
     )]
     #[case(
         0_u128,
-        vec![(Addr::unchecked("destination1"), 10_000, Some(to_json_binary(&"test").unwrap()))],
+        vec![("destination1".to_string(), 10_000, Some(to_json_binary(&"test").unwrap()))],
         vec![],
         vec![],
     )]
     #[case(
         10_000_u128,
-        vec![(Addr::unchecked("destination1"), 10_000, Some(to_json_binary(&"test").unwrap()))],
+        vec![("destination1".to_string(), 10_000, Some(to_json_binary(&"test").unwrap()))],
         vec![],
-        vec![(Addr::unchecked("destination1"), 10_000, Some(to_json_binary(&"test").unwrap()))],
+        vec![("destination1".to_string(), 10_000, Some(to_json_binary(&"test").unwrap()))],
     )]
     #[case(
         10_000_u128,
-        vec![(Addr::unchecked("destination1"), 10_000, None)],
+        vec![("destination1".to_string(), 10_000, None)],
         vec![],
-        vec![(Addr::unchecked("destination1"), 10_000, None)],
+        vec![("destination1".to_string(), 10_000, None)],
     )]
     #[case(
         10_000_u128,
-        vec![(Addr::unchecked("destination1"), 10_000, None)],
-        vec![(Addr::unchecked("destination2"), 10_000, None)],
+        vec![("destination1".to_string(), 10_000, None)],
+        vec![("destination2".to_string(), 10_000, None)],
         vec![
-            (Addr::unchecked("destination1"), 5_000, None),
-            (Addr::unchecked("destination2"), 5_000, None)
+            ("destination1".to_string(), 5_000, None),
+            ("destination2".to_string(), 5_000, None)
         ],
     )]
     #[case(
         10_000_u128,
-        vec![(Addr::unchecked("destination1"), 5_000, None)],
-        vec![(Addr::unchecked("destination2"), 5_000, None)],
+        vec![("destination1".to_string(), 5_000, None)],
+        vec![("destination2".to_string(), 5_000, None)],
         vec![
-            (Addr::unchecked("destination1"), 5_000, None),
-            (Addr::unchecked("destination2"), 5_000, None)
+            ("destination1".to_string(), 5_000, None),
+            ("destination2".to_string(), 5_000, None)
         ],
     )]
     #[case(
         10,
         vec![
-            (Addr::unchecked("destination1"), 5_000, None),
-            (Addr::unchecked("destination2"), 5_000, None),
-            (Addr::unchecked("destination3"), 5_000, Some(to_json_binary(&"test").unwrap())),
+            ("destination1".to_string(), 5_000, None),
+            ("destination2".to_string(), 5_000, None),
+            ("destination3".to_string(), 5_000, Some(to_json_binary(&"test").unwrap())),
         ],
         vec![],
         vec![
-            (Addr::unchecked("destination1"), 3, None),
-            (Addr::unchecked("destination2"), 3, None),
-            (Addr::unchecked("destination3"), 3, Some(to_json_binary(&"test").unwrap()))
+            ("destination1".to_string(), 3, None),
+            ("destination2".to_string(), 3, None),
+            ("destination3".to_string(), 3, Some(to_json_binary(&"test").unwrap()))
         ],
     )]
     #[case(
         11,
         vec![
-            (Addr::unchecked("destination1"), 5_000, None),
-            (Addr::unchecked("destination2"), 5_000, None),
-            (Addr::unchecked("destination3"), 5_000, Some(to_json_binary(&"test").unwrap())),
+            ("destination1".to_string(), 5_000, None),
+            ("destination2".to_string(), 5_000, None),
+            ("destination3".to_string(), 5_000, Some(to_json_binary(&"test").unwrap())),
         ],
         vec![],
         vec![
-            (Addr::unchecked("destination1"), 3, None),
-            (Addr::unchecked("destination2"), 3, None),
-            (Addr::unchecked("destination3"), 3, Some(to_json_binary(&"test").unwrap()))
+            ("destination1".to_string(), 3, None),
+            ("destination2".to_string(), 3, None),
+            ("destination3".to_string(), 3, Some(to_json_binary(&"test").unwrap()))
         ],
     )]
     #[case(
         12,
         vec![
-            (Addr::unchecked("destination1"), 5_000, None),
-            (Addr::unchecked("destination2"), 5_000, None),
-            (Addr::unchecked("destination3"), 5_000, Some(to_json_binary(&"test").unwrap())),
+            ("destination1".to_string(), 5_000, None),
+            ("destination2".to_string(), 5_000, None),
+            ("destination3".to_string(), 5_000, Some(to_json_binary(&"test").unwrap())),
         ],
         vec![],
         vec![
-            (Addr::unchecked("destination1"), 3, None),
-            (Addr::unchecked("destination2"), 3, None),
-            (Addr::unchecked("destination3"), 3, Some(to_json_binary(&"test").unwrap()))
+            ("destination1".to_string(), 3, None),
+            ("destination2".to_string(), 3, None),
+            ("destination3".to_string(), 3, Some(to_json_binary(&"test").unwrap()))
         ],
     )]
     #[case(
         13,
         vec![
-            (Addr::unchecked("destination1"), 5_000, None),
-            (Addr::unchecked("destination2"), 5_000, None),
-            (Addr::unchecked("destination3"), 5_000, Some(to_json_binary(&"test").unwrap())),
+            ("destination1".to_string(), 5_000, None),
+            ("destination2".to_string(), 5_000, None),
+            ("destination3".to_string(), 5_000, Some(to_json_binary(&"test").unwrap())),
         ],
         vec![],
         vec![
-            (Addr::unchecked("destination1"), 4, None),
-            (Addr::unchecked("destination2"), 4, None),
-            (Addr::unchecked("destination3"), 4, Some(to_json_binary(&"test").unwrap())),
+            ("destination1".to_string(), 4, None),
+            ("destination2".to_string(), 4, None),
+            ("destination3".to_string(), 4, Some(to_json_binary(&"test").unwrap())),
         ],
     )]
     fn distributes_funds_correctly(
         #[case] balance: u128,
-        #[case] mutable_destinations: Vec<(Addr, u128, Option<Binary>)>,
-        #[case] immutable_destinations: Vec<(Addr, u128, Option<Binary>)>,
-        #[case] distributions: Vec<(Addr, u128, Option<Binary>)>,
+        #[case] mutable_destinations: Vec<(String, u128, Option<Binary>)>,
+        #[case] immutable_destinations: Vec<(String, u128, Option<Binary>)>,
+        #[case] distributions: Vec<(String, u128, Option<Binary>)>,
     ) {
         let mut deps = mock_dependencies();
         let env = mock_env();
@@ -616,51 +511,67 @@ mod distribute_tests {
             .bank
             .update_balance(&env.contract.address, vec![Coin::new(balance, "rune")]);
 
-        CONFIG
+        save_config(
+            &mut deps.as_mut(),
+            &env,
+            &mut DistributorConfig {
+                mutable_destinations: mutable_destinations
+                    .clone()
+                    .into_iter()
+                    .map(|(addr, shares, msg)| {
+                        msg.map_or(
+                            Destination {
+                                recipient: Recipient::Bank {
+                                    address: mock_dependencies().api.addr_make(&addr),
+                                },
+                                shares: Uint128::new(shares),
+                                label: None,
+                            },
+                            |msg| Destination {
+                                shares: Uint128::new(shares),
+                                recipient: Recipient::Wasm {
+                                    address: mock_dependencies().api.addr_make(&addr),
+                                    msg,
+                                },
+                                label: None,
+                            },
+                        )
+                    })
+                    .collect(),
+                immutable_destinations: immutable_destinations
+                    .clone()
+                    .into_iter()
+                    .map(|(addr, shares, msg)| {
+                        msg.map_or(
+                            Destination {
+                                recipient: Recipient::Bank {
+                                    address: mock_dependencies().api.addr_make(&addr),
+                                },
+                                shares: Uint128::new(shares),
+                                label: None,
+                            },
+                            |msg| Destination {
+                                shares: Uint128::new(shares),
+                                recipient: Recipient::Wasm {
+                                    address: mock_dependencies().api.addr_make(&addr),
+                                    msg,
+                                },
+                                label: None,
+                            },
+                        )
+                    })
+                    .collect(),
+                ..default_config()
+            },
+        )
+        .unwrap();
+
+        STATISTICS
             .save(
                 deps.as_mut().storage,
-                &DistributeStrategyConfig {
-                    mutable_destinations: mutable_destinations
-                        .clone()
-                        .into_iter()
-                        .map(|(addr, shares, msg)| {
-                            msg.map_or(
-                                Destination {
-                                    recipient: Recipient::Bank {
-                                        address: addr.clone(),
-                                    },
-                                    shares: Uint128::new(shares),
-                                    label: None,
-                                },
-                                |msg| Destination {
-                                    shares: Uint128::new(shares),
-                                    recipient: Recipient::Wasm { address: addr, msg },
-                                    label: None,
-                                },
-                            )
-                        })
-                        .collect(),
-                    immutable_destinations: immutable_destinations
-                        .clone()
-                        .into_iter()
-                        .map(|(addr, shares, msg)| {
-                            msg.map_or(
-                                Destination {
-                                    recipient: Recipient::Bank {
-                                        address: addr.clone(),
-                                    },
-                                    shares: Uint128::new(shares),
-                                    label: None,
-                                },
-                                |msg| Destination {
-                                    shares: Uint128::new(shares),
-                                    recipient: Recipient::Wasm { address: addr, msg },
-                                    label: None,
-                                },
-                            )
-                        })
-                        .collect(),
-                    ..default_config()
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -681,13 +592,13 @@ mod distribute_tests {
                 .map(
                     |(addr, shares, msg)| SubMsg::reply_never(if let Some(msg) = msg {
                         CosmosMsg::Wasm(WasmMsg::Execute {
-                            contract_addr: addr.to_string(),
+                            contract_addr: deps.api.addr_make(&addr).to_string(),
                             msg,
                             funds: vec![Coin::new(shares, "rune")],
                         })
                     } else {
                         CosmosMsg::Bank(BankMsg::Send {
-                            to_address: addr.to_string(),
+                            to_address: deps.api.addr_make(&addr).to_string(),
                             amount: vec![Coin::new(shares, "rune")],
                         })
                     })
@@ -711,14 +622,17 @@ mod distribute_tests {
                         destination: msg.map_or(
                             Destination {
                                 recipient: Recipient::Bank {
-                                    address: addr.clone()
+                                    address: deps.api.addr_make(&addr)
                                 },
                                 shares: Uint128::new(destinations[i].1),
                                 label: None,
                             },
                             |msg| Destination {
                                 shares: Uint128::new(destinations[i].1),
-                                recipient: Recipient::Wasm { address: addr, msg },
+                                recipient: Recipient::Wasm {
+                                    address: deps.api.addr_make(&addr),
+                                    msg
+                                },
                                 label: None,
                             },
                         ),
@@ -739,11 +653,11 @@ mod distribute_tests {
 
         let recipient_address = "evm-address".to_string();
 
-        let config = DistributeStrategyConfig {
+        let mut config = DistributorConfig {
             mutable_destinations: vec![Destination {
                 shares: Uint128::new(10_000),
-                recipient: Recipient::Withdraw {
-                    address: recipient_address.clone(),
+                recipient: Recipient::Deposit {
+                    memo: format!("SECURE-:{}", recipient_address),
                 },
                 label: None,
             }],
@@ -752,11 +666,24 @@ mod distribute_tests {
             ..default_config()
         };
 
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
+        save_config(&mut deps.as_mut(), &env, &mut config).unwrap();
+
+        STATISTICS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
 
         deps.querier.bank.update_balance(
             &env.contract.address,
-            vec![Coin::new(1_000_u128, "eth-eth")],
+            vec![
+                Coin::new(1_000_u128, "eth-eth"),
+                Coin::new(DEPOSIT_FEE, "rune"),
+            ],
         );
 
         let response = execute(
@@ -786,19 +713,22 @@ mod distribute_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let config = DistributeStrategyConfig {
+        let address_1 = deps.api.addr_make("destination1");
+        let address_2 = deps.api.addr_make("destination2");
+
+        let mut config = DistributorConfig {
             mutable_destinations: vec![
                 Destination {
                     shares: Uint128::new(10_000),
                     recipient: Recipient::Bank {
-                        address: Addr::unchecked("destination1"),
+                        address: address_1.clone(),
                     },
                     label: None,
                 },
                 Destination {
                     shares: Uint128::new(10_000),
                     recipient: Recipient::Bank {
-                        address: Addr::unchecked("destination2"),
+                        address: address_2.clone(),
                     },
                     label: None,
                 },
@@ -808,7 +738,17 @@ mod distribute_tests {
             ..default_config()
         };
 
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
+        save_config(&mut deps.as_mut(), &env, &mut config).unwrap();
+
+        STATISTICS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
 
         deps.querier.bank.update_balance(
             &env.contract.address,
@@ -830,19 +770,19 @@ mod distribute_tests {
             response.messages,
             vec![
                 SubMsg::reply_never(CosmosMsg::Bank(BankMsg::Send {
-                    to_address: "destination1".to_string(),
+                    to_address: address_1.to_string(),
                     amount: vec![Coin::new(500_u128, "rune")],
                 })),
                 SubMsg::reply_never(CosmosMsg::Bank(BankMsg::Send {
-                    to_address: "destination2".to_string(),
+                    to_address: address_2.to_string(),
                     amount: vec![Coin::new(500_u128, "rune")],
                 })),
                 SubMsg::reply_never(CosmosMsg::Bank(BankMsg::Send {
-                    to_address: "destination1".to_string(),
+                    to_address: address_1.to_string(),
                     amount: vec![Coin::new(250_u128, "btc-btc")],
                 })),
                 SubMsg::reply_never(CosmosMsg::Bank(BankMsg::Send {
-                    to_address: "destination2".to_string(),
+                    to_address: address_2.to_string(),
                     amount: vec![Coin::new(250_u128, "btc-btc")],
                 })),
             ]
@@ -854,11 +794,13 @@ mod distribute_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let bank_recipient = Addr::unchecked("destination1");
-        let wasm_recipient = Addr::unchecked("destination2");
+        let bank_recipient = deps.api.addr_make("destination1");
+        let wasm_recipient = deps.api.addr_make("destination2");
         let deposit_recipient = "evm-address".to_string();
+        let denom = "eth-eth".to_string();
 
-        let config = DistributeStrategyConfig {
+        let mut config = DistributorConfig {
+            denoms: vec![denom.clone()],
             mutable_destinations: vec![
                 Destination {
                     shares: Uint128::new(10_000),
@@ -877,8 +819,8 @@ mod distribute_tests {
                 },
                 Destination {
                     shares: Uint128::new(10_000),
-                    recipient: Recipient::Withdraw {
-                        address: deposit_recipient.clone(),
+                    recipient: Recipient::Deposit {
+                        memo: format!("SECURE-:{}", deposit_recipient),
                     },
                     label: None,
                 },
@@ -887,13 +829,34 @@ mod distribute_tests {
             ..default_config()
         };
 
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
+        save_config(&mut deps.as_mut(), &env, &mut config).unwrap();
 
-        let balance = Coin::new(1_000_u128, "rune");
+        STATISTICS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
 
-        deps.querier
-            .bank
-            .update_balance(&env.contract.address, vec![balance.clone()]);
+        let balance = Coin::new(1_000_u128, denom.clone());
+
+        deps.querier.bank.update_balance(
+            &env.contract.address,
+            vec![balance.clone(), Coin::new(DEPOSIT_FEE, "rune")],
+        );
+
+        STATISTICS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
 
         execute(
             deps.as_mut(),
@@ -905,31 +868,30 @@ mod distribute_tests {
 
         let statistics = STATISTICS.load(deps.as_mut().storage).unwrap();
 
+        let destinations = config
+            .mutable_destinations
+            .into_iter()
+            .chain(config.immutable_destinations.into_iter())
+            .collect::<Vec<_>>();
+
+        let total_shares = destinations
+            .iter()
+            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
         assert_eq!(
             statistics.amount_distributed,
-            HashMap::from([
-                (
-                    bank_recipient.to_string(),
+            destinations
+                .iter()
+                .map(|d| (
+                    d.recipient.key(),
                     vec![Coin::new(
-                        balance.amount.mul_floor(Decimal::from_ratio(1u128, 3u128)),
-                        "rune"
+                        balance
+                            .amount
+                            .mul_floor(Decimal::from_ratio(d.shares, total_shares)),
+                        denom.clone()
                     )]
-                ),
-                (
-                    deposit_recipient.to_string(),
-                    vec![Coin::new(
-                        balance.amount.mul_floor(Decimal::from_ratio(1u128, 3u128)),
-                        "rune"
-                    )]
-                ),
-                (
-                    wasm_recipient.to_string(),
-                    vec![Coin::new(
-                        balance.amount.mul_floor(Decimal::from_ratio(1u128, 3u128)),
-                        "rune"
-                    )]
-                ),
-            ])
+                ))
+                .collect::<HashMap<_, _>>()
         );
     }
 
@@ -938,7 +900,7 @@ mod distribute_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let config = DistributeStrategyConfig {
+        let mut config = DistributorConfig {
             conditions: vec![Condition::BalanceMet {
                 address: env.contract.address.clone(),
                 balance: Coin::new(1_000_u128, "rune"),
@@ -946,7 +908,17 @@ mod distribute_tests {
             ..default_config()
         };
 
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
+        save_config(&mut deps.as_mut(), &env, &mut config).unwrap();
+
+        STATISTICS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
 
         let balance = Coin::new(1_000_u128, "rune");
 
@@ -1000,6 +972,8 @@ mod distribute_tests {
 
 #[cfg(test)]
 mod withdraw_tests {
+    use crate::test::default_config;
+
     use super::*;
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
@@ -1011,9 +985,7 @@ mod withdraw_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        CONFIG
-            .save(deps.as_mut().storage, &default_config())
-            .unwrap();
+        save_config(&mut deps.as_mut(), &env, &mut default_config()).unwrap();
 
         let response = execute(
             deps.as_mut(),
@@ -1036,9 +1008,19 @@ mod withdraw_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let config = default_config();
+        let mut config = default_config();
 
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
+        save_config(&mut deps.as_mut(), &env, &mut config).unwrap();
+
+        STATISTICS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
 
         deps.querier.bank.update_balance(
             &env.contract.address,
