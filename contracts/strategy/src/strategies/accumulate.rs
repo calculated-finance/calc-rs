@@ -1,11 +1,10 @@
 use std::cmp::min;
 
 use calc_rs::types::{
-    AccumulateStatistics, AccumulateStrategyConfig, Affiliate, Callback, Condition,
-    ConditionFilter, Contract, ContractError, ContractResult, CreateTrigger, Destination,
-    Distribution, DomainEvent, ExchangeExecuteMsg, ManagerExecuteMsg, ManagerQueryMsg, Schedule,
-    SchedulerExecuteMsg, SchedulerQueryMsg, Strategy, StrategyConfig, StrategyExecuteMsg,
-    StrategyStatistics, StrategyStatus, Trigger,
+    Affiliate, Callback, Condition, ConditionFilter, Contract, ContractError, ContractResult,
+    CreateTrigger, Destination, Distribution, DomainEvent, ExchangeExecuteMsg, ManagerExecuteMsg,
+    ManagerQueryMsg, Schedule, SchedulerExecuteMsg, SchedulerQueryMsg, Strategy, StrategyConfig,
+    StrategyExecuteMsg, StrategyStatistics, StrategyStatus, Trigger, TwapConfig, TwapStatistics,
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -28,7 +27,7 @@ pub enum AccumulateExecuteMsg {
     Distribute {},
 }
 
-fn get_swap_amount(deps: Deps, env: &Env, strategy: &AccumulateStrategyConfig) -> StdResult<Coin> {
+fn get_swap_amount(deps: Deps, env: &Env, strategy: &TwapConfig) -> StdResult<Coin> {
     let balance = deps.querier.query_balance(
         env.contract.address.clone(),
         strategy.swap_amount.denom.clone(),
@@ -40,12 +39,8 @@ fn get_swap_amount(deps: Deps, env: &Env, strategy: &AccumulateStrategyConfig) -
     })
 }
 
-fn get_schedule_msg(
-    strategy: &AccumulateStrategyConfig,
-    deps: Deps,
-    env: &Env,
-) -> StdResult<SubMsg> {
-    let condition = match strategy.schedule {
+fn get_schedule_msg(strategy: &TwapConfig, deps: Deps, env: &Env) -> StdResult<SubMsg> {
+    let condition = match strategy.swap_cadence {
         Schedule::Blocks { interval, previous } => Condition::BlocksCompleted {
             height: previous.unwrap_or(env.block.height) + interval,
         },
@@ -71,11 +66,7 @@ fn get_schedule_msg(
     Ok(SubMsg::reply_always(set_triggers_msg, SCHEDULE_REPLY_ID))
 }
 
-fn get_distributions(
-    deps: Deps,
-    env: &Env,
-    strategy: &AccumulateStrategyConfig,
-) -> StdResult<Vec<Distribution>> {
+fn get_distributions(deps: Deps, env: &Env, strategy: &TwapConfig) -> StdResult<Vec<Distribution>> {
     let receive_denom_balance = deps.querier.query_balance(
         env.contract.address.clone(),
         strategy.minimum_receive_amount.denom.clone(),
@@ -103,7 +94,7 @@ fn get_distributions(
         .collect::<Vec<Distribution>>())
 }
 
-impl Runnable for AccumulateStrategyConfig {
+impl Runnable for TwapConfig {
     fn instantiate(&mut self, deps: Deps, env: &Env, _info: &MessageInfo) -> ContractResult {
         let total_shares = self
             .mutable_destinations
@@ -148,7 +139,7 @@ impl Runnable for AccumulateStrategyConfig {
         self.immutable_destinations =
             [fee_destinations, self.immutable_destinations.clone()].concat();
 
-        self.statistics = AccumulateStatistics {
+        self.statistics = TwapStatistics {
             amount_swapped: Coin {
                 denom: self.swap_amount.denom.clone(),
                 amount: Uint128::zero(),
@@ -165,7 +156,7 @@ impl Runnable for AccumulateStrategyConfig {
 
         let strategy_instantiated_event = DomainEvent::StrategyInstantiated {
             contract_address: env.contract.address.clone(),
-            config: StrategyConfig::Accumulate(self.clone()),
+            config: StrategyConfig::Twap(self.clone()),
         };
 
         let mut messages: Vec<CosmosMsg> = vec![];
@@ -252,7 +243,7 @@ impl Runnable for AccumulateStrategyConfig {
 
     fn update(&mut self, deps: Deps, env: &Env, update: StrategyConfig) -> ContractResult {
         match update {
-            StrategyConfig::Accumulate(update) => {
+            StrategyConfig::Twap(update) => {
                 if (update.swap_amount.denom != self.swap_amount.denom)
                     || (update.minimum_receive_amount.denom != self.minimum_receive_amount.denom)
                 {
@@ -282,7 +273,7 @@ impl Runnable for AccumulateStrategyConfig {
 
                 self.swap_amount = update.swap_amount;
                 self.minimum_receive_amount = update.minimum_receive_amount;
-                self.schedule = update.schedule;
+                self.swap_cadence = update.swap_cadence;
                 self.mutable_destinations = update.mutable_destinations;
                 self.execution_rebate = update.execution_rebate;
 
@@ -290,7 +281,7 @@ impl Runnable for AccumulateStrategyConfig {
 
                 let mut sub_messages: Vec<SubMsg> = vec![];
 
-                if previous_config.schedule != self.schedule {
+                if previous_config.swap_cadence != self.swap_cadence {
                     let schedule_msg = get_schedule_msg(self, deps, &env)?;
 
                     sub_messages.push(schedule_msg);
@@ -298,8 +289,8 @@ impl Runnable for AccumulateStrategyConfig {
 
                 let strategy_updated_event = DomainEvent::StrategyUpdated {
                     contract_address: env.contract.address.clone(),
-                    old_config: StrategyConfig::Accumulate(previous_config),
-                    new_config: StrategyConfig::Accumulate(self.clone()),
+                    old_config: StrategyConfig::Twap(previous_config),
+                    new_config: StrategyConfig::Twap(self.clone()),
                 };
 
                 Ok(Response::default()
@@ -409,7 +400,7 @@ impl Runnable for AccumulateStrategyConfig {
                                 to: distributions,
                             });
 
-                            self.statistics = AccumulateStatistics {
+                            self.statistics = TwapStatistics {
                                 amount_received: Coin {
                                     denom: self.minimum_receive_amount.denom.clone(),
                                     amount: self
@@ -430,7 +421,7 @@ impl Runnable for AccumulateStrategyConfig {
                 None => {
                     let swap_amount = get_swap_amount(deps, env, &self)?;
 
-                    let swap_msg = Contract(self.exchange_contract.clone()).call(
+                    let swap_msg = Contract(self.exchanger_contract.clone()).call(
                         to_json_binary(&ExchangeExecuteMsg::Swap {
                             minimum_receive_amount: self.minimum_receive_amount.clone(),
                             recipient: None,
@@ -503,7 +494,7 @@ impl Runnable for AccumulateStrategyConfig {
                             self.swap_amount.denom.clone(),
                         )?;
 
-                        self.statistics = AccumulateStatistics {
+                        self.statistics = TwapStatistics {
                             amount_swapped: Coin {
                                 denom: swap_denom_balance.denom.clone(),
                                 amount: self.statistics.amount_swapped.amount.checked_add(
@@ -746,11 +737,11 @@ impl Runnable for AccumulateStrategyConfig {
 }
 
 #[cfg(test)]
-fn default_strategy_config() -> AccumulateStrategyConfig {
+fn default_strategy_config() -> TwapConfig {
     use cosmwasm_std::testing::mock_dependencies;
 
     let deps = mock_dependencies();
-    AccumulateStrategyConfig {
+    TwapConfig {
         owner: deps.api.addr_make("owner"),
         swap_amount: Coin {
             denom: "rune".to_string(),
@@ -760,7 +751,7 @@ fn default_strategy_config() -> AccumulateStrategyConfig {
             denom: "btc-btc".to_string(),
             amount: Uint128::new(900),
         },
-        schedule: Schedule::Blocks {
+        swap_cadence: Schedule::Blocks {
             interval: 10,
             previous: None,
         },
@@ -781,7 +772,7 @@ fn default_strategy_config() -> AccumulateStrategyConfig {
             amount: Uint128::new(10),
         },
         affiliate_code: None,
-        statistics: AccumulateStatistics {
+        statistics: TwapStatistics {
             amount_swapped: Coin {
                 denom: "rune".to_string(),
                 amount: Uint128::zero(),
@@ -795,7 +786,7 @@ fn default_strategy_config() -> AccumulateStrategyConfig {
                 amount: Uint128::zero(),
             },
         },
-        exchange_contract: deps.api.addr_make("exchange"),
+        exchanger_contract: deps.api.addr_make("exchange"),
         scheduler_contract: deps.api.addr_make("scheduler"),
     }
 }
@@ -895,8 +886,8 @@ mod get_schedule_msg_tests {
         let manager = deps.api.addr_make("manager");
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
 
-        let strategy = AccumulateStrategyConfig {
-            schedule: Schedule::Blocks { interval, previous },
+        let strategy = TwapConfig {
+            swap_cadence: Schedule::Blocks { interval, previous },
             ..default_strategy_config()
         };
 
@@ -942,8 +933,8 @@ mod get_schedule_msg_tests {
         let manager = deps.api.addr_make("manager");
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
 
-        let strategy = AccumulateStrategyConfig {
-            schedule: Schedule::Time { duration, previous },
+        let strategy = TwapConfig {
+            swap_cadence: Schedule::Time { duration, previous },
             ..default_strategy_config()
         };
 
@@ -1000,7 +991,7 @@ mod get_distributions_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             mutable_destinations: shares
                 .iter()
                 .map(|s| Destination {
@@ -1077,7 +1068,7 @@ mod instantiate_tests {
 
         let info = message_info(&manager, &[]);
 
-        let mut strategy = AccumulateStrategyConfig {
+        let mut strategy = TwapConfig {
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("mutable_destination"),
                 shares: Uint128::new(20_000),
@@ -1130,7 +1121,7 @@ mod instantiate_tests {
             SystemResult::Ok(ContractResult::Ok(to_json_binary(&affiliate).unwrap()))
         });
 
-        let mut strategy = AccumulateStrategyConfig {
+        let mut strategy = TwapConfig {
             affiliate_code: Some(affiliate_code),
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("mutable_destination"),
@@ -1188,7 +1179,7 @@ mod instantiate_tests {
             response.events[0],
             Event::from(DomainEvent::StrategyInstantiated {
                 contract_address: env.contract.address.clone(),
-                config: StrategyConfig::Accumulate(strategy),
+                config: StrategyConfig::Twap(strategy),
             })
         );
     }
@@ -1271,7 +1262,7 @@ mod validate_tests {
         let deps = mock_dependencies();
 
         let info = message_info(&Addr::unchecked("owner"), &[]);
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             owner: info.sender,
             ..default_strategy_config()
         };
@@ -1286,7 +1277,7 @@ mod validate_tests {
     fn no_destinations_fails() {
         let deps = mock_dependencies();
 
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             mutable_destinations: vec![],
             immutable_destinations: vec![],
             ..default_strategy_config()
@@ -1311,7 +1302,7 @@ mod validate_tests {
             })
             .collect();
 
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             mutable_destinations: destinations.clone(),
             ..default_strategy_config()
         };
@@ -1326,7 +1317,7 @@ mod validate_tests {
     fn invalid_destination_address_fails() {
         let deps = mock_dependencies();
 
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             mutable_destinations: vec![Destination {
                 address: Addr::unchecked("invalid_address"),
                 shares: Uint128::new(10000),
@@ -1346,7 +1337,7 @@ mod validate_tests {
     fn total_shares_below_minimum_fails() {
         let deps = mock_dependencies();
 
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("destination"),
                 shares: Uint128::new(5000),
@@ -1367,7 +1358,7 @@ mod validate_tests {
     fn missing_affiliate_code_fails() {
         let mut deps = mock_dependencies();
 
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             affiliate_code: Some("invalid_code".to_string()),
             ..default_strategy_config()
         };
@@ -1388,7 +1379,7 @@ mod validate_tests {
     #[test]
     fn affiliate_bps_too_high_fails() {
         let mut deps = mock_dependencies();
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             affiliate_code: Some("high_bps_code".to_string()),
             ..default_strategy_config()
         };
@@ -1432,7 +1423,7 @@ mod validate_tests {
             SystemResult::Ok(ContractResult::Ok(to_json_binary(&affiliate).unwrap()))
         });
 
-        let strategy = AccumulateStrategyConfig {
+        let strategy = TwapConfig {
             affiliate_code: Some(affiliate_code),
             ..default_strategy_config()
         };
@@ -1459,7 +1450,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = AccumulateStrategyConfig {
+        let update = TwapConfig {
             swap_amount: Coin {
                 denom: "new-denom".to_string(),
                 amount: Uint128::new(1000),
@@ -1469,7 +1460,7 @@ mod update_tests {
 
         assert_eq!(
             strategy
-                .update(deps.as_ref(), &env, StrategyConfig::Accumulate(update))
+                .update(deps.as_ref(), &env, StrategyConfig::Twap(update))
                 .unwrap_err()
                 .to_string(),
             "Generic error: Cannot change swap or receive denom"
@@ -1486,7 +1477,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = AccumulateStrategyConfig {
+        let update = TwapConfig {
             minimum_receive_amount: Coin {
                 denom: "new-denom".to_string(),
                 amount: Uint128::new(1000),
@@ -1496,7 +1487,7 @@ mod update_tests {
 
         assert_eq!(
             strategy
-                .update(deps.as_ref(), &env, StrategyConfig::Accumulate(update))
+                .update(deps.as_ref(), &env, StrategyConfig::Twap(update))
                 .unwrap_err()
                 .to_string(),
             "Generic error: Cannot change swap or receive denom"
@@ -1513,7 +1504,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = AccumulateStrategyConfig {
+        let update = TwapConfig {
             mutable_destinations: vec![Destination {
                 address: deps.api.addr_make("mutable_destination_updated"),
                 shares: Uint128::new(823764283),
@@ -1525,7 +1516,7 @@ mod update_tests {
 
         assert_eq!(
             strategy
-                .update(deps.as_ref(), &env, StrategyConfig::Accumulate(update.clone()))
+                .update(deps.as_ref(), &env, StrategyConfig::Twap(update.clone()))
                 .unwrap_err()
                 .to_string(),
             format!(
@@ -1554,7 +1545,7 @@ mod update_tests {
 
         let mut strategy = default_strategy_config();
 
-        let update = AccumulateStrategyConfig {
+        let update = TwapConfig {
             swap_amount: Coin {
                 denom: "rune".to_string(),
                 amount: Uint128::new(378269234),
@@ -1563,7 +1554,7 @@ mod update_tests {
                 denom: "btc-btc".to_string(),
                 amount: Uint128::new(23742342),
             },
-            schedule: Schedule::Blocks {
+            swap_cadence: Schedule::Blocks {
                 interval: 128123,
                 previous: None,
             },
@@ -1584,7 +1575,7 @@ mod update_tests {
             .update(
                 deps.as_ref(),
                 &mock_env(),
-                StrategyConfig::Accumulate(update.clone()),
+                StrategyConfig::Twap(update.clone()),
             )
             .unwrap();
 
@@ -1612,8 +1603,8 @@ mod update_tests {
                 ))
                 .add_event(Event::from(DomainEvent::StrategyUpdated {
                     contract_address: env.contract.address.clone(),
-                    old_config: StrategyConfig::Accumulate(default_strategy_config().clone()),
-                    new_config: StrategyConfig::Accumulate(strategy.clone()),
+                    old_config: StrategyConfig::Twap(default_strategy_config().clone()),
+                    new_config: StrategyConfig::Twap(strategy.clone()),
                 }))
         );
     }
@@ -2003,7 +1994,7 @@ mod execute_tests {
         assert_eq!(
             response.messages[0],
             SubMsg::reply_always(
-                Contract(strategy.exchange_contract.clone()).call(
+                Contract(strategy.exchanger_contract.clone()).call(
                     to_json_binary(&ExchangeExecuteMsg::Swap {
                         minimum_receive_amount: strategy.minimum_receive_amount.clone(),
                         recipient: None,
@@ -2212,7 +2203,7 @@ mod handle_reply_tests {
 
         assert_eq!(
             strategy.statistics,
-            AccumulateStatistics {
+            TwapStatistics {
                 amount_deposited: Coin {
                     denom: strategy.swap_amount.denom.clone(),
                     amount: Uint128::zero()
@@ -2248,7 +2239,7 @@ mod handle_reply_tests {
 
         assert_eq!(
             strategy.statistics,
-            AccumulateStatistics {
+            TwapStatistics {
                 amount_deposited: Coin {
                     denom: strategy.swap_amount.denom.clone(),
                     amount: Uint128::zero()
@@ -2312,8 +2303,8 @@ mod handle_reply_tests {
             .save(deps.as_mut().storage, &manager_address)
             .unwrap();
 
-        let mut strategy = AccumulateStrategyConfig {
-            schedule: Schedule::Blocks {
+        let mut strategy = TwapConfig {
+            swap_cadence: Schedule::Blocks {
                 interval: 100,
                 previous: None,
             },

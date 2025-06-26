@@ -591,13 +591,14 @@ mod execute_trigger_tests {
         )
         .unwrap();
 
-        assert!(response
-            .messages
-            .contains(&SubMsg::reply_never(WasmMsg::Execute {
+        assert!(response.messages.contains(&SubMsg::reply_on_error(
+            WasmMsg::Execute {
                 contract_addr: create_command.to.to_string(),
                 msg: create_command.msg,
                 funds: vec![]
-            })));
+            },
+            EXECUTE_REPLY_ID
+        )));
     }
 
     #[test]
@@ -631,13 +632,14 @@ mod execute_trigger_tests {
         )
         .unwrap();
 
-        assert!(response
-            .messages
-            .contains(&SubMsg::reply_never(WasmMsg::Execute {
+        assert!(response.messages.contains(&SubMsg::reply_on_error(
+            WasmMsg::Execute {
                 contract_addr: create_command.to.to_string(),
                 msg: create_command.msg,
                 funds: vec![]
-            })));
+            },
+            EXECUTE_REPLY_ID
+        )));
 
         assert!(response
             .messages
@@ -676,13 +678,14 @@ mod execute_trigger_tests {
         )
         .unwrap();
 
-        assert!(response
-            .messages
-            .contains(&SubMsg::reply_never(WasmMsg::Execute {
+        assert!(response.messages.contains(&SubMsg::reply_on_error(
+            WasmMsg::Execute {
                 contract_addr: create_command.to.to_string(),
                 msg: create_command.msg,
                 funds: vec![]
-            })));
+            },
+            EXECUTE_REPLY_ID
+        )));
 
         let triggers = fetch_triggers(
             deps.as_ref(),

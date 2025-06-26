@@ -1,86 +1,99 @@
 use calc_rs::types::{Condition, DistributorConfig, DistributorStatistics, Recipient, DEPOSIT_FEE};
-use cosmwasm_std::{Coin, Deps, DepsMut, Env, StdError, StdResult, Uint128};
+use cosmwasm_std::{Coin, DepsMut, Env, StdError, StdResult, Storage, Uint128};
 use cw_storage_plus::Item;
 
-const CONFIG: Item<DistributorConfig> = Item::new("config");
+pub struct ConfigStore {
+    item: Item<DistributorConfig>,
+}
 
-pub fn save_config(deps: &mut DepsMut, env: &Env, msg: &mut DistributorConfig) -> StdResult<()> {
-    deps.api
-        .addr_validate(&msg.owner.to_string())
-        .map_err(|_| StdError::generic_err(format!("Invalid owner address: {}", msg.owner)))?;
+impl ConfigStore {
+    pub fn save(
+        &self,
+        deps: &mut DepsMut,
+        env: &Env,
+        msg: &mut DistributorConfig,
+    ) -> StdResult<()> {
+        deps.api
+            .addr_validate(&msg.owner.to_string())
+            .map_err(|_| StdError::generic_err(format!("Invalid owner address: {}", msg.owner)))?;
 
-    let destinations = msg
-        .mutable_destinations
-        .iter()
-        .chain(msg.immutable_destinations.iter())
-        .collect::<Vec<_>>();
+        let destinations = msg
+            .mutable_destinations
+            .iter()
+            .chain(msg.immutable_destinations.iter())
+            .collect::<Vec<_>>();
 
-    if destinations.is_empty() {
-        return Err(StdError::generic_err(
-            "Must provide at least one destination",
-        ));
-    }
-
-    if destinations.len() > 20 {
-        return Err(StdError::generic_err(
-            "Cannot provide more than 20 total destinations",
-        ));
-    }
-
-    let has_native_denoms = msg.denoms.iter().any(|d| !d.contains("-"));
-    let mut total_shares = Uint128::zero();
-    let mut required_rune_balance = 0_u128;
-
-    for destination in destinations.clone() {
-        if destination.shares.is_zero() {
+        if destinations.is_empty() {
             return Err(StdError::generic_err(
-                "Shares for each destination must be greater than zero",
+                "Must provide at least one destination",
             ));
         }
 
-        match destination.recipient.clone() {
-            Recipient::Bank { address, .. } | Recipient::Wasm { address, .. } => {
-                deps.api.addr_validate(&address.to_string()).map_err(|_| {
-                    StdError::generic_err(format!("Invalid destination address: {}", address))
-                })?;
-            }
-            Recipient::Deposit { memo } => {
-                if has_native_denoms {
-                    return Err(StdError::generic_err(format!(
-                        "Only secured assets can be deposited with memo {}",
-                        memo
-                    )));
-                }
-
-                required_rune_balance += DEPOSIT_FEE;
-            }
+        if destinations.len() > 20 {
+            return Err(StdError::generic_err(
+                "Cannot provide more than 20 total destinations",
+            ));
         }
 
-        total_shares += destination.shares;
+        let has_native_denoms = msg.denoms.iter().any(|d| !d.contains("-"));
+        let mut total_shares = Uint128::zero();
+        let mut required_rune_balance = 0_u128;
+
+        for destination in destinations.clone() {
+            if destination.shares.is_zero() {
+                return Err(StdError::generic_err(
+                    "Shares for each destination must be greater than zero",
+                ));
+            }
+
+            match destination.recipient.clone() {
+                Recipient::Bank { address, .. } | Recipient::Wasm { address, .. } => {
+                    deps.api.addr_validate(&address.to_string()).map_err(|_| {
+                        StdError::generic_err(format!("Invalid destination address: {}", address))
+                    })?;
+                }
+                Recipient::Deposit { memo } => {
+                    if has_native_denoms {
+                        return Err(StdError::generic_err(format!(
+                            "Only secured assets can be deposited with memo {}",
+                            memo
+                        )));
+                    }
+
+                    required_rune_balance += DEPOSIT_FEE;
+                }
+            }
+
+            total_shares += destination.shares;
+        }
+
+        if total_shares < Uint128::new(10_000) {
+            return Err(StdError::generic_err(
+                "Total shares must be at least 10,000",
+            ));
+        }
+
+        // The contract needs to have enough RUNE to cover the deposit fee(s)
+        if required_rune_balance > 0 {
+            msg.conditions.push(Condition::BalanceAvailable {
+                address: env.contract.address.clone(),
+                amount: Coin::new(required_rune_balance, "rune"),
+            });
+        }
+
+        self.item.save(deps.storage, &msg)
     }
 
-    if total_shares < Uint128::new(10_000) {
-        return Err(StdError::generic_err(
-            "Total shares must be at least 10,000",
-        ));
+    pub fn load(&self, store: &dyn Storage) -> StdResult<DistributorConfig> {
+        self.item.load(store)
     }
-
-    // The contract needs to have enough RUNE to cover the deposit fee(s)
-    if required_rune_balance > 0 {
-        msg.conditions.push(Condition::BalanceMet {
-            address: env.contract.address.clone(),
-            balance: Coin::new(required_rune_balance, "rune"),
-        });
-    }
-
-    CONFIG.save(deps.storage, &msg)
 }
 
-pub fn get_config(deps: Deps) -> StdResult<DistributorConfig> {
-    CONFIG.load(deps.storage)
-}
+pub const CONFIG: ConfigStore = ConfigStore {
+    item: Item::new("config"),
+};
 
-pub const STATISTICS: Item<DistributorStatistics> = Item::new("statistics");
+pub const STATS: Item<DistributorStatistics> = Item::new("statistics");
 
 #[cfg(test)]
 mod save_config_tests {
@@ -178,7 +191,8 @@ mod save_config_tests {
         let mut deps = mock_dependencies();
 
         assert_eq!(
-            save_config(&mut deps.as_mut(), &mock_env(), &mut msg)
+            CONFIG
+                .save(&mut deps.as_mut(), &mock_env(), &mut msg)
                 .unwrap_err()
                 .to_string(),
             expected_error
@@ -190,8 +204,10 @@ mod save_config_tests {
         let mut deps = mock_dependencies();
         let mut msg = default_config();
 
-        assert!(save_config(&mut deps.as_mut(), &mock_env(), &mut msg).is_ok());
-        assert_eq!(CONFIG.load(&deps.storage).unwrap(), msg);
+        assert!(CONFIG
+            .save(&mut deps.as_mut(), &mock_env(), &mut msg)
+            .is_ok());
+        assert_eq!(CONFIG.load(deps.as_mut().storage).unwrap(), msg);
     }
 
     #[rstest]
@@ -220,15 +236,15 @@ mod save_config_tests {
             ..default_config()
         };
 
-        save_config(&mut deps.as_mut(), &env, &mut msg).unwrap();
+        CONFIG.save(&mut deps.as_mut(), &env, &mut msg).unwrap();
 
         let config = CONFIG.load(&deps.storage).unwrap();
 
         assert_eq!(
             config.conditions,
-            vec![Condition::BalanceMet {
+            vec![Condition::BalanceAvailable {
                 address: env.contract.address,
-                balance: Coin::new(DEPOSIT_FEE * 2, "rune"),
+                amount: Coin::new(DEPOSIT_FEE * 2, "rune"),
             }]
         );
     }

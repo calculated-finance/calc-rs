@@ -37,7 +37,7 @@ impl Default for MockExchange {
                         denom: target_denom.denom_string(),
                         amount: swap_amount.amount,
                     },
-                    slippage: Default::default(),
+                    slippage_bps: Default::default(),
                 })
             }),
             get_spot_price_fn: Box::new(|_, _, _| Ok(Decimal::one())),

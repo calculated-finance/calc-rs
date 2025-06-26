@@ -363,7 +363,7 @@ const createStrategy = async () => {
         owner: account,
         label: "Test Strategy",
         strategy: {
-          dca: {
+          twap: {
             owner: account,
             swap_amount: {
               denom: "eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",

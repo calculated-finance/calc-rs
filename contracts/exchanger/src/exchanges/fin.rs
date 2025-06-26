@@ -4,7 +4,7 @@ use calc_rs::types::{Callback, Contract, ContractError, ContractResult, Expected
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, BankMsg, Coin, Decimal, Deps, Env, MessageInfo, Order, QueryRequest,
-    Response, StdError, StdResult, Storage, WasmQuery,
+    Response, StdError, StdResult, Storage, Uint128, WasmQuery,
 };
 use cw_storage_plus::{Bound, Map};
 use rujira_rs::{
@@ -153,17 +153,21 @@ impl Exchange for FinExchange {
                 swap_amount.amount.mul_floor(Decimal::one() / spot_price),
             );
 
-            let slippage = Decimal::one().checked_sub(Decimal::from_ratio(
-                simulation.returned,
-                optimal_return_amount,
-            ))?;
+            let slippage = Uint128::new(10_000).mul_ceil(
+                Decimal::one()
+                    .checked_sub(Decimal::from_ratio(
+                        simulation.returned,
+                        optimal_return_amount,
+                    ))
+                    .unwrap_or(Decimal::one()),
+            );
 
             Ok(ExpectedReceiveAmount {
                 receive_amount: Coin {
                     denom: target_denom.denom_string(),
                     amount: simulation.returned,
                 },
-                slippage,
+                slippage_bps: slippage.into(),
             })
         })?
     }
@@ -686,9 +690,16 @@ mod expected_receive_amount_tests {
         );
 
         assert_eq!(
-            expected_amount.slippage,
-            Decimal::one()
-                - Decimal::from_ratio(expected_amount.receive_amount.amount, Uint128::new(150))
+            expected_amount.slippage_bps,
+            Uint128::new(10_000)
+                .mul_ceil(
+                    Decimal::one()
+                        - Decimal::from_ratio(
+                            expected_amount.receive_amount.amount,
+                            Uint128::new(150)
+                        )
+                )
+                .into()
         );
     }
 }

@@ -505,7 +505,7 @@ mod route_tests {
 mod expected_receive_amount_tests {
     use crate::{contract::expected_receive_amount, exchanges::mock::MockExchange};
     use calc_rs::types::ExpectedReceiveAmount;
-    use cosmwasm_std::{testing::mock_dependencies, Coin, Decimal, StdError, Uint128};
+    use cosmwasm_std::{testing::mock_dependencies, Coin, StdError, Uint128};
 
     #[test]
     fn returns_error_when_no_exchange_can_swap() {
@@ -542,11 +542,11 @@ mod expected_receive_amount_tests {
             amount: Uint128::new(2000),
         };
 
-        let slippage = Decimal::percent(1);
+        let slippage_bps = 100;
 
         let expected_response = ExpectedReceiveAmount {
             receive_amount: receive_amount.clone(),
-            slippage: slippage.clone(),
+            slippage_bps,
         };
 
         let mut mock = Box::new(MockExchange::default());
@@ -563,7 +563,7 @@ mod expected_receive_amount_tests {
             .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount,
-                slippage,
+                slippage_bps,
             }
         );
     }
@@ -582,11 +582,11 @@ mod expected_receive_amount_tests {
             amount: Uint128::new(2000),
         };
 
-        let slippage = Decimal::percent(1);
+        let slippage_bps = 100;
 
         let expected_response = ExpectedReceiveAmount {
             receive_amount: receive_amount.clone(),
-            slippage: slippage.clone(),
+            slippage_bps,
         };
 
         let mut mock = Box::new(MockExchange::default());
@@ -603,7 +603,7 @@ mod expected_receive_amount_tests {
             .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount,
-                slippage,
+                slippage_bps,
             }
         );
     }
@@ -823,7 +823,7 @@ mod swap_tests {
                     denom: expected_response.receive_amount.denom.clone(),
                     amount: expected_response.receive_amount.amount * Uint128::new(2),
                 },
-                slippage: expected_response.slippage,
+                slippage_bps: expected_response.slippage_bps,
             })
         });
 

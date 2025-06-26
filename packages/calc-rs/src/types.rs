@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration, u8};
 use anybuf::Anybuf;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    to_json_string, Addr, AnyMsg, BankMsg, Binary, BlockInfo, CanonicalAddr, CheckedFromRatioError,
+    to_json_string, Addr, AnyMsg, BankMsg, Binary, CanonicalAddr, CheckedFromRatioError,
     CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg, Decimal, Deps, Env, Event,
     Instantiate2AddressError, MessageInfo, OverflowError, Response, StdError, StdResult, Timestamp,
     Uint128, WasmMsg,
@@ -55,14 +55,15 @@ pub type ContractResult = Result<Response, ContractError>;
 #[cw_serde]
 pub struct ManagerConfig {
     pub admin: Addr,
-    pub code_id: u64,
+    pub distributor_code_id: u64,
+    pub twap_code_id: u64,
     pub fee_collector: Addr,
 }
 
 #[cw_serde]
 pub struct ExpectedReceiveAmount {
     pub receive_amount: Coin,
-    pub slippage: Decimal,
+    pub slippage_bps: u128,
 }
 
 #[cw_serde]
@@ -75,69 +76,173 @@ pub enum Condition {
         side: Side,
         price: Price,
     },
-    PriceThresholdMet {
+    ExchangeLiquidityProvided {
         swap_amount: Coin,
         minimum_receive_amount: Coin,
+        maximum_slippage_bps: u128,
     },
-    SlippageLimitMet {
-        swap_amount: Coin,
-        target_denom: String,
-        slippage_bps: u64,
-    },
-    BalanceMet {
+    BalanceAvailable {
         address: Addr,
-        balance: Coin,
+        amount: Coin,
+    },
+    StrategyStatus {
+        manager_contract: Addr,
+        contract_address: Addr,
+        status: StrategyStatus,
     },
 }
 
 impl Condition {
-    pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {
+    pub fn check(&self, deps: Deps, env: &Env) -> StdResult<()> {
         match self {
-            Condition::TimestampElapsed(timestamp) => Ok(env.block.time >= *timestamp),
-            Condition::BlocksCompleted(height) => Ok(env.block.height >= *height),
+            Condition::TimestampElapsed(timestamp) => {
+                if env.block.time >= *timestamp {
+                    return Ok(());
+                }
+
+                Err(StdError::generic_err(format!(
+                    "Timestamp not elapsed: current timestamp ({}) is before required timestamp ({})",
+                    env.block.time, timestamp
+                )))
+            }
+            Condition::BlocksCompleted(height) => {
+                if env.block.height >= *height {
+                    return Ok(());
+                }
+
+                Err(StdError::generic_err(format!(
+                    "Blocks not completed: current height ({}) is before required height ({})",
+                    env.block.height, height
+                )))
+            }
             Condition::LimitOrderFilled {
                 owner,
                 pair_address,
                 side,
                 price,
-            } => deps
-                .querier
-                .query_wasm_smart::<OrderResponse>(
-                    pair_address,
-                    &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
-                )
-                .map(|r| r.remaining.is_zero()),
-            Condition::PriceThresholdMet {
+            } => {
+                let order = deps
+                    .querier
+                    .query_wasm_smart::<OrderResponse>(
+                        pair_address,
+                        &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
+                    )
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Failed to query order ({:?} {:?} {:?}): {}",
+                            owner, side, price, e
+                        ))
+                    })?;
+
+                if order.remaining.is_zero() {
+                    return Ok(());
+                }
+
+                Err(StdError::generic_err(format!(
+                    "Limit order not filled ({} remaining)",
+                    order.remaining
+                )))
+            }
+            Condition::ExchangeLiquidityProvided {
                 swap_amount,
                 minimum_receive_amount,
-            } => deps
-                .querier
-                .query_wasm_smart::<ExpectedReceiveAmount>(
-                    swap_amount.denom.clone(),
-                    &ExchangeQueryMsg::ExpectedReceiveAmount {
-                        swap_amount: swap_amount.clone(),
-                        target_denom: minimum_receive_amount.denom.clone(),
+                maximum_slippage_bps,
+            } => {
+                let expected_receive_amount =
+                    deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
+                        swap_amount.denom.clone(),
+                        &ExchangeQueryMsg::ExpectedReceiveAmount {
+                            swap_amount: swap_amount.clone(),
+                            target_denom: minimum_receive_amount.denom.clone(),
+                        },
+                    )?;
+
+                if expected_receive_amount.receive_amount.amount < minimum_receive_amount.amount {
+                    return Err(StdError::generic_err(format!(
+                        "Expected receive amount {} is less than minimum receive amount {}",
+                        expected_receive_amount.receive_amount.amount,
+                        minimum_receive_amount.amount
+                    )));
+                }
+
+                if expected_receive_amount.slippage_bps > *maximum_slippage_bps {
+                    return Err(StdError::generic_err(format!(
+                        "Slippage basis points {} exceeds maximum allowed slippage basis points {}",
+                        expected_receive_amount.slippage_bps, maximum_slippage_bps
+                    )));
+                }
+
+                Ok(())
+            }
+            Condition::BalanceAvailable { address, amount } => {
+                let balance = deps.querier.query_balance(address, amount.denom.clone())?;
+
+                if balance.amount >= amount.amount {
+                    return Ok(());
+                }
+
+                Err(StdError::generic_err(format!(
+                    "Balance available for {} ({}) is less than required {}",
+                    address, balance.amount, amount.amount
+                )))
+            }
+            Condition::StrategyStatus {
+                manager_contract,
+                contract_address,
+                status,
+            } => {
+                let strategy = deps.querier.query_wasm_smart::<Strategy>(
+                    manager_contract,
+                    &ManagerQueryMsg::Strategy {
+                        address: contract_address.clone(),
                     },
-                )
-                .map(|r| r.receive_amount.amount >= minimum_receive_amount.amount),
-            Condition::SlippageLimitMet {
+                )?;
+
+                if strategy.status == *status {
+                    return Ok(());
+                }
+
+                Err(StdError::generic_err(format!(
+                    "Strategy not in required status: expected {:?}, got {:?}",
+                    status, strategy.status
+                )))
+            }
+        }
+    }
+
+    pub fn description(&self) -> String {
+        match self {
+            Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {}", timestamp),
+            Condition::BlocksCompleted(height) => format!("blocks completed: {}", height),
+            Condition::LimitOrderFilled {
+                owner,
+                pair_address,
+                side,
+                price,
+            } => format!(
+                "limit order filled: owner={}, pair_address={}, side={:?}, price={}",
+                owner, pair_address, side, price
+            ),
+            Condition::ExchangeLiquidityProvided {
                 swap_amount,
-                target_denom,
-                slippage_bps,
-            } => deps
-                .querier
-                .query_wasm_smart::<ExpectedReceiveAmount>(
-                    swap_amount.denom.clone(),
-                    &ExchangeQueryMsg::ExpectedReceiveAmount {
-                        swap_amount: swap_amount.clone(),
-                        target_denom: target_denom.clone(),
-                    },
-                )
-                .map(|r| r.slippage <= Decimal::bps(*slippage_bps)),
-            Condition::BalanceMet { address, balance } => deps
-                .querier
-                .query_balance(address, balance.denom.clone())
-                .map(|r| r.amount >= balance.amount),
+                minimum_receive_amount,
+                maximum_slippage_bps,
+            } => format!(
+                "exchange liquidity provided: swap_amount={}, minimum_receive_amount={}, maximum_slippage_bps={}",
+                swap_amount, minimum_receive_amount, maximum_slippage_bps
+            ),
+            Condition::BalanceAvailable { address, amount } => format!(
+                "balance available: address={}, amount={}",
+                address, amount
+            ),
+            Condition::StrategyStatus {
+                contract_address,
+                status,
+                ..
+            } => format!(
+                "strategy ({}) in status: {:?}",
+                contract_address, status
+            ),
         }
     }
 }
@@ -158,16 +263,13 @@ pub enum ConditionFilter {
 }
 
 #[cw_serde]
-pub struct AccumulateStatistics {
-    pub amount_deposited: Coin,
+pub struct TwapStatistics {
     pub amount_swapped: Coin,
-    pub amount_received: Coin,
 }
 
 #[cw_serde]
 pub struct DistributorStatistics {
     pub amount_distributed: HashMap<String, Vec<Coin>>,
-    pub amount_withdrawn: Vec<Coin>,
 }
 
 #[cw_serde]
@@ -177,7 +279,7 @@ pub struct NewStatistics {
 
 #[cw_serde]
 pub enum StrategyStatistics {
-    Accumulate(AccumulateStatistics),
+    Accumulate(TwapStatistics),
     New(NewStatistics),
 }
 
@@ -324,49 +426,85 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    pub fn is_due(&self, block: &BlockInfo) -> bool {
+    pub fn is_due(&self, env: &Env) -> bool {
         match self {
             Schedule::Blocks { interval, previous } => {
                 let last_block = previous.unwrap_or(0);
-                block.height >= last_block + interval
+                env.block.height >= last_block + interval
             }
             Schedule::Time { duration, previous } => {
                 let last_time = previous.unwrap_or(Timestamp::from_seconds(0));
-                block.time.seconds() >= last_time.seconds() + duration.as_secs()
+                env.block.time.seconds() >= last_time.seconds() + duration.as_secs()
             }
         }
     }
 
-    pub fn to_conditions(&self, env: &Env) -> Vec<Condition> {
+    pub fn into_condition(&self, env: &Env) -> Condition {
         match self {
             Schedule::Blocks { interval, previous } => {
                 let last_block = previous.unwrap_or(env.block.height);
-                vec![Condition::BlocksCompleted(last_block + interval)]
+                Condition::BlocksCompleted(last_block + interval)
             }
             Schedule::Time { duration, previous } => {
                 let last_time =
                     previous.unwrap_or(Timestamp::from_seconds(env.block.time.seconds()));
-                vec![Condition::TimestampElapsed(Timestamp::from_seconds(
+                Condition::TimestampElapsed(Timestamp::from_seconds(
                     last_time.seconds() + duration.as_secs(),
-                ))]
+                ))
             }
+        }
+    }
+
+    pub fn next(&self, env: &Env) -> Self {
+        match self {
+            Schedule::Blocks { interval, previous } => Schedule::Blocks {
+                interval: *interval,
+                previous: if let Some(previous) = previous {
+                    let next = previous + *interval;
+                    if next < env.block.height {
+                        Some(env.block.height - (env.block.height - previous) % interval)
+                    } else {
+                        Some(next)
+                    }
+                } else {
+                    Some(env.block.height)
+                },
+            },
+            Schedule::Time { duration, previous } => Schedule::Time {
+                duration: *duration,
+                previous: if let Some(previous) = previous {
+                    let next = previous.plus_seconds(duration.as_secs());
+                    if next < env.block.time {
+                        Some(Timestamp::from_seconds(
+                            env.block.time.seconds()
+                                - (env.block.time.minus_seconds(previous.seconds())).seconds()
+                                    % duration.as_secs(),
+                        ))
+                    } else {
+                        Some(next)
+                    }
+                } else {
+                    Some(env.block.time)
+                },
+            },
         }
     }
 }
 
 #[cw_serde]
-pub struct AccumulateStrategyConfig {
+pub struct TwapConfig {
     pub owner: Addr,
+    pub manager_contract: Addr,
+    pub exchanger_contract: Addr,
+    pub scheduler_contract: Addr,
+    pub distributor_contract: Addr,
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
-    pub schedule: Schedule,
-    pub exchange_contract: Addr,
-    pub scheduler_contract: Addr,
-    pub execution_rebate: Coin,
-    pub affiliate_code: Option<String>,
-    pub mutable_destinations: Vec<Destination>,
-    pub immutable_destinations: Vec<Destination>,
-    pub statistics: AccumulateStatistics,
+    pub maximum_slippage_bps: u128,
+    pub swap_cadence: Schedule,
+    pub swap_conditions: Vec<Condition>,
+    pub schedule_conditions: Vec<Condition>,
+    pub execution_rebate: Option<Coin>,
 }
 
 #[cw_serde]
@@ -381,7 +519,7 @@ pub struct DistributorConfig {
 #[derive()]
 #[cw_serde]
 pub enum StrategyConfig {
-    Accumulate(AccumulateStrategyConfig),
+    Twap(TwapConfig),
     // Custom(DistributeStrategyConfig),
 }
 
@@ -441,7 +579,7 @@ pub trait Owned {
 impl Owned for StrategyConfig {
     fn owner(&self) -> Addr {
         match self {
-            StrategyConfig::Accumulate(strategy) => strategy.owner.clone(),
+            StrategyConfig::Twap(strategy) => strategy.owner.clone(),
             // StrategyConfig::Custom(strategy) => strategy.owner.clone(),
         }
     }
@@ -487,179 +625,6 @@ pub struct Strategy {
     pub label: String,
     pub status: StrategyStatus,
     pub affiliates: Vec<Affiliate>,
-}
-
-pub enum DomainEvent {
-    StrategyInstantiated {
-        contract_address: Addr,
-        config: StrategyConfig,
-    },
-    StrategyPaused {
-        contract_address: Addr,
-        reason: String,
-    },
-    StrategyArchived {
-        contract_address: Addr,
-    },
-    StrategyResumed {
-        contract_address: Addr,
-    },
-    StrategyUpdated {
-        contract_address: Addr,
-        old_config: StrategyConfig,
-        new_config: StrategyConfig,
-    },
-    FundsDeposited {
-        contract_address: Addr,
-        from: Addr,
-        funds: Vec<Coin>,
-    },
-    FundsWithdrawn {
-        contract_address: Addr,
-        to: Addr,
-        funds: Vec<Coin>,
-    },
-    FundsDistributed {
-        contract_address: Addr,
-        to: Vec<Distribution>,
-    },
-    ExecutionSucceeded {
-        contract_address: Addr,
-        statistics: StrategyStatistics,
-    },
-    ExecutionFailed {
-        contract_address: Addr,
-        reason: String,
-    },
-    ExecutionSkipped {
-        contract_address: Addr,
-        reason: String,
-    },
-    SchedulingSucceeded {
-        contract_address: Addr,
-        conditions: Vec<Condition>,
-    },
-    SchedulingFailed {
-        contract_address: Addr,
-        reason: String,
-    },
-    SchedulingSkipped {
-        contract_address: Addr,
-        reason: String,
-    },
-}
-
-impl From<DomainEvent> for Event {
-    fn from(event: DomainEvent) -> Self {
-        match event {
-            DomainEvent::StrategyInstantiated {
-                contract_address,
-                config,
-            } => Event::new("strategy_created")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "config",
-                    to_json_string(&config).expect("Failed to serialize config"),
-                ),
-            DomainEvent::StrategyPaused {
-                contract_address,
-                reason,
-            } => Event::new("strategy_paused")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
-            DomainEvent::StrategyResumed { contract_address } => Event::new("strategy_resumed")
-                .add_attribute("contract_address", contract_address.as_str()),
-            DomainEvent::StrategyArchived { contract_address } => Event::new("strategy_archived")
-                .add_attribute("contract_address", contract_address.as_str()),
-            DomainEvent::StrategyUpdated {
-                contract_address,
-                old_config,
-                new_config,
-            } => Event::new("strategy_updated")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "old_config",
-                    to_json_string(&old_config).expect("Failed to serialize old config"),
-                )
-                .add_attribute(
-                    "new_config",
-                    to_json_string(&new_config).expect("Failed to serialize new config"),
-                ),
-            DomainEvent::FundsDeposited {
-                contract_address,
-                from,
-                funds: amount,
-            } => Event::new("funds_deposited")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("from", from.as_str())
-                .add_attribute(
-                    "amount",
-                    to_json_string(&amount).expect("Failed to serialize amount"),
-                ),
-            DomainEvent::FundsWithdrawn {
-                contract_address,
-                to,
-                funds: amount,
-            } => Event::new("funds_withdrawn")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("to", to.as_str())
-                .add_attribute(
-                    "amount",
-                    to_json_string(&amount).expect("Failed to serialize withdrawn amount"),
-                ),
-            DomainEvent::FundsDistributed {
-                contract_address,
-                to: distributions,
-            } => Event::new("funds_distributed")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "distributions",
-                    to_json_string(&distributions).expect("Failed to serialize distributions"),
-                ),
-            DomainEvent::ExecutionSucceeded {
-                contract_address,
-                statistics,
-            } => Event::new("execution_succeeded")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "statistics",
-                    to_json_string(&statistics).expect("Failed to serialize statistics"),
-                ),
-            DomainEvent::ExecutionFailed {
-                contract_address,
-                reason: error,
-            } => Event::new("execution_failed")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("error", error),
-            DomainEvent::ExecutionSkipped {
-                contract_address,
-                reason,
-            } => Event::new("execution_skipped")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
-            DomainEvent::SchedulingSucceeded {
-                contract_address,
-                conditions,
-            } => Event::new("scheduling_succeeded")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "conditions",
-                    to_json_string(&conditions).expect("Failed to serialize conditions"),
-                ),
-            DomainEvent::SchedulingFailed {
-                contract_address,
-                reason,
-            } => Event::new("scheduling_failed")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
-            DomainEvent::SchedulingSkipped {
-                contract_address,
-                reason,
-            } => Event::new("scheduling_skipped")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
-        }
-    }
 }
 
 pub struct Contract(pub Addr);
@@ -711,27 +676,27 @@ impl Trigger {
 
     pub fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<bool> {
         Ok(match self.threshold {
-            TriggerConditionsThreshold::All => self
-                .conditions
-                .iter()
-                .all(|c| c.is_satisfied(deps, env).unwrap_or(false)),
-            TriggerConditionsThreshold::Any => self
-                .conditions
-                .iter()
-                .any(|c| c.is_satisfied(deps, env).unwrap_or(false)),
+            TriggerConditionsThreshold::All => {
+                self.conditions.iter().all(|c| c.check(deps, env).is_ok())
+            }
+            TriggerConditionsThreshold::Any => {
+                self.conditions.iter().any(|c| c.check(deps, env).is_ok())
+            }
         })
     }
 }
 
 #[cw_serde]
 pub struct ManagerInstantiateMsg {
-    pub code_id: u64,
+    pub distributor_code_id: u64,
+    pub twap_code_id: u64,
     pub fee_collector: Addr,
 }
 
 #[cw_serde]
 pub struct ManagerMigrateMsg {
-    pub code_id: u64,
+    pub distributor_code_id: u64,
+    pub twap_code_id: u64,
     pub fee_collector: Addr,
 }
 
@@ -909,7 +874,6 @@ pub enum SchedulerQueryMsg {
 pub struct DistributorInstantiateMsg {
     pub owner: Addr,
     pub denoms: Vec<String>,
-    pub schedule: Option<Schedule>,
     pub mutable_destinations: Vec<Destination>,
     pub immutable_destinations: Vec<Destination>,
 }
@@ -939,26 +903,215 @@ pub struct DcaInstantiateMsg {
     pub owner: Addr,
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
-    pub schedule: Schedule,
-    pub exchange_contract: Addr,
+    pub maximum_slippage_bps: u128,
+    pub swap_cadence: Schedule,
+    pub minimum_distribute_amount: Option<Coin>,
+    pub distributor_code_id: u64,
+    pub manager_contract: Addr,
+    pub fee_collector: Addr,
+    pub exchanger_contract: Addr,
     pub scheduler_contract: Addr,
-    pub execution_rebate: Coin,
+    pub execution_rebate: Option<Coin>,
     pub affiliate_code: Option<String>,
     pub mutable_destinations: Vec<Destination>,
     pub immutable_destinations: Vec<Destination>,
 }
 
 #[cw_serde]
-pub enum AccumulatorExecuteMsg {
+pub enum TwapExecuteMsg {
     Execute {},
     Withdraw { amounts: Vec<Coin> },
+    Update(TwapConfig),
+    UpdateStatus(StrategyStatus),
+    Clear {},
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
-pub enum AccumulatorQueryMsg {
-    #[returns(AccumulateStrategyConfig)]
+pub enum TwapQueryMsg {
+    #[returns(TwapConfig)]
     Config {},
-    #[returns(bool)]
-    CanExecute {},
+}
+
+pub enum DomainEvent {
+    StrategyInstantiated {
+        contract_address: Addr,
+        config: TwapConfig,
+    },
+    StrategyPaused {
+        contract_address: Addr,
+        reason: String,
+    },
+    StrategyArchived {
+        contract_address: Addr,
+    },
+    StrategyResumed {
+        contract_address: Addr,
+    },
+    StrategyUpdated {
+        contract_address: Addr,
+        old_config: TwapConfig,
+        new_config: TwapConfig,
+    },
+    StrategyStatusUpdated {
+        contract_address: Addr,
+        status: StrategyStatus,
+    },
+    FundsDeposited {
+        contract_address: Addr,
+        from: Addr,
+        funds: Vec<Coin>,
+    },
+    FundsWithdrawn {
+        contract_address: Addr,
+        to: Addr,
+        funds: Vec<Coin>,
+    },
+    FundsDistributed {
+        contract_address: Addr,
+        to: Vec<Distribution>,
+    },
+    ExecutionSucceeded {
+        contract_address: Addr,
+        statistics: TwapStatistics,
+    },
+    ExecutionFailed {
+        contract_address: Addr,
+        reason: String,
+    },
+    ExecutionSkipped {
+        contract_address: Addr,
+        reason: String,
+    },
+    SchedulingSucceeded {
+        contract_address: Addr,
+        conditions: Vec<Condition>,
+    },
+    SchedulingFailed {
+        contract_address: Addr,
+        reason: String,
+    },
+    SchedulingSkipped {
+        contract_address: Addr,
+        reason: String,
+    },
+}
+
+impl From<DomainEvent> for Event {
+    fn from(event: DomainEvent) -> Self {
+        match event {
+            DomainEvent::StrategyInstantiated {
+                contract_address,
+                config,
+            } => Event::new("strategy_created")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute(
+                    "config",
+                    to_json_string(&config).expect("Failed to serialize config"),
+                ),
+            DomainEvent::StrategyPaused {
+                contract_address,
+                reason,
+            } => Event::new("strategy_paused")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("reason", reason),
+            DomainEvent::StrategyResumed { contract_address } => Event::new("strategy_resumed")
+                .add_attribute("contract_address", contract_address.as_str()),
+            DomainEvent::StrategyArchived { contract_address } => Event::new("strategy_archived")
+                .add_attribute("contract_address", contract_address.as_str()),
+            DomainEvent::StrategyUpdated {
+                contract_address,
+                old_config,
+                new_config,
+            } => Event::new("strategy_updated")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute(
+                    "old_config",
+                    to_json_string(&old_config).expect("Failed to serialize old config"),
+                )
+                .add_attribute(
+                    "new_config",
+                    to_json_string(&new_config).expect("Failed to serialize new config"),
+                ),
+            DomainEvent::StrategyStatusUpdated {
+                contract_address,
+                status,
+            } => Event::new("strategy_status_updated")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("status", format!("{:?}", status)),
+            DomainEvent::FundsDeposited {
+                contract_address,
+                from,
+                funds: amount,
+            } => Event::new("funds_deposited")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("from", from.as_str())
+                .add_attribute(
+                    "amount",
+                    to_json_string(&amount).expect("Failed to serialize amount"),
+                ),
+            DomainEvent::FundsWithdrawn {
+                contract_address,
+                to,
+                funds: amount,
+            } => Event::new("funds_withdrawn")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("to", to.as_str())
+                .add_attribute(
+                    "amount",
+                    to_json_string(&amount).expect("Failed to serialize withdrawn amount"),
+                ),
+            DomainEvent::FundsDistributed {
+                contract_address,
+                to: distributions,
+            } => Event::new("funds_distributed")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute(
+                    "distributions",
+                    to_json_string(&distributions).expect("Failed to serialize distributions"),
+                ),
+            DomainEvent::ExecutionSucceeded {
+                contract_address,
+                statistics,
+            } => Event::new("execution_succeeded")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute(
+                    "statistics",
+                    to_json_string(&statistics).expect("Failed to serialize statistics"),
+                ),
+            DomainEvent::ExecutionFailed {
+                contract_address,
+                reason: error,
+            } => Event::new("execution_failed")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("error", error),
+            DomainEvent::ExecutionSkipped {
+                contract_address,
+                reason,
+            } => Event::new("execution_skipped")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("reason", reason),
+            DomainEvent::SchedulingSucceeded {
+                contract_address,
+                conditions,
+            } => Event::new("scheduling_succeeded")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute(
+                    "conditions",
+                    to_json_string(&conditions).expect("Failed to serialize conditions"),
+                ),
+            DomainEvent::SchedulingFailed {
+                contract_address,
+                reason,
+            } => Event::new("scheduling_failed")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("reason", reason),
+            DomainEvent::SchedulingSkipped {
+                contract_address,
+                reason,
+            } => Event::new("scheduling_skipped")
+                .add_attribute("contract_address", contract_address.as_str())
+                .add_attribute("reason", reason),
+        }
+    }
 }

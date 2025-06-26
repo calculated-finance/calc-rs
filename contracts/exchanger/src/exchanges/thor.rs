@@ -114,7 +114,7 @@ impl Exchange for ThorExchange {
                     denom: minimum_receive_amount.denom.clone(),
                     amount: Uint128::zero(),
                 },
-                slippage: Decimal::zero(),
+                slippage_bps: 10_000u128,
             });
 
         Ok(expected_receive_amount.receive_amount.amount >= minimum_receive_amount.amount)
@@ -191,15 +191,16 @@ impl Exchange for ThorExchange {
 
         let optimal_return_amount = swap_amount.amount.mul_floor(Decimal::one() / spot_price);
 
-        let slippage =
-            Decimal::one().checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))?;
+        let slippage_bps = Uint128::new(10_000).mul_ceil(
+            Decimal::one().checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))?,
+        );
 
         Ok(ExpectedReceiveAmount {
             receive_amount: Coin {
                 denom: target_denom.denom_string(),
                 amount: out_amount,
             },
-            slippage,
+            slippage_bps: slippage_bps.into(),
         })
     }
 
@@ -812,12 +813,10 @@ mod route_tests {
 
 #[cfg(test)]
 mod expected_receive_amount_tests {
-    use std::str::FromStr;
-
     use calc_rs::types::ExpectedReceiveAmount;
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
-        Addr, Binary, Coin, ContractResult, Decimal, StdError, SystemError, SystemResult, Uint128,
+        Addr, Binary, Coin, ContractResult, StdError, SystemError, SystemResult, Uint128,
     };
     use prost::Message;
     use rujira_rs::{
@@ -904,7 +903,7 @@ mod expected_receive_amount_tests {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(99)
                 },
-                slippage: Decimal::from_str("0.01").unwrap()
+                slippage_bps: 100u128
             }
         );
 
@@ -924,7 +923,7 @@ mod expected_receive_amount_tests {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(99)
                 },
-                slippage: Decimal::from_str("0.01").unwrap()
+                slippage_bps: 100u128
             }
         );
     }
@@ -968,7 +967,7 @@ mod expected_receive_amount_tests {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(98)
                 },
-                slippage: Decimal::from_str("0.02").unwrap()
+                slippage_bps: 200u128
             }
         );
 
@@ -988,7 +987,7 @@ mod expected_receive_amount_tests {
                     denom: target_denom.denom_string(),
                     amount: Uint128::new(98)
                 },
-                slippage: Decimal::from_str("0.02").unwrap()
+                slippage_bps: 200u128
             }
         );
     }

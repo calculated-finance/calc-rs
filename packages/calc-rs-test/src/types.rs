@@ -92,7 +92,7 @@ pub struct NewStatistics {
 
 #[cw_serde]
 pub enum StrategyStatistics {
-    Dca(DcaStatistics),
+    Twap(DcaStatistics),
     New(NewStatistics),
 }
 
@@ -139,14 +139,14 @@ pub struct CustomStrategyConfig {
 #[derive()]
 #[cw_serde]
 pub enum StrategyConfig {
-    Dca(DcaStrategyConfig),
+    Twap(DcaStrategyConfig),
     Custom(CustomStrategyConfig),
 }
 
 impl From<InstantiateStrategyConfig> for StrategyConfig {
     fn from(config: InstantiateStrategyConfig) -> Self {
         match config {
-            InstantiateStrategyConfig::Dca {
+            InstantiateStrategyConfig::Twap {
                 owner,
                 swap_amount,
                 minimum_receive_amount,
@@ -157,7 +157,7 @@ impl From<InstantiateStrategyConfig> for StrategyConfig {
                 mutable_destinations,
                 immutable_destinations,
                 affiliate_code,
-            } => StrategyConfig::Dca(DcaStrategyConfig {
+            } => StrategyConfig::Twap(DcaStrategyConfig {
                 owner,
                 swap_amount,
                 minimum_receive_amount,
@@ -197,7 +197,7 @@ pub trait Owned {
 impl Owned for StrategyConfig {
     fn owner(&self) -> Addr {
         match self {
-            StrategyConfig::Dca(dca_strategy) => dca_strategy.owner.clone(),
+            StrategyConfig::Twap(twap_strategy) => twap_strategy.owner.clone(),
             StrategyConfig::Custom(new_strategy) => new_strategy.owner.clone(),
         }
     }
@@ -505,7 +505,7 @@ pub enum ManagerQueryMsg {
 
 #[cw_serde]
 pub enum InstantiateStrategyConfig {
-    Dca {
+    Twap {
         owner: Addr,
         swap_amount: Coin,
         minimum_receive_amount: Coin,

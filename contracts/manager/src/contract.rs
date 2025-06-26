@@ -24,7 +24,8 @@ pub fn instantiate(
         deps.storage,
         &ManagerConfig {
             admin: info.sender,
-            code_id: msg.code_id,
+            distributor_code_id: msg.distributor_code_id,
+            twap_code_id: msg.twap_code_id,
             fee_collector: msg.fee_collector,
         },
     )?;
@@ -42,7 +43,8 @@ pub fn migrate(deps: DepsMut, _: Env, msg: ManagerMigrateMsg) -> ContractResult 
         deps.storage,
         &ManagerConfig {
             admin,
-            code_id: msg.code_id,
+            distributor_code_id: msg.distributor_code_id,
+            twap_code_id: msg.twap_code_id,
             fee_collector: msg.fee_collector,
         },
     )?;
@@ -64,15 +66,13 @@ pub fn execute(
             strategy,
         } => {
             let config = CONFIG.load(deps.storage)?;
-
             let strategy_id = STRATEGY_COUNTER.load(deps.storage)? + 1;
-
             let salt = to_json_binary(&(owner.clone(), strategy_id, env.block.time.seconds()))?;
 
             let contract_address = deps.api.addr_humanize(&instantiate2_address(
                 &deps
                     .querier
-                    .query_wasm_code_info(config.code_id)?
+                    .query_wasm_code_info(config.twap_code_id)?
                     .checksum
                     .as_slice(),
                 &deps.api.addr_canonicalize(env.contract.address.as_str())?,
@@ -97,7 +97,7 @@ pub fn execute(
 
             let instantiate_strategy_msg = WasmMsg::Instantiate2 {
                 admin: Some(owner.to_string()),
-                code_id: config.code_id,
+                code_id: config.twap_code_id,
                 label,
                 msg: to_json_binary(&StrategyInstantiateMsg {
                     fee_collector: config.fee_collector,
