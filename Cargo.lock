@@ -563,7 +563,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "distribute"
+name = "distributor"
 version = "0.1.0"
 dependencies = [
  "calc-rs",

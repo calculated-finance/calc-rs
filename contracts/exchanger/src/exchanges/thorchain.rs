@@ -1,6 +1,6 @@
 use calc_rs::types::{
     layer_1_asset, secured_asset, Callback, Condition, Contract, ContractError, ContractResult,
-    CreateTrigger, ExpectedReceiveAmount, MsgDeposit, SchedulerExecuteMsg,
+    CreateTrigger, ExpectedReceiveAmount, MsgDeposit, Route, SchedulerExecuteMsg,
     TriggerConditionsThreshold,
 };
 use cosmwasm_schema::cw_serde;
@@ -18,13 +18,13 @@ use crate::types::Exchange;
 pub const SCHEDULER: Item<Addr> = Item::new("scheduler");
 
 #[cw_serde]
-pub struct ThorExchange {
+pub struct ThorchainExchange {
     scheduler: Addr,
 }
 
-impl ThorExchange {
+impl ThorchainExchange {
     pub fn new(deps: Deps) -> Self {
-        ThorExchange {
+        ThorchainExchange {
             scheduler: SCHEDULER.load(deps.storage).unwrap(),
         }
     }
@@ -96,36 +96,42 @@ fn get_spot_price(pool: &Pool, swap_asset: &Layer1Asset) -> StdResult<(Layer1Ass
     }
 }
 
-impl Exchange for ThorExchange {
+impl Exchange for ThorchainExchange {
     fn can_swap(
         &self,
         deps: Deps,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
+        route: &Option<Route>,
     ) -> StdResult<bool> {
-        let expected_receive_amount = self
-            .expected_receive_amount(
-                deps,
-                swap_amount,
-                &NativeAsset::new(&minimum_receive_amount.denom),
-            )
-            .unwrap_or(ExpectedReceiveAmount {
-                receive_amount: Coin {
-                    denom: minimum_receive_amount.denom.clone(),
-                    amount: Uint128::zero(),
-                },
-                slippage_bps: 10_000u128,
-            });
+        let expected_receive_amount = self.expected_receive_amount(
+            deps,
+            swap_amount,
+            &NativeAsset::new(&minimum_receive_amount.denom),
+            route,
+        )?;
 
         Ok(expected_receive_amount.receive_amount.amount >= minimum_receive_amount.amount)
     }
 
-    fn route(
+    fn path(
         &self,
         deps: Deps,
         swap_amount: &Coin,
         target_denom: &NativeAsset,
+        route: &Option<Route>,
     ) -> StdResult<Vec<Coin>> {
+        if let Some(route) = route {
+            match route {
+                Route::Thorchain {} => {}
+                _ => {
+                    return Err(StdError::generic_err(
+                        "Route type not supported for Thorchain exchange",
+                    ));
+                }
+            }
+        }
+
         let pools = get_pools(deps, &NativeAsset::new(&swap_amount.denom), target_denom)?;
 
         if pools.is_empty() {
@@ -163,7 +169,19 @@ impl Exchange for ThorExchange {
         deps: Deps,
         swap_amount: &Coin,
         target_denom: &NativeAsset,
+        route: &Option<Route>,
     ) -> StdResult<ExpectedReceiveAmount> {
+        if let Some(route) = route {
+            match route {
+                Route::Thorchain {} => {}
+                _ => {
+                    return Err(StdError::generic_err(
+                        "Route not supported for Thorchain exchange",
+                    ));
+                }
+            }
+        }
+
         let swap_asset = NativeAsset::new(&swap_amount.denom);
 
         let pools = get_pools(deps, &swap_asset, target_denom)?;
@@ -187,7 +205,7 @@ impl Exchange for ThorExchange {
             },
         );
 
-        let spot_price = self.spot_price(deps, &swap_asset, target_denom)?;
+        let spot_price = self.spot_price(deps, &swap_asset, target_denom, route)?;
 
         let optimal_return_amount = swap_amount.amount.mul_floor(Decimal::one() / spot_price);
 
@@ -209,7 +227,19 @@ impl Exchange for ThorExchange {
         deps: Deps,
         swap_denom: &NativeAsset,
         target_denom: &NativeAsset,
+        route: &Option<Route>,
     ) -> StdResult<Decimal> {
+        if let Some(route) = route {
+            match route {
+                Route::Thorchain {} => {}
+                _ => {
+                    return Err(StdError::generic_err(
+                        "Route type not supported for Thorchain exchange",
+                    ));
+                }
+            }
+        }
+
         let pools = get_pools(deps, swap_denom, target_denom)?;
 
         if pools.is_empty() {
@@ -239,10 +269,11 @@ impl Exchange for ThorExchange {
         _info: &MessageInfo,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
+        route: &Option<Route>,
         recipient: Addr,
         on_complete: Option<Callback>,
     ) -> ContractResult {
-        if !self.can_swap(deps, swap_amount, minimum_receive_amount)? {
+        if !self.can_swap(deps, swap_amount, minimum_receive_amount, route)? {
             return Err(ContractError::Std(StdError::generic_err(format!(
                 "Unable to swap {} {} into at least {} {}",
                 swap_amount.amount,
@@ -512,13 +543,17 @@ mod pools_tests {
 #[cfg(test)]
 mod can_swap_tests {
 
+    use calc_rs::types::{layer_1_asset, Route};
     use calc_rs_test::mock::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{Addr, Binary, Coin, ContractResult, SystemResult, Uint128};
+    use cosmwasm_std::{Addr, Binary, Coin, ContractResult, StdError, SystemResult, Uint128};
     use prost::Message;
-    use rujira_rs::proto::types::{QueryPoolRequest, QueryPoolResponse};
+    use rujira_rs::{
+        proto::types::{QueryPoolRequest, QueryPoolResponse},
+        NativeAsset,
+    };
 
     use crate::{
-        exchanges::thor::{default_pool_response, ThorExchange, SCHEDULER},
+        exchanges::thorchain::{default_pool_response, ThorchainExchange, SCHEDULER},
         types::Exchange,
     };
 
@@ -540,9 +575,50 @@ mod can_swap_tests {
             amount: Uint128::new(50),
         };
 
-        assert!(!ThorExchange::new(deps.as_ref())
-            .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
-            .unwrap());
+        assert_eq!(
+            ThorchainExchange::new(deps.as_ref())
+                .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount, &None)
+                .unwrap_err(),
+            StdError::generic_err(format!(
+                "Failed to load pool for asset {}",
+                layer_1_asset(&NativeAsset::new(&swap_amount.denom))
+                    .unwrap()
+                    .denom_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn cannot_swap_with_non_thor_route() {
+        let mut deps = mock_dependencies_with_custom_querier();
+
+        SCHEDULER
+            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
+            .unwrap();
+
+        let swap_amount = Coin {
+            denom: "arb-eth".to_string().clone(),
+            amount: Uint128::new(100),
+        };
+
+        let minimum_receive_amount = Coin {
+            denom: "eth-usdc".to_string().clone(),
+            amount: Uint128::new(50),
+        };
+
+        assert_eq!(
+            ThorchainExchange::new(deps.as_ref())
+                .can_swap(
+                    deps.as_ref(),
+                    &swap_amount,
+                    &minimum_receive_amount,
+                    &Some(Route::Fin {
+                        address: Addr::unchecked("pair")
+                    })
+                )
+                .unwrap_err(),
+            StdError::generic_err("Route not supported for Thorchain exchange")
+        );
     }
 
     #[test]
@@ -578,8 +654,8 @@ mod can_swap_tests {
             amount: Uint128::new(50),
         };
 
-        assert!(ThorExchange::new(deps.as_ref())
-            .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
+        assert!(ThorchainExchange::new(deps.as_ref())
+            .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount, &None)
             .unwrap());
     }
 
@@ -616,8 +692,8 @@ mod can_swap_tests {
             amount: Uint128::new(50),
         };
 
-        assert!(ThorExchange::new(deps.as_ref())
-            .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount)
+        assert!(ThorchainExchange::new(deps.as_ref())
+            .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount, &None)
             .unwrap());
     }
 }
@@ -635,7 +711,9 @@ mod route_tests {
     };
 
     use crate::{
-        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange, SCHEDULER},
+        exchanges::thorchain::{
+            default_pool_response, layer_1_asset, ThorchainExchange, SCHEDULER,
+        },
         types::Exchange,
     };
 
@@ -662,8 +740,8 @@ mod route_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .route(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap_err(),
             StdError::generic_err(format!(
                 "Failed to load pool for asset {}",
@@ -705,8 +783,8 @@ mod route_tests {
         let target_denom = NativeAsset::new("rune");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .route(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             vec![
                 swap_amount,
@@ -725,8 +803,8 @@ mod route_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .route(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             vec![
                 swap_amount,
@@ -769,8 +847,8 @@ mod route_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .route(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             vec![
                 swap_amount,
@@ -793,8 +871,8 @@ mod route_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .route(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             vec![
                 swap_amount,
@@ -825,7 +903,9 @@ mod expected_receive_amount_tests {
     };
 
     use crate::{
-        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange, SCHEDULER},
+        exchanges::thorchain::{
+            default_pool_response, layer_1_asset, ThorchainExchange, SCHEDULER,
+        },
         types::Exchange,
     };
 
@@ -852,8 +932,8 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .route(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap_err(),
             StdError::generic_err(format!(
                 "Failed to load pool for asset {}",
@@ -895,8 +975,8 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("rune");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount: Coin {
@@ -915,8 +995,8 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount: Coin {
@@ -959,8 +1039,8 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount: Coin {
@@ -979,8 +1059,8 @@ mod expected_receive_amount_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
                 .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount: Coin {
@@ -1009,7 +1089,9 @@ mod spot_price_tests {
     };
 
     use crate::{
-        exchanges::thor::{default_pool_response, layer_1_asset, ThorExchange, SCHEDULER},
+        exchanges::thorchain::{
+            default_pool_response, layer_1_asset, ThorchainExchange, SCHEDULER,
+        },
         types::Exchange,
     };
 
@@ -1032,8 +1114,8 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
                 .unwrap_err(),
             StdError::generic_err(format!(
                 "Failed to load pool for asset {}",
@@ -1071,8 +1153,8 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("rune");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
                 .unwrap(),
             Decimal::from_str("0.2").unwrap()
         );
@@ -1081,8 +1163,8 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("arb-eth");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
                 .unwrap(),
             Decimal::from_str("5").unwrap()
         );
@@ -1117,8 +1199,8 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
                 .unwrap(),
             Decimal::from_str("1").unwrap()
         );
@@ -1127,8 +1209,8 @@ mod spot_price_tests {
         let target_denom = NativeAsset::new("eth-usdc");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom)
+            ThorchainExchange::new(deps.as_ref())
+                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
                 .unwrap(),
             Decimal::from_str("1").unwrap()
         );
@@ -1151,8 +1233,8 @@ mod swap_tests {
     };
 
     use crate::{
-        exchanges::thor::{
-            default_pool_response, layer_1_asset, secured_asset, MsgDeposit, ThorExchange,
+        exchanges::thorchain::{
+            default_pool_response, layer_1_asset, secured_asset, MsgDeposit, ThorchainExchange,
             SCHEDULER,
         },
         types::Exchange,
@@ -1184,7 +1266,7 @@ mod swap_tests {
         };
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
+            ThorchainExchange::new(deps.as_ref())
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -1194,16 +1276,16 @@ mod swap_tests {
                     },
                     &swap_amount,
                     &minimum_receive_amount,
+                    &None,
                     Addr::unchecked("recipient"),
                     None
                 )
                 .unwrap_err(),
             ContractError::Std(StdError::generic_err(format!(
-                "Unable to swap {} {} into at least {} {}",
-                swap_amount.amount,
-                swap_amount.denom,
-                minimum_receive_amount.amount,
-                minimum_receive_amount.denom
+                "Failed to load pool for asset {}",
+                layer_1_asset(&NativeAsset::new(&swap_amount.denom))
+                    .unwrap()
+                    .denom_string()
             )))
         );
     }
@@ -1245,7 +1327,7 @@ mod swap_tests {
         let recipient = Addr::unchecked("recipient");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
+            ThorchainExchange::new(deps.as_ref())
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -1255,6 +1337,7 @@ mod swap_tests {
                     },
                     &swap_amount,
                     &minimum_receive_amount,
+                    &None,
                     recipient.clone(),
                     None
                 )
@@ -1316,7 +1399,7 @@ mod swap_tests {
         let recipient = Addr::unchecked("recipient");
 
         assert_eq!(
-            ThorExchange::new(deps.as_ref())
+            ThorchainExchange::new(deps.as_ref())
                 .swap(
                     deps.as_ref(),
                     &env,
@@ -1326,6 +1409,7 @@ mod swap_tests {
                     },
                     &swap_amount,
                     &minimum_receive_amount,
+                    &None,
                     recipient.clone(),
                     None
                 )

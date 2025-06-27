@@ -578,16 +578,31 @@ const getMyBalances = async () => {
   await fetchBalances(await getAccount(await getWallet()));
 };
 
+const fetchFinBook = async (pairAddress: string) => {
+  const cosmWasmClient = await getSigner();
+  const book = await cosmWasmClient.queryContractSmart(pairAddress, {
+    book: {
+      limit: 10,
+    },
+  });
+
+  console.log("Financial Book:", book);
+};
+
 const STRATEGY_ADDRESS =
   "sthor10tnuxn9u5ylsnn8qnqe2gtu4xhh5lxcwgfmxqw3gj2nhy2c7mylslnv3ue";
 
+const PAIR_ADDRESS =
+  "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";
+
 // uploadContractSuite();
 // fetchBalances(STRATEGY_ADDRESS);
-getMyBalances();
+// getMyBalances();
+// fetchFinBook(PAIR_ADDRESS);
 // createStrategy();
 // getStrategy(STRATEGY_ADDRESS);
 // getStrategies();
-// getConfig(STRATEGY_ADDRESS);
+// getConfig(PAIR_ADDRESS);
 // executeStrategy(STRATEGY_ADDRESS);
 // executeTriggers(STRATEGY_ADDRESS).then(() =>
 //   getStrategyConfig(STRATEGY_ADDRESS)

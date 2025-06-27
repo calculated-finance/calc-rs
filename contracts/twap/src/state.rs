@@ -1,7 +1,7 @@
 use calc_rs::types::{
-    Condition, Schedule, StrategyStatus, TwapConfig, TwapExecuteMsg, TwapStatistics,
+    Condition, Schedule, StrategyExecuteMsg, StrategyStatus, TwapConfig, TwapStatistics,
 };
-use cosmwasm_std::{Coin, Env, StdError, StdResult, Storage};
+use cosmwasm_std::{Coin, Env, StdError, StdResult, Storage, Timestamp};
 use cw_storage_plus::Item;
 
 pub struct ConfigStore {
@@ -19,12 +19,14 @@ impl ConfigStore {
         let config = TwapConfig {
             swap_conditions: vec![
                 match update.swap_cadence {
-                    Schedule::Blocks { interval, previous } => {
-                        Condition::BlocksCompleted(previous.unwrap_or(env.block.height) + interval)
-                    }
+                    Schedule::Blocks { interval, previous } => Condition::BlocksCompleted(
+                        previous.unwrap_or(env.block.height.saturating_sub(interval)) + interval,
+                    ),
                     Schedule::Time { duration, previous } => Condition::TimestampElapsed(
                         previous
-                            .unwrap_or(env.block.time)
+                            .unwrap_or(Timestamp::from_seconds(
+                                env.block.time.seconds().saturating_sub(duration.as_secs()),
+                            ))
                             .plus_seconds(duration.as_secs()),
                     ),
                 },
@@ -33,6 +35,7 @@ impl ConfigStore {
                     amount: Coin::new(1u128, update.swap_amount.denom.clone()),
                 },
                 Condition::ExchangeLiquidityProvided {
+                    exchanger_contract: update.exchanger_contract.clone(),
                     swap_amount: update.swap_amount.clone(),
                     minimum_receive_amount: update.minimum_receive_amount.clone(),
                     maximum_slippage_bps: update.maximum_slippage_bps,
@@ -60,7 +63,7 @@ impl ConfigStore {
     }
 }
 
-pub const STATE: Item<TwapExecuteMsg> = Item::new("state");
+pub const STATE: Item<StrategyExecuteMsg> = Item::new("state");
 pub const CONFIG: ConfigStore = ConfigStore {
     item: Item::new("config"),
 };

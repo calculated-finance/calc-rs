@@ -2,9 +2,9 @@ use std::cmp::min;
 
 use calc_rs::types::{
     Affiliate, Callback, Condition, Contract, ContractError, ContractResult, CreateTrigger,
-    DcaInstantiateMsg, Destination, DistributorConfig, DistributorExecuteMsg, DomainEvent,
-    ExchangeExecuteMsg, ManagerExecuteMsg, ManagerQueryMsg, Recipient, SchedulerExecuteMsg,
-    StrategyStatus, TriggerConditionsThreshold, TwapConfig, TwapExecuteMsg, TwapQueryMsg,
+    DcaInstantiateMsg, Destination, DistributorConfig, DistributorExecuteMsg, ExchangeExecuteMsg,
+    ManagerExecuteMsg, ManagerQueryMsg, Recipient, SchedulerExecuteMsg, StrategyConfig,
+    StrategyExecuteMsg, StrategyStatus, TriggerConditionsThreshold, TwapConfig, TwapQueryMsg,
     TwapStatistics,
 };
 #[cfg(test)]
@@ -13,13 +13,17 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     instantiate2_address, to_json_binary, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps,
-    DepsMut, Env, MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg,
+    DepsMut, Env, MessageInfo, Reply, Response, StdResult, SubMsg, SubMsgResult, Uint128, WasmMsg,
 };
 
-use crate::state::{CONFIG, STATE, STATS};
+use crate::{
+    state::{CONFIG, STATE, STATS},
+    types::DomainEvent,
+};
 
 const BASE_FEE_BPS: u64 = 15;
 const EXECUTE_REPLY_ID: u64 = 1;
+const SCHEDULE_REPLY_ID: u64 = 2;
 
 #[entry_point]
 pub fn instantiate(
@@ -125,6 +129,7 @@ pub fn instantiate(
             swap_amount: msg.swap_amount.clone(),
             minimum_receive_amount: msg.minimum_receive_amount,
             maximum_slippage_bps: msg.maximum_slippage_bps,
+            route: msg.route,
             swap_cadence: msg.swap_cadence,
             swap_conditions: vec![],
             schedule_conditions: vec![],
@@ -133,9 +138,9 @@ pub fn instantiate(
     )?;
 
     let execute_msg = Contract(env.contract.address.clone())
-        .call(to_json_binary(&TwapExecuteMsg::Execute {})?, vec![]);
+        .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
 
-    let strategy_instantiated_event = DomainEvent::StrategyInstantiated {
+    let strategy_instantiated_event = DomainEvent::TwapStrategyCreated {
         contract_address: env.contract.address,
         config: CONFIG.load(deps.storage)?,
     };
@@ -144,6 +149,7 @@ pub fn instantiate(
         deps.storage,
         &TwapStatistics {
             amount_swapped: Coin::new(0u128, msg.swap_amount.denom),
+            amount_withdrawn: vec![],
         },
     )?;
 
@@ -154,7 +160,12 @@ pub fn instantiate(
 }
 
 #[entry_point]
-pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) -> ContractResult {
+pub fn execute(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    msg: StrategyExecuteMsg,
+) -> ContractResult {
     let state = STATE.may_load(deps.storage)?;
 
     if let Some(state) = state {
@@ -166,13 +177,11 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
     }
 
     match msg {
-        TwapExecuteMsg::Clear {} => {}
+        StrategyExecuteMsg::Clear {} => {}
         _ => STATE.save(deps.storage, &msg)?,
     }
 
     let mut config = CONFIG.load(deps.storage)?;
-
-    println!("Config: {:?}", config);
 
     if info.funds.len() > 1
         || (info.funds.len() == 1 && info.funds[0].denom != config.swap_amount.denom)
@@ -190,40 +199,55 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
     let mut events: Vec<DomainEvent> = vec![];
 
     match msg.clone() {
-        TwapExecuteMsg::Update(new_config) => {
+        StrategyExecuteMsg::Update(new_config) => {
             if info.sender != config.owner {
                 return Err(ContractError::Unauthorized {});
             }
 
-            if new_config.manager_contract != config.manager_contract {
-                return Err(ContractError::generic_err(
-                    "Cannot change the manager contract",
-                ));
-            }
+            match new_config {
+                StrategyConfig::Twap(new_config) => {
+                    if new_config.manager_contract != config.manager_contract {
+                        return Err(ContractError::generic_err(
+                            "Cannot change the manager contract",
+                        ));
+                    }
 
-            if new_config.distributor_contract != config.distributor_contract {
-                return Err(ContractError::generic_err(
-                    "Cannot change the distributor contract",
-                ));
-            }
+                    if new_config.distributor_contract != config.distributor_contract {
+                        return Err(ContractError::generic_err(
+                            "Cannot change the distributor contract",
+                        ));
+                    }
 
-            if new_config.swap_amount.denom != config.swap_amount.denom {
-                return Err(ContractError::generic_err(format!(
-                    "Cannot change the swap amount denomination from {} to {}",
-                    config.swap_amount.denom, new_config.swap_amount.denom
-                )));
-            }
+                    if new_config.swap_amount.denom != config.swap_amount.denom {
+                        return Err(ContractError::generic_err(format!(
+                            "Cannot change the swap amount denomination from {} to {}",
+                            config.swap_amount.denom, new_config.swap_amount.denom
+                        )));
+                    }
 
-            if new_config.minimum_receive_amount.denom != config.minimum_receive_amount.denom {
-                return Err(ContractError::generic_err(format!(
-                    "Cannot change the minimum receive amount denomination from {} to {}",
-                    config.minimum_receive_amount.denom, new_config.minimum_receive_amount.denom
-                )));
-            }
+                    if new_config.minimum_receive_amount.denom
+                        != config.minimum_receive_amount.denom
+                    {
+                        return Err(ContractError::generic_err(format!(
+                            "Cannot change the minimum receive amount denomination from {} to {}",
+                            config.minimum_receive_amount.denom,
+                            new_config.minimum_receive_amount.denom
+                        )));
+                    }
 
-            config = new_config;
+                    let updated_event = DomainEvent::TwapStrategyUpdated {
+                        contract_address: env.contract.address.clone(),
+                        old_config: config.clone(),
+                        new_config: new_config.clone(),
+                    };
+
+                    events.push(updated_event);
+
+                    config = new_config;
+                }
+            }
         }
-        TwapExecuteMsg::Execute {} => {
+        StrategyExecuteMsg::Execute {} => {
             if info.sender != config.manager_contract && info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
             }
@@ -267,7 +291,10 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
                             minimum_receive_amount,
                             config.minimum_receive_amount.denom.clone(),
                         ),
+                        route: config.route.clone(),
+                        // send funds to the distributor contract
                         recipient: Some(config.distributor_contract.clone()),
+                        // callback to the distributor contract after swap
                         on_complete: Some(Callback {
                             contract: config.distributor_contract.clone(),
                             msg: to_json_binary(&DistributorExecuteMsg::Distribute {})?,
@@ -282,9 +309,18 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
 
                 sub_messages.push(SubMsg::reply_always(swap_msg, EXECUTE_REPLY_ID));
 
+                let execution_attempted_event = DomainEvent::TwapExecutionAttempted {
+                    contract_address: env.contract.address.clone(),
+                    swap_amount: swap_amount.clone(),
+                    minimum_receive_amount: config.minimum_receive_amount.clone(),
+                    maximum_slippage_bps: config.maximum_slippage_bps,
+                };
+
+                events.push(execution_attempted_event);
+
                 stats.amount_swapped.amount += swap_amount.amount;
             } else {
-                let execution_skipped_event = DomainEvent::ExecutionSkipped {
+                let execution_skipped_event = DomainEvent::TwapExecutionSkipped {
                     contract_address: env.contract.address.clone(),
                     reason: format!(
                         "Execution skipped due to the following reasons:\n* {}",
@@ -293,7 +329,7 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
                             .filter_map(|c| c.err())
                             .map(|e| e.to_string())
                             .collect::<Vec<_>>()
-                            .join("\n *")
+                            .join("\n* ")
                     ),
                 };
 
@@ -308,23 +344,32 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
 
             if schedule_checks.iter().all(|c| c.is_ok()) {
                 config.swap_cadence = config.swap_cadence.next(&env);
+                let trigger_conditions = vec![config.swap_cadence.into_condition(&env)];
 
                 let set_triggers_msg = Contract(config.scheduler_contract.clone()).call(
+                    // Set triggers to execute the strategy when next scheduled
                     to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                        conditions: vec![config.swap_cadence.into_condition(&env)],
+                        conditions: trigger_conditions.clone(),
                         threshold: TriggerConditionsThreshold::All,
                         to: config.manager_contract.clone(),
                         msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                             contract_address: env.contract.address.clone(),
-                            msg: Some(to_json_binary(&TwapExecuteMsg::Execute {})?),
+                            msg: Some(to_json_binary(&StrategyExecuteMsg::Execute {})?),
                         })?,
                     }]))?,
                     config.execution_rebate.clone().map_or(vec![], |c| vec![c]),
                 );
 
-                messages.push(set_triggers_msg);
+                sub_messages.push(SubMsg::reply_always(set_triggers_msg, SCHEDULE_REPLY_ID));
+
+                let scheduling_attempted_event = DomainEvent::TwapSchedulingAttempted {
+                    contract_address: env.contract.address.clone(),
+                    conditions: trigger_conditions.clone(),
+                };
+
+                events.push(scheduling_attempted_event);
             } else {
-                let schedule_skipped_event = DomainEvent::SchedulingSkipped {
+                let schedule_skipped_event = DomainEvent::TwapSchedulingSkipped {
                     contract_address: env.contract.address.clone(),
                     reason: format!(
                         "Scheduling skipped due to the following reasons:\n* {}",
@@ -333,19 +378,20 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
                             .filter_map(|c| c.err())
                             .map(|e| e.to_string())
                             .collect::<Vec<_>>()
-                            .join("\n *")
+                            .join("\n* ")
                     ),
                 };
 
                 events.push(schedule_skipped_event);
             }
         }
-        TwapExecuteMsg::Withdraw { amounts } => {
+        StrategyExecuteMsg::Withdraw { amounts } => {
             if info.sender != config.owner {
                 return Err(ContractError::Unauthorized {});
             }
 
             let mut withdrawals = Coins::default();
+            let mut amount_withdrawn = Coins::try_from(stats.amount_withdrawn)?;
 
             for amount in amounts {
                 let balance = deps
@@ -354,6 +400,11 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
 
                 if balance.amount >= Uint128::zero() {
                     withdrawals.add(Coin::new(
+                        min(balance.amount, amount.amount),
+                        amount.denom.clone(),
+                    ))?;
+
+                    amount_withdrawn.add(Coin::new(
                         min(balance.amount, amount.amount),
                         amount.denom.clone(),
                     ))?;
@@ -370,62 +421,27 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
                 );
             }
 
-            let funds_withdrawn_event = DomainEvent::FundsWithdrawn {
+            let funds_withdrawn_event = DomainEvent::TwapFundsWithdrawn {
                 contract_address: env.contract.address.clone(),
                 to: config.owner.clone(),
                 funds: withdrawals.to_vec(),
             };
 
             events.push(funds_withdrawn_event);
+
+            stats.amount_withdrawn = amount_withdrawn.to_vec();
         }
-        TwapExecuteMsg::UpdateStatus(status) => {
-            if info.sender != config.owner {
+        StrategyExecuteMsg::UpdateStatus(status) => {
+            if info.sender != config.manager_contract {
                 return Err(ContractError::Unauthorized {});
             }
 
             match status {
                 StrategyStatus::Active => {
-                    let schedule_checks = config
-                        .schedule_conditions
-                        .iter()
-                        .map(|c| c.check(deps.as_ref(), &env))
-                        .collect::<Vec<_>>();
+                    let execute_msg = Contract(env.contract.address.clone())
+                        .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
 
-                    if schedule_checks.iter().all(|c| c.is_ok()) {
-                        config.swap_cadence = config.swap_cadence.next(&env);
-
-                        let set_triggers_msg = Contract(config.scheduler_contract.clone()).call(
-                            to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![
-                                CreateTrigger {
-                                    conditions: vec![config.swap_cadence.into_condition(&env)],
-                                    threshold: TriggerConditionsThreshold::All,
-                                    to: config.manager_contract.clone(),
-                                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                                        contract_address: env.contract.address.clone(),
-                                        msg: Some(to_json_binary(&TwapExecuteMsg::Execute {})?),
-                                    })?,
-                                },
-                            ]))?,
-                            config.execution_rebate.clone().map_or(vec![], |c| vec![c]),
-                        );
-
-                        messages.push(set_triggers_msg);
-                    } else {
-                        let schedule_skipped_event = DomainEvent::SchedulingSkipped {
-                            contract_address: env.contract.address.clone(),
-                            reason: format!(
-                                "Scheduling skipped due to the following reasons:\n* {}",
-                                schedule_checks
-                                    .into_iter()
-                                    .filter_map(|c| c.err())
-                                    .map(|e| e.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join("\n *")
-                            ),
-                        };
-
-                        events.push(schedule_skipped_event);
-                    }
+                    messages.push(execute_msg);
                 }
                 StrategyStatus::Paused | StrategyStatus::Archived => {
                     let set_triggers_msg = Contract(config.scheduler_contract.clone()).call(
@@ -436,23 +452,8 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
                     messages.push(set_triggers_msg);
                 }
             }
-
-            let update_status_msg = Contract(config.manager_contract.clone()).call(
-                to_json_binary(&ManagerExecuteMsg::UpdateStatus {
-                    status: status.clone(),
-                })?,
-                vec![],
-            );
-
-            let status_updated_event = DomainEvent::StrategyStatusUpdated {
-                contract_address: env.contract.address.clone(),
-                status,
-            };
-
-            events.push(status_updated_event);
-            messages.push(update_status_msg);
         }
-        TwapExecuteMsg::Clear {} => {
+        StrategyExecuteMsg::Clear {} => {
             if info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
             }
@@ -465,11 +466,11 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
     STATS.save(deps.storage, &stats)?;
 
     match msg {
-        TwapExecuteMsg::Clear {} => {}
+        StrategyExecuteMsg::Clear {} => {}
         _ => {
             messages.push(
                 Contract(env.contract.address.clone())
-                    .call(to_json_binary(&TwapExecuteMsg::Clear {})?, vec![]),
+                    .call(to_json_binary(&StrategyExecuteMsg::Clear {})?, vec![]),
             );
         }
     }
@@ -481,8 +482,49 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: TwapExecuteMsg) 
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn reply(_deps: DepsMut, _env: Env, _reply: Reply) -> ContractResult {
-    Ok(Response::default())
+pub fn reply(_deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
+    let mut events: Vec<DomainEvent> = vec![];
+
+    match reply.id {
+        EXECUTE_REPLY_ID => match reply.result {
+            SubMsgResult::Ok(_) => {
+                let execution_succeeded_event = DomainEvent::TwapExecutionSucceeded {
+                    contract_address: env.contract.address.clone(),
+                    statistics: STATS.load(_deps.storage)?,
+                };
+
+                events.push(execution_succeeded_event);
+            }
+            SubMsgResult::Err(err) => {
+                let execution_failed_event = DomainEvent::TwapExecutionFailed {
+                    contract_address: env.contract.address.clone(),
+                    reason: err.to_string(),
+                };
+
+                events.push(execution_failed_event);
+            }
+        },
+        SCHEDULE_REPLY_ID => match reply.result {
+            SubMsgResult::Ok(_) => {
+                let scheduling_succeeded_event = DomainEvent::TwapSchedulingSucceeded {
+                    contract_address: env.contract.address.clone(),
+                };
+
+                events.push(scheduling_succeeded_event);
+            }
+            SubMsgResult::Err(err) => {
+                let scheduling_failed_event = DomainEvent::TwapSchedulingFailed {
+                    contract_address: env.contract.address.clone(),
+                    reason: err.to_string(),
+                };
+
+                events.push(scheduling_failed_event);
+            }
+        },
+        _ => {}
+    }
+
+    Ok(Response::default().add_events(events))
 }
 
 #[entry_point]
@@ -514,6 +556,7 @@ fn default_config() -> TwapConfig {
         swap_amount: Coin::new(1000u128, "rune"),
         minimum_receive_amount: Coin::new(900u128, "uruji"),
         maximum_slippage_bps: 100,
+        route: None,
         swap_cadence: calc_rs::types::Schedule::Blocks {
             interval: 100,
             previous: None,
@@ -529,8 +572,8 @@ mod instantiate_tests {
     use std::vec;
 
     use calc_rs::types::{
-        Affiliate, Condition, DcaInstantiateMsg, Destination, DistributorConfig, DomainEvent,
-        ManagerQueryMsg, Recipient, Schedule, TwapExecuteMsg,
+        Affiliate, Condition, DcaInstantiateMsg, Destination, DistributorConfig, ManagerQueryMsg,
+        Recipient, Schedule, StrategyExecuteMsg,
     };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
@@ -541,24 +584,27 @@ mod instantiate_tests {
     use crate::{
         contract::{instantiate, CodeInfoResponse, BASE_FEE_BPS},
         state::CONFIG,
+        types::DomainEvent,
     };
 
     fn default_instantiate_msg() -> DcaInstantiateMsg {
         let deps = mock_dependencies();
         DcaInstantiateMsg {
             owner: Addr::unchecked("owner"),
+            manager_contract: deps.api.addr_make("manager"),
+            exchanger_contract: deps.api.addr_make("exchange"),
+            scheduler_contract: deps.api.addr_make("scheduler"),
+            fee_collector: deps.api.addr_make("fee_collector"),
             swap_amount: Coin::new(1000u128, "rune"),
             minimum_receive_amount: Coin::new(900u128, "uruji"),
             maximum_slippage_bps: 100,
+            route: None,
             swap_cadence: Schedule::Blocks {
                 interval: 100,
                 previous: None,
             },
-            exchanger_contract: deps.api.addr_make("exchange"),
-            scheduler_contract: deps.api.addr_make("scheduler"),
             distributor_code_id: 1,
             minimum_distribute_amount: None,
-            fee_collector: deps.api.addr_make("fee_collector"),
             affiliate_code: None,
             mutable_destinations: vec![Destination {
                 recipient: Recipient::Bank {
@@ -569,7 +615,6 @@ mod instantiate_tests {
             }],
             immutable_destinations: vec![],
             execution_rebate: None,
-            manager_contract: deps.api.addr_make("manager"),
         }
     }
 
@@ -826,7 +871,7 @@ mod instantiate_tests {
             response.messages[1],
             SubMsg::new(WasmMsg::Execute {
                 contract_addr: env.contract.address.to_string(),
-                msg: to_json_binary(&TwapExecuteMsg::Execute {}).unwrap(),
+                msg: to_json_binary(&StrategyExecuteMsg::Execute {}).unwrap(),
                 funds: vec![]
             })
         );
@@ -865,7 +910,9 @@ mod instantiate_tests {
             vec![
                 match msg.swap_cadence {
                     Schedule::Blocks { interval, previous } => {
-                        Condition::BlocksCompleted(previous.unwrap_or(env.block.height) + interval)
+                        Condition::BlocksCompleted(
+                            previous.unwrap_or(env.block.height - interval) + interval,
+                        )
                     }
                     Schedule::Time { duration, previous } => Condition::TimestampElapsed(
                         previous
@@ -878,6 +925,7 @@ mod instantiate_tests {
                     amount: Coin::new(1u128, msg.swap_amount.denom.clone()),
                 },
                 Condition::ExchangeLiquidityProvided {
+                    exchanger_contract: msg.exchanger_contract.clone(),
                     swap_amount: msg.swap_amount.clone(),
                     minimum_receive_amount: msg.minimum_receive_amount.clone(),
                     maximum_slippage_bps: msg.maximum_slippage_bps,
@@ -913,7 +961,7 @@ mod instantiate_tests {
 
         assert_eq!(
             response.events[0],
-            Event::from(DomainEvent::StrategyInstantiated {
+            Event::from(DomainEvent::TwapStrategyCreated {
                 contract_address: env.contract.address,
                 config
             })
@@ -923,10 +971,13 @@ mod instantiate_tests {
 
 #[cfg(test)]
 mod update_tests {
-    use calc_rs::types::{ContractError, Schedule, TwapConfig, TwapExecuteMsg, TwapStatistics};
+    use calc_rs::types::{
+        Condition, ContractError, Schedule, StrategyConfig, StrategyExecuteMsg, StrategyStatus,
+        TwapConfig, TwapStatistics,
+    };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr, Coin,
+        Addr, Coin, Timestamp,
     };
 
     use crate::{
@@ -946,6 +997,7 @@ mod update_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -955,7 +1007,7 @@ mod update_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&Addr::unchecked("not-owner"), &[]),
-                TwapExecuteMsg::Update(config.clone())
+                StrategyExecuteMsg::Update(StrategyConfig::Twap(config.clone()))
             )
             .unwrap_err(),
             ContractError::Unauthorized {}
@@ -968,7 +1020,7 @@ mod update_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.owner, &[]),
-                TwapExecuteMsg::Update(config.clone())
+                StrategyExecuteMsg::Update(StrategyConfig::Twap(config.clone()))
             )
             .is_ok(),
             true
@@ -987,14 +1039,15 @@ mod update_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
-        let new_config = TwapExecuteMsg::Update(TwapConfig {
+        let new_config = StrategyExecuteMsg::Update(StrategyConfig::Twap(TwapConfig {
             manager_contract: Addr::unchecked("new-manager"),
             ..config.clone()
-        });
+        }));
 
         assert_eq!(
             execute(
@@ -1020,14 +1073,15 @@ mod update_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
-        let new_config = TwapExecuteMsg::Update(TwapConfig {
+        let new_config = StrategyExecuteMsg::Update(StrategyConfig::Twap(TwapConfig {
             distributor_contract: Addr::unchecked("new-distributor"),
             ..config.clone()
-        });
+        }));
 
         assert_eq!(
             execute(
@@ -1053,14 +1107,15 @@ mod update_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
-        let new_config = TwapExecuteMsg::Update(TwapConfig {
+        let new_config = StrategyExecuteMsg::Update(StrategyConfig::Twap(TwapConfig {
             swap_amount: Coin::new(0u128, "new-denom"),
             ..config.clone()
-        });
+        }));
 
         assert_eq!(
             execute(
@@ -1070,7 +1125,10 @@ mod update_tests {
                 new_config
             )
             .unwrap_err(),
-            ContractError::generic_err("Cannot change the swap amount denomination")
+            ContractError::generic_err(format!(
+                "Cannot change the swap amount denomination from {} to {}",
+                config.swap_amount.denom, "new-denom"
+            ))
         );
     }
 
@@ -1086,14 +1144,15 @@ mod update_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
-        let new_config = TwapExecuteMsg::Update(TwapConfig {
+        let new_config = StrategyExecuteMsg::Update(StrategyConfig::Twap(TwapConfig {
             minimum_receive_amount: Coin::new(0u128, "new-denom"),
             ..config.clone()
-        });
+        }));
 
         assert_eq!(
             execute(
@@ -1103,7 +1162,10 @@ mod update_tests {
                 new_config
             )
             .unwrap_err(),
-            ContractError::generic_err("Cannot change the minimum receive amount denomination")
+            ContractError::generic_err(format!(
+                "Cannot change the minimum receive amount denomination from {} to {}",
+                config.minimum_receive_amount.denom, "new-denom"
+            ))
         );
     }
 
@@ -1119,14 +1181,15 @@ mod update_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
-        let new_config = TwapExecuteMsg::Update(TwapConfig {
+        let new_config = StrategyExecuteMsg::Update(StrategyConfig::Twap(TwapConfig {
             maximum_slippage_bps: 10_001,
             ..config.clone()
-        });
+        }));
 
         assert_eq!(
             execute(
@@ -1147,11 +1210,13 @@ mod update_tests {
         let config = default_config();
 
         CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
         STATS
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1174,29 +1239,73 @@ mod update_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&config.owner, &[]),
-            TwapExecuteMsg::Update(new_config.clone()),
+            StrategyExecuteMsg::Update(StrategyConfig::Twap(new_config.clone())),
         )
         .unwrap();
 
-        assert_eq!(CONFIG.load(deps.as_ref().storage).unwrap(), new_config);
+        assert_eq!(
+            CONFIG.load(deps.as_ref().storage).unwrap(),
+            TwapConfig {
+                swap_conditions: vec![
+                    match new_config.swap_cadence {
+                        Schedule::Blocks { interval, previous } => Condition::BlocksCompleted(
+                            previous.unwrap_or(env.block.height.saturating_sub(interval))
+                                + interval,
+                        ),
+                        Schedule::Time { duration, previous } => Condition::TimestampElapsed(
+                            previous
+                                .unwrap_or(Timestamp::from_seconds(
+                                    env.block.time.seconds().saturating_sub(duration.as_secs()),
+                                ))
+                                .plus_seconds(duration.as_secs()),
+                        ),
+                    },
+                    Condition::BalanceAvailable {
+                        address: env.contract.address.clone(),
+                        amount: Coin::new(1u128, new_config.swap_amount.denom.clone()),
+                    },
+                    Condition::ExchangeLiquidityProvided {
+                        exchanger_contract: config.exchanger_contract.clone(),
+                        swap_amount: new_config.swap_amount.clone(),
+                        minimum_receive_amount: new_config.minimum_receive_amount.clone(),
+                        maximum_slippage_bps: new_config.maximum_slippage_bps,
+                    },
+                ],
+                schedule_conditions: vec![
+                    Condition::BalanceAvailable {
+                        address: env.contract.address.clone(),
+                        amount: Coin::new(1u128, new_config.swap_amount.denom.clone()),
+                    },
+                    Condition::StrategyStatus {
+                        manager_contract: config.manager_contract.clone(),
+                        contract_address: env.contract.address.clone(),
+                        status: StrategyStatus::Active
+                    }
+                ],
+                ..new_config
+            }
+        );
     }
 }
 
 #[cfg(test)]
 mod execute_tests {
     use calc_rs::types::{
-        Callback, Condition, ContractError, CreateTrigger, DistributorExecuteMsg, DomainEvent,
-        ExchangeExecuteMsg, ManagerExecuteMsg, Schedule, SchedulerExecuteMsg,
-        TriggerConditionsThreshold, TwapConfig, TwapExecuteMsg, TwapStatistics,
+        Callback, Condition, ContractError, CreateTrigger, DistributorExecuteMsg,
+        ExchangeExecuteMsg, ExpectedReceiveAmount, ManagerExecuteMsg, Schedule,
+        SchedulerExecuteMsg, Strategy, StrategyExecuteMsg, StrategyStatus,
+        TriggerConditionsThreshold, TwapConfig, TwapStatistics,
     };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        to_json_binary, Addr, Coin, Event, SubMsg, WasmMsg,
+        to_json_binary, Addr, Coin, ContractResult, Event, SubMsg, SystemResult, WasmMsg,
+        WasmQuery,
     };
 
     use crate::{
-        contract::{default_config, execute, EXECUTE_REPLY_ID},
+        contract::{default_config, execute, EXECUTE_REPLY_ID, SCHEDULE_REPLY_ID},
         state::{CONFIG, STATE, STATS},
+        types::DomainEvent,
     };
 
     #[test]
@@ -1210,6 +1319,7 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1220,13 +1330,13 @@ mod execute_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&config.manager_contract, &[]),
-            TwapExecuteMsg::Execute {},
+            StrategyExecuteMsg::Execute {},
         )
         .unwrap();
 
         assert!(response.messages.contains(&SubMsg::new(WasmMsg::Execute {
             contract_addr: env.contract.address.to_string(),
-            msg: to_json_binary(&TwapExecuteMsg::Clear {}).unwrap(),
+            msg: to_json_binary(&StrategyExecuteMsg::Clear {}).unwrap(),
             funds: vec![]
         })));
 
@@ -1235,7 +1345,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap_err(),
             ContractError::generic_err("Contract is already in the requested state")
@@ -1243,7 +1353,7 @@ mod execute_tests {
 
         assert_eq!(
             STATE.load(deps.as_ref().storage).unwrap(),
-            TwapExecuteMsg::Execute {}
+            StrategyExecuteMsg::Execute {}
         );
     }
 
@@ -1254,7 +1364,7 @@ mod execute_tests {
         let config = default_config();
 
         STATE
-            .save(deps.as_mut().storage, &TwapExecuteMsg::Execute {})
+            .save(deps.as_mut().storage, &StrategyExecuteMsg::Execute {})
             .unwrap();
 
         STATS
@@ -1262,6 +1372,7 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1272,7 +1383,7 @@ mod execute_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&env.contract.address, &[]),
-            TwapExecuteMsg::Clear {},
+            StrategyExecuteMsg::Clear {},
         )
         .unwrap();
 
@@ -1290,6 +1401,7 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1301,7 +1413,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&Addr::unchecked("not-manager"), &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap_err(),
             ContractError::Unauthorized {}
@@ -1315,7 +1427,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .is_ok(),
             true
@@ -1329,7 +1441,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&env.contract.address, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .is_ok(),
             true
@@ -1347,6 +1459,7 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1361,7 +1474,7 @@ mod execute_tests {
                     &config.manager_contract,
                     &[Coin::new(1000u128, config.swap_amount.denom.clone())]
                 ),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .is_ok(),
             true
@@ -1375,7 +1488,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&env.contract.address, &[Coin::new(500u128, "random")]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap_err(),
             ContractError::generic_err(format!(
@@ -1398,7 +1511,7 @@ mod execute_tests {
                         Coin::new(500u128, "random")
                     ]
                 ),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap_err(),
             ContractError::generic_err(format!(
@@ -1425,6 +1538,7 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1436,7 +1550,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap_err(),
             ContractError::generic_err(format!(
@@ -1457,6 +1571,7 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1468,12 +1583,26 @@ mod execute_tests {
             vec![config.swap_amount.clone()],
         );
 
+        deps.querier.update_wasm(move |_| {
+            let minimum_receive_amount = default_config().minimum_receive_amount;
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&ExpectedReceiveAmount {
+                    receive_amount: Coin::new(
+                        minimum_receive_amount.amount.u128() + 1,
+                        minimum_receive_amount.denom.clone(),
+                    ),
+                    slippage_bps: config.maximum_slippage_bps - 1,
+                })
+                .unwrap(),
+            ))
+        });
+
         assert_eq!(
             execute(
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap()
             .messages[0],
@@ -1482,6 +1611,7 @@ mod execute_tests {
                     contract_addr: config.exchanger_contract.to_string(),
                     msg: to_json_binary(&ExchangeExecuteMsg::Swap {
                         minimum_receive_amount: config.minimum_receive_amount.clone(),
+                        route: config.route.clone(),
                         recipient: Some(config.distributor_contract.clone()),
                         on_complete: Some(Callback {
                             contract: config.distributor_contract.clone(),
@@ -1501,74 +1631,100 @@ mod execute_tests {
     }
 
     #[test]
-    fn skips_execution_if_conditions_not_met() {
+    fn skips_execution_if_all_conditions_not_met() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let config = TwapConfig {
-            swap_conditions: vec![Condition::BalanceAvailable {
-                address: env.contract.address.clone(),
-                amount: default_config().swap_amount,
-            }],
-            ..default_config()
-        };
+        let config = default_config();
 
         STATS
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
         CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        deps.querier.update_wasm(|_| {
+            let config = default_config();
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&ExpectedReceiveAmount {
+                    receive_amount: config.minimum_receive_amount,
+                    slippage_bps: config.maximum_slippage_bps + 1,
+                })
+                .unwrap(),
+            ))
+        });
 
         assert_eq!(
             execute(
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap()
             .events[0],
-            Event::from(DomainEvent::ExecutionSkipped {
+            Event::from(DomainEvent::TwapExecutionSkipped {
                 contract_address: env.contract.address.clone(),
                 reason: format!(
                     "Execution skipped due to the following reasons:\n* {}",
-                    config
-                        .swap_conditions
-                        .iter()
-                        .map(|c| c.check(deps.as_ref(), &env).unwrap_err().to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n *")
+                    vec![
+                        Condition::BalanceAvailable {
+                            address: env.contract.address.clone(),
+                            amount: Coin::new(1u128, config.swap_amount.denom.clone())
+                        }
+                        .check(deps.as_ref(), &env)
+                        .unwrap_err(),
+                        Condition::ExchangeLiquidityProvided {
+                            exchanger_contract: config.exchanger_contract,
+                            swap_amount: config.swap_amount,
+                            minimum_receive_amount: config.minimum_receive_amount,
+                            maximum_slippage_bps: config.maximum_slippage_bps
+                        }
+                        .check(deps.as_ref(), &env)
+                        .unwrap_err(),
+                    ]
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n* ")
                 )
             })
         );
     }
 
     #[test]
-    fn schedules_next_execution_if_conditions_met() {
+    fn skips_execution_if_any_condition_not_met() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let config = TwapConfig {
-            schedule_conditions: vec![Condition::BalanceAvailable {
-                address: env.contract.address.clone(),
-                amount: default_config().swap_amount,
-            }],
-            ..default_config()
-        };
+        let config = default_config();
 
         STATS
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
         CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        deps.querier.update_wasm(|_| {
+            let config = default_config();
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&ExpectedReceiveAmount {
+                    receive_amount: config.minimum_receive_amount,
+                    slippage_bps: config.maximum_slippage_bps + 1,
+                })
+                .unwrap(),
+            ))
+        });
 
         deps.querier.bank.update_balance(
             env.contract.address.clone(),
@@ -1580,30 +1736,212 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap()
-            .messages[1],
-            SubMsg::new(WasmMsg::Execute {
-                contract_addr: config.scheduler_contract.to_string(),
-                msg: to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                    conditions: vec![config.swap_cadence.into_condition(&env)],
-                    threshold: TriggerConditionsThreshold::All,
-                    to: config.manager_contract.clone(),
-                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                        contract_address: env.contract.address.clone(),
-                        msg: Some(to_json_binary(&TwapExecuteMsg::Execute {}).unwrap()),
-                    })
-                    .unwrap(),
-                }]))
-                .unwrap(),
-                funds: config.execution_rebate.map_or(vec![], |c| vec![c])
+            .events[0],
+            Event::from(DomainEvent::TwapExecutionSkipped {
+                contract_address: env.contract.address.clone(),
+                reason: format!(
+                    "Execution skipped due to the following reasons:\n* {}",
+                    vec![Condition::ExchangeLiquidityProvided {
+                        exchanger_contract: config.exchanger_contract,
+                        swap_amount: config.swap_amount,
+                        minimum_receive_amount: config.minimum_receive_amount,
+                        maximum_slippage_bps: config.maximum_slippage_bps
+                    }
+                    .check(deps.as_ref(), &env)
+                    .unwrap_err(),]
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n* ")
+                )
             })
         );
     }
 
     #[test]
-    fn skips_scheduling_if_conditions_not_met() {
+    fn schedules_next_execution_if_conditions_met() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let exchanger_contract = Addr::unchecked("exchanger");
+        let manager_contract = Addr::unchecked("manager");
+
+        let config = TwapConfig {
+            exchanger_contract: exchanger_contract.clone(),
+            manager_contract: manager_contract.clone(),
+            schedule_conditions: vec![Condition::BalanceAvailable {
+                address: env.contract.address.clone(),
+                amount: default_config().swap_amount,
+            }],
+            ..default_config()
+        };
+
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &TwapStatistics {
+                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![config.swap_amount.clone()],
+        );
+
+        deps.querier.update_wasm(move |query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { contract_addr, .. } => {
+                    if contract_addr == &exchanger_contract.to_string() {
+                        let minimum_receive_amount = default_config().minimum_receive_amount;
+                        to_json_binary(&ExpectedReceiveAmount {
+                            receive_amount: Coin::new(
+                                minimum_receive_amount.amount.u128() + 1,
+                                minimum_receive_amount.denom.clone(),
+                            ),
+                            slippage_bps: config.maximum_slippage_bps - 1,
+                        })
+                        .unwrap()
+                    } else {
+                        to_json_binary(&Strategy {
+                            owner: Addr::unchecked("owner"),
+                            contract_address: Addr::unchecked("contract"),
+                            created_at: 0,
+                            updated_at: 0,
+                            label: "test".to_string(),
+                            status: StrategyStatus::Active,
+                            affiliates: vec![],
+                        })
+                        .unwrap()
+                    }
+                }
+                _ => panic!("Unexpected query type"),
+            }))
+        });
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&config.manager_contract, &[]),
+                StrategyExecuteMsg::Execute {}
+            )
+            .unwrap()
+            .messages[1],
+            SubMsg::reply_always(
+                WasmMsg::Execute {
+                    contract_addr: config.scheduler_contract.to_string(),
+                    msg: to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
+                        conditions: vec![config.swap_cadence.next(&env).into_condition(&env)],
+                        threshold: TriggerConditionsThreshold::All,
+                        to: config.manager_contract.clone(),
+                        msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                            contract_address: env.contract.address.clone(),
+                            msg: Some(to_json_binary(&StrategyExecuteMsg::Execute {}).unwrap()),
+                        })
+                        .unwrap(),
+                    }]))
+                    .unwrap(),
+                    funds: config.execution_rebate.map_or(vec![], |c| vec![c])
+                },
+                SCHEDULE_REPLY_ID
+            )
+        );
+    }
+
+    #[test]
+    fn progresses_swap_cadence_if_conditions_are_met() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let exchanger_contract = Addr::unchecked("exchanger");
+        let manager_contract = Addr::unchecked("manager");
+
+        let config = TwapConfig {
+            exchanger_contract: exchanger_contract.clone(),
+            manager_contract: manager_contract.clone(),
+            schedule_conditions: vec![Condition::BalanceAvailable {
+                address: env.contract.address.clone(),
+                amount: default_config().swap_amount,
+            }],
+            ..default_config()
+        };
+
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &TwapStatistics {
+                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![config.swap_amount.clone()],
+        );
+
+        deps.querier.update_wasm(move |query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { contract_addr, .. } => {
+                    if contract_addr == &exchanger_contract.to_string() {
+                        let minimum_receive_amount = default_config().minimum_receive_amount;
+                        to_json_binary(&ExpectedReceiveAmount {
+                            receive_amount: Coin::new(
+                                minimum_receive_amount.amount.u128() + 1,
+                                minimum_receive_amount.denom.clone(),
+                            ),
+                            slippage_bps: config.maximum_slippage_bps - 1,
+                        })
+                        .unwrap()
+                    } else {
+                        to_json_binary(&Strategy {
+                            owner: Addr::unchecked("owner"),
+                            contract_address: Addr::unchecked("contract"),
+                            created_at: 0,
+                            updated_at: 0,
+                            label: "test".to_string(),
+                            status: StrategyStatus::Active,
+                            affiliates: vec![],
+                        })
+                        .unwrap()
+                    }
+                }
+                _ => panic!("Unexpected query type"),
+            }))
+        });
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&config.manager_contract, &[]),
+            StrategyExecuteMsg::Execute {},
+        )
+        .unwrap();
+
+        assert_ne!(
+            CONFIG.load(deps.as_ref().storage).unwrap().swap_cadence,
+            config.swap_cadence
+        );
+
+        assert_eq!(
+            CONFIG.load(deps.as_ref().storage).unwrap().swap_cadence,
+            config.swap_cadence.next(&env)
+        );
+    }
+
+    #[test]
+    fn skips_scheduling_if_all_conditions_not_met() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let config = TwapConfig {
@@ -1619,31 +1957,133 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
 
         CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
 
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&Strategy {
+                    owner: Addr::unchecked("owner"),
+                    contract_address: Addr::unchecked("contract"),
+                    created_at: 0,
+                    updated_at: 0,
+                    label: "test".to_string(),
+                    status: StrategyStatus::Paused,
+                    affiliates: vec![],
+                })
+                .unwrap(),
+            ))
+        });
+
         assert_eq!(
             execute(
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute {}
             )
             .unwrap()
-            .events[0],
-            Event::from(DomainEvent::SchedulingSkipped {
+            .events[1],
+            Event::from(DomainEvent::TwapSchedulingSkipped {
                 contract_address: env.contract.address.clone(),
                 reason: format!(
                     "Scheduling skipped due to the following reasons:\n* {}",
-                    config
-                        .schedule_conditions
-                        .iter()
-                        .map(|c| c.check(deps.as_ref(), &env).unwrap_err().to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n *")
+                    vec![
+                        Condition::BalanceAvailable {
+                            address: env.contract.address.clone(),
+                            amount: Coin::new(1u128, config.swap_amount.denom.clone())
+                        }
+                        .check(deps.as_ref(), &env)
+                        .unwrap_err(),
+                        Condition::StrategyStatus {
+                            manager_contract: env.contract.address.clone(),
+                            contract_address: env.contract.address.clone(),
+                            status: StrategyStatus::Active
+                        }
+                        .check(deps.as_ref(), &env)
+                        .unwrap_err(),
+                    ]
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n* ")
+                )
+            })
+        );
+    }
+
+    #[test]
+    fn skips_scheduling_if_any_condition_not_met() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let config = TwapConfig {
+            schedule_conditions: vec![Condition::BalanceAvailable {
+                address: env.contract.address.clone(),
+                amount: default_config().swap_amount,
+            }],
+            ..default_config()
+        };
+
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &TwapStatistics {
+                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![config.swap_amount.clone()],
+        );
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&Strategy {
+                    owner: Addr::unchecked("owner"),
+                    contract_address: Addr::unchecked("contract"),
+                    created_at: 0,
+                    updated_at: 0,
+                    label: "test".to_string(),
+                    status: StrategyStatus::Paused,
+                    affiliates: vec![],
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&config.manager_contract, &[]),
+                StrategyExecuteMsg::Execute {}
+            )
+            .unwrap()
+            .events[1],
+            Event::from(DomainEvent::TwapSchedulingSkipped {
+                contract_address: env.contract.address.clone(),
+                reason: format!(
+                    "Scheduling skipped due to the following reasons:\n* {}",
+                    vec![Condition::StrategyStatus {
+                        manager_contract: env.contract.address.clone(),
+                        contract_address: env.contract.address.clone(),
+                        status: StrategyStatus::Active
+                    }
+                    .check(deps.as_ref(), &env)
+                    .unwrap_err(),]
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n* ")
                 )
             })
         );
@@ -1660,6 +2100,7 @@ mod execute_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1671,11 +2112,25 @@ mod execute_tests {
             vec![config.swap_amount.clone()],
         );
 
+        deps.querier.update_wasm(move |_| {
+            let minimum_receive_amount = default_config().minimum_receive_amount;
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&ExpectedReceiveAmount {
+                    receive_amount: Coin::new(
+                        minimum_receive_amount.amount.u128() + 1,
+                        minimum_receive_amount.denom.clone(),
+                    ),
+                    slippage_bps: config.maximum_slippage_bps - 1,
+                })
+                .unwrap(),
+            ))
+        });
+
         execute(
             deps.as_mut(),
             env.clone(),
             message_info(&config.manager_contract, &[]),
-            TwapExecuteMsg::Execute {},
+            StrategyExecuteMsg::Execute {},
         )
         .unwrap();
 
@@ -1686,7 +2141,7 @@ mod execute_tests {
 
 #[cfg(test)]
 mod withdraw_tests {
-    use calc_rs::types::{ContractError, TwapExecuteMsg, TwapStatistics};
+    use calc_rs::types::{ContractError, StrategyExecuteMsg, TwapStatistics};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Coin,
@@ -1710,6 +2165,7 @@ mod withdraw_tests {
                 deps.as_mut().storage,
                 &TwapStatistics {
                     amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1719,7 +2175,7 @@ mod withdraw_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                TwapExecuteMsg::Withdraw { amounts: vec![] }
+                StrategyExecuteMsg::Withdraw { amounts: vec![] }
             )
             .unwrap_err(),
             ContractError::Unauthorized {}
@@ -1732,7 +2188,7 @@ mod withdraw_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&env.contract.address, &[]),
-                TwapExecuteMsg::Withdraw { amounts: vec![] }
+                StrategyExecuteMsg::Withdraw { amounts: vec![] }
             )
             .unwrap_err(),
             ContractError::Unauthorized {}
@@ -1745,7 +2201,7 @@ mod withdraw_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.owner, &[]),
-                TwapExecuteMsg::Withdraw { amounts: vec![] }
+                StrategyExecuteMsg::Withdraw { amounts: vec![] }
             )
             .is_ok(),
             true

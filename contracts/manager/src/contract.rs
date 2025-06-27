@@ -1,17 +1,17 @@
 use calc_rs::types::{
-    Contract, ContractError, ContractResult, ManagerConfig, ManagerExecuteMsg,
-    ManagerInstantiateMsg, ManagerMigrateMsg, ManagerQueryMsg, Strategy, StrategyExecuteMsg,
-    StrategyInstantiateMsg, StrategyStatus,
+    Contract, ContractError, ContractResult, DomainEvent, ManagerConfig, ManagerExecuteMsg,
+    ManagerInstantiateMsg, ManagerQueryMsg, Strategy, StrategyExecuteMsg, StrategyInstantiateMsg,
+    StrategyStatus,
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response,
-    StdError, StdResult, WasmMsg,
+    instantiate2_address, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
+    Order, Response, StdError, StdResult, WasmMsg,
 };
 use cw_storage_plus::Bound;
 
-use crate::state::{strategy_store, AFFILIATES, CONFIG, STRATEGY_COUNTER};
+use crate::state::{strategy_store, AFFILIATES, CODE_IDS, CONFIG, STRATEGY_COUNTER};
 
 #[entry_point]
 pub fn instantiate(
@@ -24,30 +24,15 @@ pub fn instantiate(
         deps.storage,
         &ManagerConfig {
             admin: info.sender,
-            distributor_code_id: msg.distributor_code_id,
-            twap_code_id: msg.twap_code_id,
             fee_collector: msg.fee_collector,
         },
     )?;
+
+    for (strategy_type, code_id) in msg.code_ids {
+        CODE_IDS.save(deps.storage, strategy_type, &code_id)?;
+    }
 
     STRATEGY_COUNTER.save(deps.storage, &0)?;
-
-    Ok(Response::default())
-}
-
-#[entry_point]
-pub fn migrate(deps: DepsMut, _: Env, msg: ManagerMigrateMsg) -> ContractResult {
-    let admin = CONFIG.load(deps.storage)?.admin;
-
-    CONFIG.save(
-        deps.storage,
-        &ManagerConfig {
-            admin,
-            distributor_code_id: msg.distributor_code_id,
-            twap_code_id: msg.twap_code_id,
-            fee_collector: msg.fee_collector,
-        },
-    )?;
 
     Ok(Response::default())
 }
@@ -59,6 +44,9 @@ pub fn execute(
     info: MessageInfo,
     msg: ManagerExecuteMsg,
 ) -> ContractResult {
+    let mut messages: Vec<CosmosMsg> = Vec::new();
+    let mut events: Vec<DomainEvent> = Vec::new();
+
     match msg.clone() {
         ManagerExecuteMsg::InstantiateStrategy {
             owner,
@@ -68,11 +56,13 @@ pub fn execute(
             let config = CONFIG.load(deps.storage)?;
             let strategy_id = STRATEGY_COUNTER.load(deps.storage)? + 1;
             let salt = to_json_binary(&(owner.clone(), strategy_id, env.block.time.seconds()))?;
+            let code_id = CODE_IDS
+                .load(deps.storage, strategy.strategy_type())?;
 
             let contract_address = deps.api.addr_humanize(&instantiate2_address(
                 &deps
                     .querier
-                    .query_wasm_code_info(config.twap_code_id)?
+                    .query_wasm_code_info(code_id)?
                     .checksum
                     .as_slice(),
                 &deps.api.addr_canonicalize(env.contract.address.as_str())?,
@@ -97,7 +87,7 @@ pub fn execute(
 
             let instantiate_strategy_msg = WasmMsg::Instantiate2 {
                 admin: Some(owner.to_string()),
-                code_id: config.twap_code_id,
+                code_id,
                 label,
                 msg: to_json_binary(&StrategyInstantiateMsg {
                     fee_collector: config.fee_collector,
@@ -107,13 +97,13 @@ pub fn execute(
                 salt,
             };
 
-            Ok(Response::default()
-                .add_message(instantiate_strategy_msg)
-                .add_attribute("strategy_contract_address", contract_address))
+            let strategy_instantiated_event = DomainEvent::StrategyInstantiated { contract_address };
+
+            messages.push(instantiate_strategy_msg.into());
+            events.push(strategy_instantiated_event);
         }
         ManagerExecuteMsg::ExecuteStrategy {
-            contract_address,
-            msg,
+            contract_address, .. // We include optional an msg in the API for future extension
         } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
 
@@ -126,81 +116,13 @@ pub fn execute(
                 },
             )?;
 
-            Ok(
-                Response::default().add_message(Contract(contract_address).call(
-                    to_json_binary(&StrategyExecuteMsg::Execute { msg })?,
-                    info.funds,
-                )),
-            )
-        }
-        ManagerExecuteMsg::PauseStrategy { contract_address } => {
-            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+            let execute_msg = Contract(contract_address.clone())
+                    .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds);
 
-            if strategy.owner != info.sender {
-                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
-            }
+            let execute_event = DomainEvent::StrategyExecuted { contract_address };
 
-            strategy_store().save(
-                deps.storage,
-                contract_address.clone(),
-                &Strategy {
-                    updated_at: env.block.time.seconds(),
-                    ..strategy
-                },
-            )?;
-
-            Ok(Response::default().add_message(
-                Contract(contract_address.clone())
-                    .call(to_json_binary(&StrategyExecuteMsg::Pause {})?, info.funds),
-            ))
-        }
-        ManagerExecuteMsg::ResumeStrategy { contract_address } => {
-            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
-
-            if strategy.owner != info.sender {
-                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
-            }
-
-            strategy_store().save(
-                deps.storage,
-                contract_address.clone(),
-                &Strategy {
-                    updated_at: env.block.time.seconds(),
-                    status: StrategyStatus::Active,
-                    ..strategy
-                },
-            )?;
-
-            Ok(Response::default().add_message(
-                Contract(contract_address.clone())
-                    .call(to_json_binary(&StrategyExecuteMsg::Resume {})?, info.funds),
-            ))
-        }
-        ManagerExecuteMsg::WithdrawFromStrategy {
-            contract_address,
-            amounts,
-        } => {
-            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
-
-            if strategy.owner != info.sender {
-                return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
-            }
-
-            strategy_store().save(
-                deps.storage,
-                contract_address.clone(),
-                &Strategy {
-                    updated_at: env.block.time.seconds(),
-                    ..strategy
-                },
-            )?;
-
-            Ok(
-                Response::default().add_message(Contract(contract_address).call(
-                    to_json_binary(&StrategyExecuteMsg::Withdraw { amounts })?,
-                    info.funds,
-                )),
-            )
+            messages.push(execute_msg.into());
+            events.push(execute_event);
         }
         ManagerExecuteMsg::UpdateStrategy {
             contract_address,
@@ -221,41 +143,58 @@ pub fn execute(
                 },
             )?;
 
-            Ok(
-                Response::default().add_message(Contract(contract_address).call(
-                    to_json_binary(&StrategyExecuteMsg::Update { update })?,
+            let update_msg = Contract(contract_address.clone()).call(
+                    to_json_binary(&StrategyExecuteMsg::Update(update))?,
                     info.funds,
-                )),
-            )
-        }
-        ManagerExecuteMsg::UpdateStatus { status } => {
-            let strategy = strategy_store().load(deps.storage, info.sender.clone())?;
+                );
 
-            if strategy.contract_address != info.sender {
+            let update_event = DomainEvent::StrategyUpdated {
+                contract_address,
+            };
+
+            messages.push(update_msg.into());
+            events.push(update_event);
+        }
+        ManagerExecuteMsg::UpdateStrategyStatus { contract_address, status } => {
+            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+
+            if strategy.owner != info.sender {
                 return Err(ContractError::Std(StdError::generic_err("Unauthorized")));
             }
 
             strategy_store().save(
                 deps.storage,
-                info.sender.clone(),
+                contract_address.clone(),
                 &Strategy {
-                    status: status,
+                    status: status.clone(),
                     updated_at: env.block.time.seconds(),
                     ..strategy
                 },
             )?;
 
-            Ok(Response::default())
+            let update_status_msg = Contract(contract_address.clone()).call(
+                    to_json_binary(&StrategyExecuteMsg::UpdateStatus(status))?,
+                    info.funds,
+                );
+
+            let update_status_event = DomainEvent::StrategyStatusUpdated {
+                contract_address,
+            };
+
+            messages.push(update_status_msg.into());
+            events.push(update_status_event);
         }
         ManagerExecuteMsg::AddAffiliate { affiliate } => {
             AFFILIATES.save(deps.storage, affiliate.code.clone(), &affiliate)?;
-            Ok(Response::default())
         }
         ManagerExecuteMsg::RemoveAffiliate { code } => {
             AFFILIATES.remove(deps.storage, code);
-            Ok(Response::default())
         }
-    }
+    };
+
+    Ok(Response::default()
+        .add_messages(messages)
+        .add_events(events))
 }
 
 #[entry_point]

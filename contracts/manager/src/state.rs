@@ -1,8 +1,10 @@
-use calc_rs::types::{Affiliate, ManagerConfig, Strategy};
+use calc_rs::types::{Affiliate, ManagerConfig, Strategy, StrategyType};
 use cosmwasm_std::Addr;
 use cw_storage_plus::{Index, IndexList, IndexedMap, Item, Map, MultiIndex};
 
 pub const CONFIG: Item<ManagerConfig> = Item::new("config");
+
+pub const CODE_IDS: Map<StrategyType, u64> = Map::new("code_ids");
 
 pub const STRATEGY_COUNTER: Item<u64> = Item::new("strategy_counter");
 

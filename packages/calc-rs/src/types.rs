@@ -3,10 +3,9 @@ use std::{collections::HashMap, time::Duration, u8};
 use anybuf::Anybuf;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    to_json_string, Addr, AnyMsg, BankMsg, Binary, CanonicalAddr, CheckedFromRatioError,
-    CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg, Decimal, Deps, Env, Event,
-    Instantiate2AddressError, MessageInfo, OverflowError, Response, StdError, StdResult, Timestamp,
-    Uint128, WasmMsg,
+    Addr, AnyMsg, BankMsg, Binary, CanonicalAddr, CheckedFromRatioError, CheckedMultiplyRatioError,
+    Coin, CoinsError, CosmosMsg, Decimal, Deps, Env, Event, Instantiate2AddressError, MessageInfo,
+    OverflowError, Response, StdError, StdResult, Timestamp, Uint128, WasmMsg,
 };
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 use rujira_rs::{
@@ -55,8 +54,6 @@ pub type ContractResult = Result<Response, ContractError>;
 #[cw_serde]
 pub struct ManagerConfig {
     pub admin: Addr,
-    pub distributor_code_id: u64,
-    pub twap_code_id: u64,
     pub fee_collector: Addr,
 }
 
@@ -77,6 +74,7 @@ pub enum Condition {
         price: Price,
     },
     ExchangeLiquidityProvided {
+        exchanger_contract: Addr,
         swap_amount: Coin,
         minimum_receive_amount: Coin,
         maximum_slippage_bps: u128,
@@ -144,16 +142,18 @@ impl Condition {
                 )))
             }
             Condition::ExchangeLiquidityProvided {
+                exchanger_contract,
                 swap_amount,
                 minimum_receive_amount,
                 maximum_slippage_bps,
             } => {
                 let expected_receive_amount =
                     deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
-                        swap_amount.denom.clone(),
+                        exchanger_contract,
                         &ExchangeQueryMsg::ExpectedReceiveAmount {
                             swap_amount: swap_amount.clone(),
                             target_denom: minimum_receive_amount.denom.clone(),
+                            route: None,
                         },
                     )?;
 
@@ -182,7 +182,7 @@ impl Condition {
                 }
 
                 Err(StdError::generic_err(format!(
-                    "Balance available for {} ({}) is less than required {}",
+                    "Balance available for {} ({}) is less than required ({})",
                     address, balance.amount, amount.amount
                 )))
             }
@@ -227,6 +227,7 @@ impl Condition {
                 swap_amount,
                 minimum_receive_amount,
                 maximum_slippage_bps,
+                ..
             } => format!(
                 "exchange liquidity provided: swap_amount={}, minimum_receive_amount={}, maximum_slippage_bps={}",
                 swap_amount, minimum_receive_amount, maximum_slippage_bps
@@ -265,11 +266,13 @@ pub enum ConditionFilter {
 #[cw_serde]
 pub struct TwapStatistics {
     pub amount_swapped: Coin,
+    pub amount_withdrawn: Vec<Coin>,
 }
 
 #[cw_serde]
 pub struct DistributorStatistics {
     pub amount_distributed: HashMap<String, Vec<Coin>>,
+    pub amount_withdrawn: Vec<Coin>,
 }
 
 #[cw_serde]
@@ -502,6 +505,7 @@ pub struct TwapConfig {
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub maximum_slippage_bps: u128,
+    pub route: Option<Route>,
     pub swap_cadence: Schedule,
     pub swap_conditions: Vec<Condition>,
     pub schedule_conditions: Vec<Condition>,
@@ -517,61 +521,32 @@ pub struct DistributorConfig {
     pub conditions: Vec<Condition>,
 }
 
-#[derive()]
+#[cw_serde]
+pub enum StrategyType {
+    Twap,
+}
+
+impl<'a> Prefixer<'a> for StrategyType {
+    fn prefix(&self) -> Vec<Key> {
+        vec![Key::Val8([self.clone() as u8])]
+    }
+}
+
+impl<'a> PrimaryKey<'a> for StrategyType {
+    type Prefix = Self;
+    type SubPrefix = Self;
+    type Suffix = ();
+    type SuperSuffix = ();
+
+    fn key(&self) -> Vec<Key> {
+        vec![Key::Val8([self.clone() as u8])]
+    }
+}
+
 #[cw_serde]
 pub enum StrategyConfig {
     Twap(TwapConfig),
-    // Custom(DistributeStrategyConfig),
 }
-
-// impl From<InstantiateStrategyCommand> for StrategyConfig {
-//     fn from(config: InstantiateStrategyCommand) -> Self {
-//         match config {
-//             InstantiateStrategyCommand::Accumulate {
-//                 owner,
-//                 swap_amount,
-//                 minimum_receive_amount,
-//                 schedule,
-//                 exchange_contract,
-//                 scheduler_contract,
-//                 execution_rebate,
-//                 mutable_destinations,
-//                 immutable_destinations,
-//                 affiliate_code,
-//             } => StrategyConfig::Accumulate(AccumulateStrategyConfig {
-//                 owner,
-//                 swap_amount,
-//                 minimum_receive_amount,
-//                 schedule,
-//                 exchange_contract,
-//                 scheduler_contract,
-//                 execution_rebate,
-//                 mutable_destinations,
-//                 immutable_destinations,
-//                 affiliate_code,
-//                 statistics: AccumulateStatistics {
-//                     amount_deposited: Coin {
-//                         denom: swap_amount.denom.to_string(),
-//                         amount: Uint128::zero(),
-//                     },
-//                     amount_swapped: Coin {
-//                         denom: swap_amount.denom.to_string(),
-//                         amount: Uint128::zero(),
-//                     },
-//                     amount_received: Coin {
-//                         denom: minimum_receive_amount.denom.to_string(),
-//                         amount: Uint128::zero(),
-//                     },
-//                 },
-//             }),
-//             InstantiateStrategyCommand::Distribute {} => {
-//                 StrategyConfig::Custom(DistributeStrategyConfig {
-//                     owner: Addr::unchecked("custom_strategy_owner"),
-//                 })
-//             }
-//         }
-//     }
-// }
 
 pub trait Owned {
     fn owner(&self) -> Addr;
@@ -581,7 +556,6 @@ impl Owned for StrategyConfig {
     fn owner(&self) -> Addr {
         match self {
             StrategyConfig::Twap(strategy) => strategy.owner.clone(),
-            // StrategyConfig::Custom(strategy) => strategy.owner.clone(),
         }
     }
 }
@@ -689,15 +663,13 @@ impl Trigger {
 
 #[cw_serde]
 pub struct ManagerInstantiateMsg {
-    pub distributor_code_id: u64,
-    pub twap_code_id: u64,
+    pub code_ids: Vec<(StrategyType, u64)>,
     pub fee_collector: Addr,
 }
 
 #[cw_serde]
 pub struct ManagerMigrateMsg {
-    pub distributor_code_id: u64,
-    pub twap_code_id: u64,
+    pub code_ids: Vec<(StrategyType, u64)>,
     pub fee_collector: Addr,
 }
 
@@ -712,22 +684,13 @@ pub enum ManagerExecuteMsg {
         contract_address: Addr,
         msg: Option<Binary>,
     },
-    PauseStrategy {
+    UpdateStrategyStatus {
         contract_address: Addr,
-    },
-    ResumeStrategy {
-        contract_address: Addr,
-    },
-    WithdrawFromStrategy {
-        contract_address: Addr,
-        amounts: Vec<Coin>,
+        status: StrategyStatus,
     },
     UpdateStrategy {
         contract_address: Addr,
         update: StrategyConfig,
-    },
-    UpdateStatus {
-        status: StrategyStatus,
     },
     AddAffiliate {
         affiliate: Affiliate,
@@ -762,7 +725,7 @@ pub enum ManagerQueryMsg {
 
 #[cw_serde]
 pub enum InstantiateStrategyCommand {
-    Accumulate {
+    Twap {
         owner: Addr,
         swap_amount: Coin,
         minimum_receive_amount: Coin,
@@ -774,7 +737,14 @@ pub enum InstantiateStrategyCommand {
         mutable_destinations: Vec<Destination>,
         immutable_destinations: Vec<Destination>,
     },
-    Distribute {},
+}
+
+impl InstantiateStrategyCommand {
+    pub fn strategy_type(&self) -> StrategyType {
+        match self {
+            InstantiateStrategyCommand::Twap { .. } => StrategyType::Twap,
+        }
+    }
 }
 
 #[cw_serde]
@@ -783,15 +753,15 @@ pub struct StrategyInstantiateMsg {
     pub strategy: InstantiateStrategyCommand,
 }
 
-#[cw_serde]
-pub enum StrategyExecuteMsg {
-    Execute { msg: Option<Binary> },
-    Deposit {},
-    Withdraw { amounts: Vec<Coin> },
-    Pause {},
-    Resume {},
-    Update { update: StrategyConfig },
-}
+// #[cw_serde]
+// pub enum StrategyExecuteMsg {
+//     Execute { msg: Option<Binary> },
+//     Deposit {},
+//     Withdraw { amounts: Vec<Coin> },
+//     Pause {},
+//     Resume {},
+//     Update { update: StrategyConfig },
+// }
 
 #[cw_serde]
 #[derive(QueryResponses)]
@@ -810,9 +780,16 @@ pub struct Callback {
 }
 
 #[cw_serde]
+pub enum Route {
+    Fin { address: Addr },
+    Thorchain {},
+}
+
+#[cw_serde]
 pub enum ExchangeExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
+        route: Option<Route>,
         recipient: Option<Addr>,
         on_complete: Option<Callback>,
     },
@@ -825,21 +802,25 @@ pub enum ExchangeQueryMsg {
     CanSwap {
         swap_amount: Coin,
         minimum_receive_amount: Coin,
+        route: Option<Route>,
     },
     #[returns(Vec<Coin>)]
-    Route {
+    Path {
         swap_amount: Coin,
         target_denom: String,
+        route: Option<Route>,
     },
     #[returns(Decimal)]
     SpotPrice {
         swap_denom: String,
         target_denom: String,
+        route: Option<Route>,
     },
     #[returns(ExpectedReceiveAmount)]
     ExpectedReceiveAmount {
         swap_amount: Coin,
         target_denom: String,
+        route: Option<Route>,
     },
 }
 
@@ -905,6 +886,7 @@ pub struct DcaInstantiateMsg {
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub maximum_slippage_bps: u128,
+    pub route: Option<Route>,
     pub swap_cadence: Schedule,
     pub minimum_distribute_amount: Option<Coin>,
     pub distributor_code_id: u64,
@@ -919,10 +901,10 @@ pub struct DcaInstantiateMsg {
 }
 
 #[cw_serde]
-pub enum TwapExecuteMsg {
+pub enum StrategyExecuteMsg {
     Execute {},
     Withdraw { amounts: Vec<Coin> },
-    Update(TwapConfig),
+    Update(StrategyConfig),
     UpdateStatus(StrategyStatus),
     Clear {},
 }
@@ -935,184 +917,36 @@ pub enum TwapQueryMsg {
 }
 
 pub enum DomainEvent {
-    StrategyInstantiated {
-        contract_address: Addr,
-        config: TwapConfig,
-    },
-    StrategyPaused {
-        contract_address: Addr,
-        reason: String,
-    },
-    StrategyArchived {
-        contract_address: Addr,
-    },
-    StrategyResumed {
-        contract_address: Addr,
-    },
-    StrategyUpdated {
-        contract_address: Addr,
-        old_config: TwapConfig,
-        new_config: TwapConfig,
-    },
-    StrategyStatusUpdated {
-        contract_address: Addr,
-        status: StrategyStatus,
-    },
-    FundsDeposited {
-        contract_address: Addr,
-        from: Addr,
-        funds: Vec<Coin>,
-    },
-    FundsWithdrawn {
-        contract_address: Addr,
-        to: Addr,
-        funds: Vec<Coin>,
-    },
-    FundsDistributed {
-        contract_address: Addr,
-        to: Vec<Distribution>,
-    },
-    ExecutionSucceeded {
-        contract_address: Addr,
-        statistics: TwapStatistics,
-    },
-    ExecutionFailed {
-        contract_address: Addr,
-        reason: String,
-    },
-    ExecutionSkipped {
-        contract_address: Addr,
-        reason: String,
-    },
-    SchedulingSucceeded {
-        contract_address: Addr,
-        conditions: Vec<Condition>,
-    },
-    SchedulingFailed {
-        contract_address: Addr,
-        reason: String,
-    },
-    SchedulingSkipped {
-        contract_address: Addr,
-        reason: String,
-    },
+    StrategyInstantiated { contract_address: Addr },
+    StrategyExecuted { contract_address: Addr },
+    StrategyPaused { contract_address: Addr },
+    StrategyArchived { contract_address: Addr },
+    StrategyResumed { contract_address: Addr },
+    StrategyUpdated { contract_address: Addr },
+    StrategyStatusUpdated { contract_address: Addr },
 }
 
 impl From<DomainEvent> for Event {
     fn from(event: DomainEvent) -> Self {
         match event {
-            DomainEvent::StrategyInstantiated {
-                contract_address,
-                config,
-            } => Event::new("strategy_created")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "config",
-                    to_json_string(&config).expect("Failed to serialize config"),
-                ),
-            DomainEvent::StrategyPaused {
-                contract_address,
-                reason,
-            } => Event::new("strategy_paused")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
+            DomainEvent::StrategyInstantiated { contract_address } => {
+                Event::new("strategy_created")
+                    .add_attribute("contract_address", contract_address.as_str())
+            }
+            DomainEvent::StrategyExecuted { contract_address } => Event::new("strategy_executed")
+                .add_attribute("contract_address", contract_address.as_str()),
+            DomainEvent::StrategyPaused { contract_address } => Event::new("strategy_paused")
+                .add_attribute("contract_address", contract_address.as_str()),
             DomainEvent::StrategyResumed { contract_address } => Event::new("strategy_resumed")
                 .add_attribute("contract_address", contract_address.as_str()),
             DomainEvent::StrategyArchived { contract_address } => Event::new("strategy_archived")
                 .add_attribute("contract_address", contract_address.as_str()),
-            DomainEvent::StrategyUpdated {
-                contract_address,
-                old_config,
-                new_config,
-            } => Event::new("strategy_updated")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "old_config",
-                    to_json_string(&old_config).expect("Failed to serialize old config"),
-                )
-                .add_attribute(
-                    "new_config",
-                    to_json_string(&new_config).expect("Failed to serialize new config"),
-                ),
-            DomainEvent::StrategyStatusUpdated {
-                contract_address,
-                status,
-            } => Event::new("strategy_status_updated")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("status", format!("{:?}", status)),
-            DomainEvent::FundsDeposited {
-                contract_address,
-                from,
-                funds: amount,
-            } => Event::new("funds_deposited")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("from", from.as_str())
-                .add_attribute(
-                    "amount",
-                    to_json_string(&amount).expect("Failed to serialize amount"),
-                ),
-            DomainEvent::FundsWithdrawn {
-                contract_address,
-                to,
-                funds: amount,
-            } => Event::new("funds_withdrawn")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("to", to.as_str())
-                .add_attribute(
-                    "amount",
-                    to_json_string(&amount).expect("Failed to serialize withdrawn amount"),
-                ),
-            DomainEvent::FundsDistributed {
-                contract_address,
-                to: distributions,
-            } => Event::new("funds_distributed")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "distributions",
-                    to_json_string(&distributions).expect("Failed to serialize distributions"),
-                ),
-            DomainEvent::ExecutionSucceeded {
-                contract_address,
-                statistics,
-            } => Event::new("execution_succeeded")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "statistics",
-                    to_json_string(&statistics).expect("Failed to serialize statistics"),
-                ),
-            DomainEvent::ExecutionFailed {
-                contract_address,
-                reason: error,
-            } => Event::new("execution_failed")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("error", error),
-            DomainEvent::ExecutionSkipped {
-                contract_address,
-                reason,
-            } => Event::new("execution_skipped")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
-            DomainEvent::SchedulingSucceeded {
-                contract_address,
-                conditions,
-            } => Event::new("scheduling_succeeded")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "conditions",
-                    to_json_string(&conditions).expect("Failed to serialize conditions"),
-                ),
-            DomainEvent::SchedulingFailed {
-                contract_address,
-                reason,
-            } => Event::new("scheduling_failed")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
-            DomainEvent::SchedulingSkipped {
-                contract_address,
-                reason,
-            } => Event::new("scheduling_skipped")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("reason", reason),
+            DomainEvent::StrategyUpdated { contract_address } => Event::new("strategy_updated")
+                .add_attribute("contract_address", contract_address.as_str()),
+            DomainEvent::StrategyStatusUpdated { contract_address } => {
+                Event::new("strategy_status_updated")
+                    .add_attribute("contract_address", contract_address.as_str())
+            }
         }
     }
 }

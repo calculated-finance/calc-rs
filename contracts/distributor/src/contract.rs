@@ -2,7 +2,7 @@ use std::{cmp::min, collections::HashMap};
 
 use calc_rs::types::{
     ContractError, ContractResult, Distribution, DistributorConfig, DistributorExecuteMsg,
-    DistributorQueryMsg, DistributorStatistics, DomainEvent,
+    DistributorQueryMsg, DistributorStatistics,
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -11,7 +11,10 @@ use cosmwasm_std::{
     MessageInfo, Response, StdResult, Uint128,
 };
 
-use crate::state::{CONFIG, STATS};
+use crate::{
+    state::{CONFIG, STATS},
+    types::DomainEvent,
+};
 
 #[entry_point]
 pub fn instantiate(
@@ -26,6 +29,7 @@ pub fn instantiate(
         deps.storage,
         &DistributorStatistics {
             amount_distributed: HashMap::new(),
+            amount_withdrawn: vec![],
         },
     )?;
 
@@ -40,7 +44,7 @@ pub fn execute(
     msg: DistributorExecuteMsg,
 ) -> ContractResult {
     let mut config = CONFIG.load(deps.storage)?;
-    let mut statistics = STATS.load(deps.storage)?;
+    let mut stats = STATS.load(deps.storage)?;
 
     let mut messages: Vec<CosmosMsg> = vec![];
     let mut events: Vec<DomainEvent> = vec![];
@@ -92,7 +96,7 @@ pub fn execute(
                             }],
                         };
 
-                        statistics
+                        stats
                             .amount_distributed
                             .entry(distribution.destination.recipient.key())
                             .and_modify(|existing| {
@@ -128,11 +132,8 @@ pub fn execute(
                 return Err(ContractError::Unauthorized {});
             }
 
-            if info.sender != config.owner {
-                return Err(ContractError::Unauthorized {});
-            }
-
             let mut withdrawals = Coins::default();
+            let mut amount_withdrawn = Coins::try_from(stats.amount_withdrawn)?;
 
             for amount in amounts {
                 let balance = deps
@@ -141,6 +142,11 @@ pub fn execute(
 
                 if balance.amount >= Uint128::zero() {
                     withdrawals.add(Coin::new(
+                        min(balance.amount, amount.amount),
+                        amount.denom.clone(),
+                    ))?;
+
+                    amount_withdrawn.add(Coin::new(
                         min(balance.amount, amount.amount),
                         amount.denom.clone(),
                     ))?;
@@ -164,11 +170,13 @@ pub fn execute(
             };
 
             events.push(funds_withdrawn_event);
+
+            stats.amount_withdrawn = amount_withdrawn.to_vec();
         }
     };
 
     CONFIG.save(&mut deps, &env, &mut config)?;
-    STATS.save(deps.storage, &statistics)?;
+    STATS.save(deps.storage, &stats)?;
 
     Ok(Response::new().add_messages(messages).add_events(events))
 }
@@ -211,6 +219,7 @@ mod instantiate_tests {
             statistics,
             DistributorStatistics {
                 amount_distributed: HashMap::new(),
+                amount_withdrawn: vec![]
             }
         );
     }
@@ -237,6 +246,7 @@ mod update_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -270,6 +280,7 @@ mod update_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -336,6 +347,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -377,6 +389,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -394,6 +407,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -558,6 +572,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -702,6 +717,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -790,6 +806,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -880,6 +897,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -896,6 +914,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -957,6 +976,7 @@ mod distribute_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1031,6 +1051,7 @@ mod withdraw_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1065,6 +1086,7 @@ mod withdraw_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1078,6 +1100,7 @@ mod withdraw_tests {
                 deps.as_mut().storage,
                 &DistributorStatistics {
                     amount_distributed: HashMap::new(),
+                    amount_withdrawn: vec![],
                 },
             )
             .unwrap();
