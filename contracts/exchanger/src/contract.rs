@@ -1,6 +1,5 @@
-use calc_rs::types::{
-    Callback, ContractResult, ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReceiveAmount, Route,
-};
+use calc_rs::exchanger::{ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReceiveAmount, Route};
+use calc_rs::types::{Callback, ContractResult};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -553,7 +552,7 @@ mod path_tests {
 #[cfg(test)]
 mod expected_receive_amount_tests {
     use crate::{contract::expected_receive_amount, exchanges::mock::MockExchange};
-    use calc_rs::types::ExpectedReceiveAmount;
+    use calc_rs::exchanger::ExpectedReceiveAmount;
     use cosmwasm_std::{testing::mock_dependencies, Coin, StdError, Uint128};
 
     #[test]
@@ -745,7 +744,7 @@ mod spot_price_tests {
 
 #[cfg(test)]
 mod swap_tests {
-    use calc_rs::types::ExpectedReceiveAmount;
+    use calc_rs::exchanger::ExpectedReceiveAmount;
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         Addr, Coin, MessageInfo, Response, Uint128,

@@ -1,4 +1,7 @@
-use calc_rs::types::{Condition, ConditionFilter, Trigger};
+use calc_rs::{
+    scheduler::{ConditionFilter, Trigger},
+    types::Condition,
+};
 use cosmwasm_std::{Addr, Deps, Env, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 
@@ -139,7 +142,7 @@ pub fn delete_trigger(storage: &mut dyn Storage, id: u64) -> StdResult<()> {
 mod trigger_state_tests {
     use super::*;
 
-    use calc_rs::types::TriggerConditionsThreshold;
+    use calc_rs::scheduler::TriggerConditionsThreshold;
     use cosmwasm_std::testing::mock_env;
     use cosmwasm_std::{testing::mock_dependencies, Addr, Timestamp};
     use cosmwasm_std::{to_json_binary, Coin};

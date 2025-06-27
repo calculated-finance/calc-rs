@@ -1,4 +1,4 @@
-use calc_rs::types::{DistributorExecuteMsg, DistributorInstantiateMsg, DistributorQueryMsg};
+use calc_rs::distributor::{DistributorExecuteMsg, DistributorInstantiateMsg, DistributorQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {

@@ -1,4 +1,4 @@
-use calc_rs::types::{Affiliate, ManagerConfig, Strategy, StrategyType};
+use calc_rs::manager::{Affiliate, ManagerConfig, Strategy, StrategyType};
 use cosmwasm_std::Addr;
 use cw_storage_plus::{Index, IndexList, IndexedMap, Item, Map, MultiIndex};
 

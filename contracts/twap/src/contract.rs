@@ -1,11 +1,18 @@
 use std::cmp::min;
 
-use calc_rs::types::{
-    Affiliate, Callback, Condition, Contract, ContractError, ContractResult, CreateTrigger,
-    DcaInstantiateMsg, Destination, DistributorConfig, DistributorExecuteMsg, ExchangeExecuteMsg,
-    ManagerExecuteMsg, ManagerQueryMsg, Recipient, SchedulerExecuteMsg, StrategyConfig,
-    StrategyExecuteMsg, StrategyStatus, TriggerConditionsThreshold, TwapConfig, TwapQueryMsg,
-    TwapStatistics,
+use calc_rs::{
+    distributor::{
+        Destination, DistributorConfig, DistributorExecuteMsg, DistributorQueryMsg,
+        DistributorStatistics, Recipient,
+    },
+    exchanger::ExchangeExecuteMsg,
+    manager::{
+        Affiliate, CreateStrategyConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyConfig,
+        StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg, StrategyStatistics,
+    },
+    scheduler::{CreateTrigger, SchedulerExecuteMsg, TriggerConditionsThreshold},
+    twap::TwapConfig,
+    types::{Callback, Condition, Contract, ContractError, ContractResult, StrategyStatus},
 };
 #[cfg(test)]
 use cosmwasm_schema::cw_serde;
@@ -18,7 +25,7 @@ use cosmwasm_std::{
 
 use crate::{
     state::{CONFIG, STATE, STATS},
-    types::DomainEvent,
+    types::{DomainEvent, TwapStatistics},
 };
 
 const BASE_FEE_BPS: u64 = 15;
@@ -30,133 +37,138 @@ pub fn instantiate(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: DcaInstantiateMsg,
+    msg: StrategyInstantiateMsg,
 ) -> ContractResult {
-    if info.sender != msg.manager_contract {
-        return Err(ContractError::Unauthorized {});
-    }
+    match msg.config {
+        CreateStrategyConfig::Twap(config) => {
+            let total_shares = config
+                .mutable_destinations
+                .iter()
+                .chain(config.immutable_destinations.iter())
+                .into_iter()
+                .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
-    let total_shares = msg
-        .mutable_destinations
-        .iter()
-        .chain(msg.immutable_destinations.iter())
-        .into_iter()
-        .fold(Uint128::zero(), |acc, d| acc + d.shares);
+            let total_shares_with_fees = total_shares.mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
 
-    let total_shares_with_fees = total_shares.mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
+            let fee_destinations = match config.affiliate_code.clone() {
+                Some(code) => {
+                    let affiliate = deps.querier.query_wasm_smart::<Affiliate>(
+                        info.sender.clone(),
+                        &ManagerQueryMsg::Affiliate { code },
+                    )?;
 
-    let fee_destinations = match msg.affiliate_code.clone() {
-        Some(code) => {
-            let affiliate = deps.querier.query_wasm_smart::<Affiliate>(
-                msg.manager_contract.clone(),
-                &ManagerQueryMsg::Affiliate { code },
-            )?;
+                    if affiliate.bps > 7 {
+                        return Err(ContractError::generic_err(
+                            "Affiliate BPS cannot be greater than 7",
+                        ));
+                    }
 
-            if affiliate.bps > 7 {
-                return Err(ContractError::generic_err(
-                    "Affiliate BPS cannot be greater than 7",
-                ));
-            }
-
-            vec![
-                Destination {
+                    vec![
+                        Destination {
+                            recipient: Recipient::Bank {
+                                address: msg.fee_collector,
+                            },
+                            shares: total_shares_with_fees
+                                .mul_floor(Decimal::bps(BASE_FEE_BPS - affiliate.bps)),
+                            label: Some("CALC".to_string()),
+                        },
+                        Destination {
+                            recipient: Recipient::Bank {
+                                address: affiliate.address,
+                            },
+                            shares: total_shares_with_fees.mul_floor(Decimal::bps(affiliate.bps)),
+                            label: Some(format!("Affiliate: {}", affiliate.code).to_string()),
+                        },
+                    ]
+                }
+                None => vec![Destination {
                     recipient: Recipient::Bank {
                         address: msg.fee_collector,
                     },
-                    shares: total_shares_with_fees
-                        .mul_floor(Decimal::bps(BASE_FEE_BPS - affiliate.bps)),
+                    shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
                     label: Some("CALC".to_string()),
+                }],
+            };
+
+            let salt = to_json_binary(&(
+                env.contract.address.to_string().truncate(16),
+                env.block.time.seconds(),
+                config.distributor_code_id,
+            ))?;
+
+            let distributor_address = deps.api.addr_humanize(&instantiate2_address(
+                &deps
+                    .querier
+                    .query_wasm_code_info(config.distributor_code_id)?
+                    .checksum
+                    .as_slice(),
+                &deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                &salt,
+            )?)?;
+
+            let instantiate_distributor_msg = WasmMsg::Instantiate2 {
+                admin: Some(env.contract.address.to_string()),
+                code_id: config.distributor_code_id,
+                label: "Distributor".to_string(),
+                msg: to_json_binary(&DistributorConfig {
+                    owner: env.contract.address.clone(),
+                    denoms: vec![config.minimum_receive_amount.denom.clone()],
+                    mutable_destinations: config.mutable_destinations,
+                    immutable_destinations: [config.immutable_destinations, fee_destinations]
+                        .concat(),
+                    conditions: config.minimum_distribute_amount.map_or(vec![], |amount| {
+                        vec![Condition::BalanceAvailable {
+                            address: distributor_address.clone(),
+                            amount,
+                        }]
+                    }),
+                })?,
+                funds: vec![],
+                salt,
+            };
+
+            CONFIG.save(
+                deps.storage,
+                &env,
+                &TwapConfig {
+                    owner: config.owner,
+                    manager_contract: info.sender,
+                    exchanger_contract: config.exchanger_contract,
+                    scheduler_contract: config.scheduler_contract,
+                    distributor_contract: distributor_address.clone(),
+                    swap_amount: config.swap_amount.clone(),
+                    minimum_receive_amount: config.minimum_receive_amount,
+                    maximum_slippage_bps: config.maximum_slippage_bps,
+                    route: config.route,
+                    swap_cadence: config.swap_cadence,
+                    swap_conditions: vec![],
+                    schedule_conditions: vec![],
+                    execution_rebate: config.execution_rebate,
                 },
-                Destination {
-                    recipient: Recipient::Bank {
-                        address: affiliate.address,
-                    },
-                    shares: total_shares_with_fees.mul_floor(Decimal::bps(affiliate.bps)),
-                    label: Some(format!("Affiliate: {}", affiliate.code).to_string()),
+            )?;
+
+            let execute_msg = Contract(env.contract.address.clone())
+                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
+
+            let strategy_instantiated_event = DomainEvent::TwapStrategyCreated {
+                contract_address: env.contract.address,
+                config: CONFIG.load(deps.storage)?,
+            };
+
+            STATS.save(
+                deps.storage,
+                &TwapStatistics {
+                    swapped: Coin::new(0u128, config.swap_amount.denom),
+                    withdrawn: vec![],
                 },
-            ]
+            )?;
+
+            Ok(Response::default()
+                .add_message(instantiate_distributor_msg)
+                .add_message(execute_msg)
+                .add_event(strategy_instantiated_event))
         }
-        None => vec![Destination {
-            recipient: Recipient::Bank {
-                address: msg.fee_collector,
-            },
-            shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
-            label: Some("CALC".to_string()),
-        }],
-    };
-
-    let salt = to_json_binary(&(msg.owner.clone(), env.block.time, msg.distributor_code_id))?;
-
-    let distributor_address = deps.api.addr_humanize(&instantiate2_address(
-        &deps
-            .querier
-            .query_wasm_code_info(msg.distributor_code_id)?
-            .checksum
-            .as_slice(),
-        &deps.api.addr_canonicalize(env.contract.address.as_str())?,
-        &salt,
-    )?)?;
-
-    let instantiate_distributor_msg = WasmMsg::Instantiate2 {
-        admin: Some(env.contract.address.to_string()),
-        code_id: msg.distributor_code_id,
-        label: "Distributor".to_string(),
-        msg: to_json_binary(&DistributorConfig {
-            owner: env.contract.address.clone(),
-            denoms: vec![msg.minimum_receive_amount.denom.clone()],
-            mutable_destinations: msg.mutable_destinations,
-            immutable_destinations: [msg.immutable_destinations, fee_destinations].concat(),
-            conditions: msg.minimum_distribute_amount.map_or(vec![], |amount| {
-                vec![Condition::BalanceAvailable {
-                    address: distributor_address.clone(),
-                    amount,
-                }]
-            }),
-        })?,
-        funds: vec![],
-        salt,
-    };
-
-    CONFIG.save(
-        deps.storage,
-        &env,
-        &TwapConfig {
-            owner: msg.owner,
-            manager_contract: msg.manager_contract,
-            exchanger_contract: msg.exchanger_contract,
-            scheduler_contract: msg.scheduler_contract,
-            distributor_contract: distributor_address.clone(),
-            swap_amount: msg.swap_amount.clone(),
-            minimum_receive_amount: msg.minimum_receive_amount,
-            maximum_slippage_bps: msg.maximum_slippage_bps,
-            route: msg.route,
-            swap_cadence: msg.swap_cadence,
-            swap_conditions: vec![],
-            schedule_conditions: vec![],
-            execution_rebate: msg.execution_rebate,
-        },
-    )?;
-
-    let execute_msg = Contract(env.contract.address.clone())
-        .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
-
-    let strategy_instantiated_event = DomainEvent::TwapStrategyCreated {
-        contract_address: env.contract.address,
-        config: CONFIG.load(deps.storage)?,
-    };
-
-    STATS.save(
-        deps.storage,
-        &TwapStatistics {
-            amount_swapped: Coin::new(0u128, msg.swap_amount.denom),
-            amount_withdrawn: vec![],
-        },
-    )?;
-
-    Ok(Response::default()
-        .add_message(instantiate_distributor_msg)
-        .add_message(execute_msg)
-        .add_event(strategy_instantiated_event))
+    }
 }
 
 #[entry_point]
@@ -318,7 +330,7 @@ pub fn execute(
 
                 events.push(execution_attempted_event);
 
-                stats.amount_swapped.amount += swap_amount.amount;
+                stats.swapped.amount += swap_amount.amount;
             } else {
                 let execution_skipped_event = DomainEvent::TwapExecutionSkipped {
                     contract_address: env.contract.address.clone(),
@@ -391,7 +403,7 @@ pub fn execute(
             }
 
             let mut withdrawals = Coins::default();
-            let mut amount_withdrawn = Coins::try_from(stats.amount_withdrawn)?;
+            let mut amount_withdrawn = Coins::try_from(stats.withdrawn)?;
 
             for amount in amounts {
                 let balance = deps
@@ -429,7 +441,7 @@ pub fn execute(
 
             events.push(funds_withdrawn_event);
 
-            stats.amount_withdrawn = amount_withdrawn.to_vec();
+            stats.withdrawn = amount_withdrawn.to_vec();
         }
         StrategyExecuteMsg::UpdateStatus(status) => {
             if info.sender != config.manager_contract {
@@ -528,14 +540,46 @@ pub fn reply(_deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
 }
 
 #[entry_point]
-pub fn query(deps: Deps, _env: Env, msg: TwapQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     let config = CONFIG.load(deps.storage)?;
-
     match msg {
-        TwapQueryMsg::Config {} => to_json_binary(&config),
+        StrategyQueryMsg::Config {} => to_json_binary(&config),
+        StrategyQueryMsg::Statistics {} => {
+            let distributor_stats = deps.querier.query_wasm_smart::<DistributorStatistics>(
+                config.distributor_contract.clone(),
+                &DistributorQueryMsg::Statistics {},
+            )?;
+
+            let stats = STATS.load(deps.storage)?;
+
+            let remaining = deps.querier.query_balance(
+                env.contract.address.clone(),
+                config.swap_amount.denom.clone(),
+            )?;
+
+            let received = deps.querier.query_balance(
+                config.distributor_contract.clone(),
+                config.minimum_receive_amount.denom.clone(),
+            )?;
+
+            let mut withdrawn = Coins::try_from(stats.withdrawn)?;
+
+            for amount in distributor_stats.withdrawn {
+                withdrawn.add(amount)?;
+            }
+
+            to_json_binary(&StrategyStatistics::Twap {
+                remaining,
+                swapped: stats.swapped,
+                received,
+                distributed: distributor_stats.distributed,
+                withdrawn: withdrawn.to_vec(),
+            })
+        }
     }
 }
 
+// We defining our own CodeInfoResponse because the library one restricts creation
 #[cfg(test)]
 #[cw_serde]
 struct CodeInfoResponse {
@@ -569,11 +613,11 @@ fn default_config() -> TwapConfig {
 
 #[cfg(test)]
 mod instantiate_tests {
-    use std::vec;
+    use super::*;
 
-    use calc_rs::types::{
-        Affiliate, Condition, DcaInstantiateMsg, Destination, DistributorConfig, ManagerQueryMsg,
-        Recipient, Schedule, StrategyExecuteMsg,
+    use calc_rs::{
+        twap::InstantiateTwapCommand,
+        types::{Condition, Schedule},
     };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
@@ -587,14 +631,12 @@ mod instantiate_tests {
         types::DomainEvent,
     };
 
-    fn default_instantiate_msg() -> DcaInstantiateMsg {
+    fn default_instantiate_msg() -> InstantiateTwapCommand {
         let deps = mock_dependencies();
-        DcaInstantiateMsg {
+        InstantiateTwapCommand {
             owner: Addr::unchecked("owner"),
-            manager_contract: deps.api.addr_make("manager"),
             exchanger_contract: deps.api.addr_make("exchange"),
             scheduler_contract: deps.api.addr_make("scheduler"),
-            fee_collector: deps.api.addr_make("fee_collector"),
             swap_amount: Coin::new(1000u128, "rune"),
             minimum_receive_amount: Coin::new(900u128, "uruji"),
             maximum_slippage_bps: 100,
@@ -623,7 +665,7 @@ mod instantiate_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let msg = default_instantiate_msg();
-        let info = message_info(&msg.manager_contract, &[]);
+        let info = message_info(&deps.api.addr_make("manager"), &[]);
 
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
@@ -639,7 +681,18 @@ mod instantiate_tests {
             ))
         });
 
-        let response = instantiate(deps.as_mut(), env.clone(), info, msg.clone()).unwrap();
+        let fee_collector = Addr::unchecked("fee-collector");
+
+        let response = instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            StrategyInstantiateMsg {
+                fee_collector: fee_collector.clone(),
+                config: CreateStrategyConfig::Twap(msg.clone()),
+            },
+        )
+        .unwrap();
 
         let total_shares_with_fees = msg
             .mutable_destinations
@@ -650,7 +703,7 @@ mod instantiate_tests {
 
         let calc_fee_collector_destination = Destination {
             recipient: Recipient::Bank {
-                address: msg.fee_collector.clone(),
+                address: fee_collector.clone(),
             },
             shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
             label: Some("CALC".to_string()),
@@ -681,11 +734,11 @@ mod instantiate_tests {
     fn adds_affiliate_fee_collector_destination() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let msg = DcaInstantiateMsg {
+        let msg = InstantiateTwapCommand {
             affiliate_code: Some("affiliate_code".to_string()),
             ..default_instantiate_msg()
         };
-        let manager = msg.manager_contract.clone();
+        let manager = deps.api.addr_make("manager");
         let info = message_info(&manager, &[]);
 
         let affiliate_bps = 5;
@@ -724,7 +777,18 @@ mod instantiate_tests {
             }))
         });
 
-        let response = instantiate(deps.as_mut(), env.clone(), info, msg.clone()).unwrap();
+        let fee_collector = Addr::unchecked("fee-collector");
+
+        let response = instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            StrategyInstantiateMsg {
+                fee_collector: fee_collector.clone(),
+                config: CreateStrategyConfig::Twap(msg.clone()),
+            },
+        )
+        .unwrap();
 
         let total_shares_with_fees = msg
             .mutable_destinations
@@ -735,7 +799,7 @@ mod instantiate_tests {
 
         let calc_fee_collector_destination = Destination {
             recipient: Recipient::Bank {
-                address: msg.fee_collector.clone(),
+                address: fee_collector.clone(),
             },
             shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS - affiliate_bps)),
             label: Some("CALC".to_string()),
@@ -780,11 +844,11 @@ mod instantiate_tests {
     fn adds_minimum_distribution_amount_condition() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let msg = DcaInstantiateMsg {
+        let msg = InstantiateTwapCommand {
             minimum_distribute_amount: Some(Coin::new(1000u128, "rune")),
             ..default_instantiate_msg()
         };
-        let manager = msg.manager_contract.clone();
+        let manager = deps.api.addr_make("manager");
         let info = message_info(&manager, &[]);
 
         deps.querier.update_wasm(move |_| {
@@ -801,7 +865,19 @@ mod instantiate_tests {
             ))
         });
 
-        let response = instantiate(deps.as_mut(), env.clone(), info, msg.clone()).unwrap();
+        let fee_collector = Addr::unchecked("fee-collector");
+
+        let response = instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            StrategyInstantiateMsg {
+                fee_collector: fee_collector.clone(),
+                config: CreateStrategyConfig::Twap(msg.clone()),
+            },
+        )
+        .unwrap();
+
         let config = CONFIG.load(deps.as_ref().storage).unwrap();
 
         let total_shares_with_fees = msg
@@ -813,7 +889,7 @@ mod instantiate_tests {
 
         let calc_fee_collector_destination = Destination {
             recipient: Recipient::Bank {
-                address: msg.fee_collector.clone(),
+                address: fee_collector.clone(),
             },
             shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
             label: Some("CALC".to_string()),
@@ -848,7 +924,7 @@ mod instantiate_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let msg = default_instantiate_msg();
-        let manager = msg.manager_contract.clone();
+        let manager = deps.api.addr_make("manager");
         let info = message_info(&manager, &[]);
 
         deps.querier.update_wasm(move |_| {
@@ -865,7 +941,16 @@ mod instantiate_tests {
             ))
         });
 
-        let response = instantiate(deps.as_mut(), env.clone(), info, msg.clone()).unwrap();
+        let response = instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            StrategyInstantiateMsg {
+                fee_collector: Addr::unchecked("fee-collector"),
+                config: CreateStrategyConfig::Twap(msg.clone()),
+            },
+        )
+        .unwrap();
 
         assert_eq!(
             response.messages[1],
@@ -881,11 +966,11 @@ mod instantiate_tests {
     fn adds_swap_conditions() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let msg = DcaInstantiateMsg {
+        let msg = InstantiateTwapCommand {
             minimum_distribute_amount: Some(Coin::new(1000u128, "rune")),
             ..default_instantiate_msg()
         };
-        let manager = msg.manager_contract.clone();
+        let manager = deps.api.addr_make("manager");
         let info = message_info(&manager, &[]);
 
         deps.querier.update_wasm(move |_| {
@@ -902,7 +987,17 @@ mod instantiate_tests {
             ))
         });
 
-        instantiate(deps.as_mut(), env.clone(), info, msg.clone()).unwrap();
+        instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            StrategyInstantiateMsg {
+                fee_collector: Addr::unchecked("fee-collector"),
+                config: CreateStrategyConfig::Twap(msg.clone()),
+            },
+        )
+        .unwrap();
+
         let config = CONFIG.load(deps.as_ref().storage).unwrap();
 
         assert_eq!(
@@ -939,7 +1034,7 @@ mod instantiate_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let msg = default_instantiate_msg();
-        let manager = msg.manager_contract.clone();
+        let manager = deps.api.addr_make("manager");
         let info = message_info(&manager, &[]);
 
         deps.querier.update_wasm(move |_| {
@@ -956,7 +1051,17 @@ mod instantiate_tests {
             ))
         });
 
-        let response = instantiate(deps.as_mut(), env.clone(), info, msg.clone()).unwrap();
+        let response = instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            StrategyInstantiateMsg {
+                fee_collector: Addr::unchecked("fee-collector"),
+                config: CreateStrategyConfig::Twap(msg.clone()),
+            },
+        )
+        .unwrap();
+
         let config = CONFIG.load(deps.as_ref().storage).unwrap();
 
         assert_eq!(
@@ -971,10 +1076,9 @@ mod instantiate_tests {
 
 #[cfg(test)]
 mod update_tests {
-    use calc_rs::types::{
-        Condition, ContractError, Schedule, StrategyConfig, StrategyExecuteMsg, StrategyStatus,
-        TwapConfig, TwapStatistics,
-    };
+    use super::*;
+
+    use calc_rs::types::Schedule;
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr, Coin, Timestamp,
@@ -996,8 +1100,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1038,8 +1142,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1072,8 +1176,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1106,8 +1210,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1143,8 +1247,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1180,8 +1284,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1215,8 +1319,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1290,12 +1394,9 @@ mod update_tests {
 
 #[cfg(test)]
 mod execute_tests {
-    use calc_rs::types::{
-        Callback, Condition, ContractError, CreateTrigger, DistributorExecuteMsg,
-        ExchangeExecuteMsg, ExpectedReceiveAmount, ManagerExecuteMsg, Schedule,
-        SchedulerExecuteMsg, Strategy, StrategyExecuteMsg, StrategyStatus,
-        TriggerConditionsThreshold, TwapConfig, TwapStatistics,
-    };
+    use super::*;
+
+    use calc_rs::{exchanger::ExpectedReceiveAmount, manager::Strategy, types::Schedule};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         to_json_binary, Addr, Coin, ContractResult, Event, SubMsg, SystemResult, WasmMsg,
@@ -1318,8 +1419,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1371,8 +1472,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1400,8 +1501,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1458,8 +1559,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1537,8 +1638,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1570,8 +1671,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1640,8 +1741,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1707,8 +1808,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1783,8 +1884,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1878,8 +1979,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1956,8 +2057,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -2032,8 +2133,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -2099,8 +2200,8 @@ mod execute_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -2135,13 +2236,14 @@ mod execute_tests {
         .unwrap();
 
         let stats = STATS.load(deps.as_ref().storage).unwrap();
-        assert_eq!(stats.amount_swapped, config.swap_amount);
+        assert_eq!(stats.swapped, config.swap_amount);
     }
 }
 
 #[cfg(test)]
 mod withdraw_tests {
-    use calc_rs::types::{ContractError, StrategyExecuteMsg, TwapStatistics};
+    use super::*;
+
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Coin,
@@ -2164,8 +2266,8 @@ mod withdraw_tests {
             .save(
                 deps.as_mut().storage,
                 &TwapStatistics {
-                    amount_swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
-                    amount_withdrawn: vec![],
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();

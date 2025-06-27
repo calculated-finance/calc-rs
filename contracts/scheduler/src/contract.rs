@@ -1,8 +1,8 @@
 use std::vec;
 
-use calc_rs::types::{
-    ConditionFilter, Contract, ContractError, ContractResult, SchedulerExecuteMsg,
-    SchedulerQueryMsg, Trigger,
+use calc_rs::{
+    scheduler::{ConditionFilter, SchedulerExecuteMsg, SchedulerQueryMsg, Trigger},
+    types::{Contract, ContractError, ContractResult},
 };
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
@@ -173,12 +173,12 @@ pub fn reply(_deps: DepsMut, _env: Env, _reply: Reply) -> ContractResult {
 }
 
 #[cfg(test)]
-fn default_create_trigger_command() -> calc_rs::types::CreateTrigger {
-    calc_rs::types::CreateTrigger {
+fn default_create_trigger_command() -> calc_rs::scheduler::CreateTrigger {
+    calc_rs::scheduler::CreateTrigger {
         conditions: vec![calc_rs::types::Condition::BlocksCompleted(
             cosmwasm_std::testing::mock_env().block.height + 10,
         )],
-        threshold: calc_rs::types::TriggerConditionsThreshold::All,
+        threshold: calc_rs::scheduler::TriggerConditionsThreshold::All,
         to: cosmwasm_std::Addr::unchecked("recipient"),
         msg: to_json_binary(&"test message").unwrap(),
     }
@@ -497,7 +497,8 @@ mod set_triggers_tests {
 #[cfg(test)]
 mod execute_trigger_tests {
     use super::*;
-    use calc_rs::types::{Condition, CreateTrigger};
+    use calc_rs::scheduler::CreateTrigger;
+    use calc_rs::types::Condition;
     use cosmwasm_std::testing::message_info;
     use cosmwasm_std::WasmMsg;
     use cosmwasm_std::{

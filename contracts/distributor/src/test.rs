@@ -1,11 +1,8 @@
 #[cfg(test)]
-pub fn default_destination() -> calc_rs::types::Destination {
-    use calc_rs::types::Recipient;
-    use cosmwasm_std::Uint128;
-
-    calc_rs::types::Destination {
-        shares: Uint128::new(10000),
-        recipient: Recipient::Bank {
+pub fn default_destination() -> calc_rs::distributor::Destination {
+    calc_rs::distributor::Destination {
+        shares: cosmwasm_std::Uint128::new(10000),
+        recipient: calc_rs::distributor::Recipient::Bank {
             address: cosmwasm_std::testing::mock_dependencies()
                 .api
                 .addr_make("destination1"),
@@ -15,8 +12,8 @@ pub fn default_destination() -> calc_rs::types::Destination {
 }
 
 #[cfg(test)]
-pub fn default_config() -> calc_rs::types::DistributorConfig {
-    calc_rs::types::DistributorConfig {
+pub fn default_config() -> calc_rs::distributor::DistributorConfig {
+    calc_rs::distributor::DistributorConfig {
         owner: cosmwasm_std::testing::mock_dependencies()
             .api
             .addr_make("owner"),

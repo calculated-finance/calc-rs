@@ -1,6 +1,9 @@
 use std::{cmp::max, str::FromStr};
 
-use calc_rs::types::{Callback, Contract, ContractResult, ExpectedReceiveAmount, Route};
+use calc_rs::{
+    exchanger::{ExpectedReceiveAmount, Route},
+    types::{Callback, Contract, ContractResult},
+};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, BankMsg, Coin, Decimal, Deps, Env, MessageInfo, Order, QueryRequest,
@@ -859,10 +862,9 @@ mod spot_price_tests {
 
 #[cfg(test)]
 mod swap_tests {
-    use std::str::FromStr;
-    use std::vec;
+    use super::*;
 
-    use calc_rs::types::{Contract, ContractError, Route};
+    use calc_rs::types::ContractError;
     use cosmwasm_std::testing::mock_env;
     use cosmwasm_std::{testing::mock_dependencies, to_json_binary, Addr, Coin};
     use cosmwasm_std::{ContractResult, Decimal, MessageInfo, StdError, SystemResult, Uint128};

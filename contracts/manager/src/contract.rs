@@ -1,7 +1,9 @@
-use calc_rs::types::{
-    Contract, ContractError, ContractResult, DomainEvent, ManagerConfig, ManagerExecuteMsg,
-    ManagerInstantiateMsg, ManagerQueryMsg, Strategy, StrategyExecuteMsg, StrategyInstantiateMsg,
-    StrategyStatus,
+use calc_rs::{
+    manager::{
+        DomainEvent, ManagerConfig, ManagerExecuteMsg, ManagerInstantiateMsg, ManagerQueryMsg,
+        Strategy, StrategyExecuteMsg, StrategyInstantiateMsg,
+    },
+    types::{Contract, ContractError, ContractResult, StrategyStatus},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -38,6 +40,15 @@ pub fn instantiate(
 }
 
 #[entry_point]
+pub fn migrate(deps: DepsMut, _env: Env, msg: ManagerInstantiateMsg) -> ContractResult {
+    for (strategy_type, code_id) in msg.code_ids {
+        CODE_IDS.save(deps.storage, strategy_type, &code_id)?;
+    }
+
+    Ok(Response::default())
+}
+
+#[entry_point]
 pub fn execute(
     deps: DepsMut,
     env: Env,
@@ -55,11 +66,16 @@ pub fn execute(
         } => {
             let config = CONFIG.load(deps.storage)?;
             let strategy_id = STRATEGY_COUNTER.load(deps.storage)? + 1;
-            let salt = to_json_binary(&(owner.clone(), strategy_id, env.block.time.seconds()))?;
-            let code_id = CODE_IDS
-                .load(deps.storage, strategy.strategy_type())?;
 
-            let contract_address = deps.api.addr_humanize(&instantiate2_address(
+            let salt = to_json_binary(&(
+                owner.clone(),
+                strategy_id,
+                env.block.time.seconds(),
+            ))?;
+
+            let code_id = CODE_IDS.load(deps.storage, strategy.strategy_type())?;
+
+            let strategy_address = deps.api.addr_humanize(&instantiate2_address(
                 &deps
                     .querier
                     .query_wasm_code_info(code_id)?
@@ -73,10 +89,10 @@ pub fn execute(
 
             strategy_store().save(
                 deps.storage,
-                contract_address.clone(),
+                strategy_address.clone(),
                 &Strategy {
                     owner: owner.clone(),
-                    contract_address: contract_address.clone(),
+                    contract_address: strategy_address.clone(),
                     created_at: env.block.time.seconds(),
                     updated_at: env.block.time.seconds(),
                     label: label.clone(),
@@ -91,13 +107,13 @@ pub fn execute(
                 label,
                 msg: to_json_binary(&StrategyInstantiateMsg {
                     fee_collector: config.fee_collector,
-                    strategy: strategy.clone(),
+                    config: strategy.clone(),
                 })?,
                 funds: info.funds,
                 salt,
             };
 
-            let strategy_instantiated_event = DomainEvent::StrategyInstantiated { contract_address };
+            let strategy_instantiated_event = DomainEvent::StrategyInstantiated { contract_address: strategy_address };
 
             messages.push(instantiate_strategy_msg.into());
             events.push(strategy_instantiated_event);
@@ -201,6 +217,11 @@ pub fn execute(
 pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
         ManagerQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
+        ManagerQueryMsg::CodeId(strategy_type) => to_json_binary(
+            &CODE_IDS
+                .load(deps.storage, strategy_type)
+                .map_err(|_| StdError::generic_err("Code ID not found"))?,
+        ),
         ManagerQueryMsg::Strategy { address } => {
             to_json_binary(&strategy_store().load(deps.storage, address)?)
         }
@@ -266,7 +287,8 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 #[cfg(test)]
 mod tests {
-    use calc_rs::types::{ManagerQueryMsg, Strategy, StrategyStatus};
+    use super::*;
+    use calc_rs::types::StrategyStatus;
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         to_json_binary, Addr,

@@ -1,8 +1,11 @@
 use std::{cmp::min, collections::HashMap};
 
-use calc_rs::types::{
-    ContractError, ContractResult, Distribution, DistributorConfig, DistributorExecuteMsg,
-    DistributorQueryMsg, DistributorStatistics,
+use calc_rs::{
+    distributor::{
+        Distribution, DistributorConfig, DistributorExecuteMsg, DistributorQueryMsg,
+        DistributorStatistics, DomainEvent,
+    },
+    types::{ContractError, ContractResult},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -11,10 +14,7 @@ use cosmwasm_std::{
     MessageInfo, Response, StdResult, Uint128,
 };
 
-use crate::{
-    state::{CONFIG, STATS},
-    types::DomainEvent,
-};
+use crate::state::{CONFIG, STATS};
 
 #[entry_point]
 pub fn instantiate(
@@ -28,8 +28,8 @@ pub fn instantiate(
     STATS.save(
         deps.storage,
         &DistributorStatistics {
-            amount_distributed: HashMap::new(),
-            amount_withdrawn: vec![],
+            distributed: HashMap::new(),
+            withdrawn: vec![],
         },
     )?;
 
@@ -97,7 +97,7 @@ pub fn execute(
                         };
 
                         stats
-                            .amount_distributed
+                            .distributed
                             .entry(distribution.destination.recipient.key())
                             .and_modify(|existing| {
                                 let mut coins =
@@ -133,7 +133,7 @@ pub fn execute(
             }
 
             let mut withdrawals = Coins::default();
-            let mut amount_withdrawn = Coins::try_from(stats.amount_withdrawn)?;
+            let mut amount_withdrawn = Coins::try_from(stats.withdrawn)?;
 
             for amount in amounts {
                 let balance = deps
@@ -171,7 +171,7 @@ pub fn execute(
 
             events.push(funds_withdrawn_event);
 
-            stats.amount_withdrawn = amount_withdrawn.to_vec();
+            stats.withdrawn = amount_withdrawn.to_vec();
         }
     };
 
@@ -218,8 +218,8 @@ mod instantiate_tests {
         assert_eq!(
             statistics,
             DistributorStatistics {
-                amount_distributed: HashMap::new(),
-                amount_withdrawn: vec![]
+                distributed: HashMap::new(),
+                withdrawn: vec![]
             }
         );
     }
@@ -230,7 +230,7 @@ mod update_tests {
     use crate::test::default_config;
 
     use super::*;
-    use calc_rs::types::{Destination, Recipient};
+    use calc_rs::distributor::{Destination, Recipient};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr,
@@ -245,8 +245,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -279,8 +279,8 @@ mod update_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -330,7 +330,8 @@ mod distribute_tests {
     use crate::test::default_config;
 
     use super::*;
-    use calc_rs::types::{Condition, Destination, MsgDeposit, Recipient, DEPOSIT_FEE};
+    use calc_rs::distributor::{Destination, Recipient};
+    use calc_rs::types::{Condition, MsgDeposit, DEPOSIT_FEE};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr, CosmosMsg, Event, SubMsg, WasmMsg,
@@ -346,8 +347,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -388,8 +389,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -406,8 +407,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -571,8 +572,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -716,8 +717,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -805,8 +806,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -896,8 +897,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -913,8 +914,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -940,7 +941,7 @@ mod distribute_tests {
             .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
         assert_eq!(
-            statistics.amount_distributed,
+            statistics.distributed,
             destinations
                 .iter()
                 .map(|d| (
@@ -975,8 +976,8 @@ mod distribute_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1050,8 +1051,8 @@ mod withdraw_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1085,8 +1086,8 @@ mod withdraw_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();
@@ -1099,8 +1100,8 @@ mod withdraw_tests {
             .save(
                 deps.as_mut().storage,
                 &DistributorStatistics {
-                    amount_distributed: HashMap::new(),
-                    amount_withdrawn: vec![],
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
                 },
             )
             .unwrap();

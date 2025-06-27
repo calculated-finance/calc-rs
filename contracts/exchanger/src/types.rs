@@ -1,4 +1,7 @@
-use calc_rs::types::{Callback, ContractResult, ExpectedReceiveAmount, Route};
+use calc_rs::{
+    exchanger::{ExpectedReceiveAmount, Route},
+    types::{Callback, ContractResult},
+};
 use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, MessageInfo, StdResult};
 use rujira_rs::NativeAsset;
 

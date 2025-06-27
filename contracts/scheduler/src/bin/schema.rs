@@ -1,4 +1,4 @@
-use calc_rs::types::{SchedulerExecuteMsg, SchedulerQueryMsg};
+use calc_rs::scheduler::{SchedulerExecuteMsg, SchedulerQueryMsg};
 use cosmwasm_schema::write_api;
 use scheduler::contract::InstantiateMsg;
 

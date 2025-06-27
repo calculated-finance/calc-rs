@@ -1,4 +1,7 @@
-use calc_rs::types::{Condition, DistributorConfig, DistributorStatistics, Recipient, DEPOSIT_FEE};
+use calc_rs::{
+    distributor::{DistributorConfig, DistributorStatistics, Recipient},
+    types::{Condition, DEPOSIT_FEE},
+};
 use cosmwasm_std::{Coin, DepsMut, Env, StdError, StdResult, Storage, Uint128};
 use cw_storage_plus::Item;
 
@@ -100,7 +103,7 @@ mod save_config_tests {
     use crate::test::{default_config, default_destination};
 
     use super::*;
-    use calc_rs::types::Destination;
+    use calc_rs::distributor::Destination;
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         Addr,

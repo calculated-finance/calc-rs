@@ -1,8 +1,12 @@
-use calc_rs::types::{
-    Condition, Schedule, StrategyExecuteMsg, StrategyStatus, TwapConfig, TwapStatistics,
+use calc_rs::{
+    manager::StrategyExecuteMsg,
+    twap::TwapConfig,
+    types::{Condition, Schedule, StrategyStatus},
 };
 use cosmwasm_std::{Coin, Env, StdError, StdResult, Storage, Timestamp};
 use cw_storage_plus::Item;
+
+use crate::types::TwapStatistics;
 
 pub struct ConfigStore {
     item: Item<TwapConfig>,

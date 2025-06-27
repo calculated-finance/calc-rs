@@ -1,6 +1,12 @@
-use calc_rs::types::{Condition, TwapConfig, TwapStatistics};
+use calc_rs::{twap::TwapConfig, types::Condition};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
+
+#[cw_serde]
+pub struct TwapStatistics {
+    pub swapped: Coin,
+    pub withdrawn: Vec<Coin>,
+}
 
 #[cw_serde]
 pub enum DomainEvent {

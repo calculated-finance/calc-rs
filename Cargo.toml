@@ -1,5 +1,8 @@
 [workspace]
-members = ["packages/*", "contracts/*"]
+members = [
+  "packages/*",
+  "contracts/twap",
+]
 resolver = "1"
 
 [profile.release]
@@ -15,8 +18,6 @@ overflow-checks = true
 
 [workspace.dependencies]
 anybuf = "1.0"
-calc-rs = { path = "packages/calc-rs" }
-calc-rs-test = { path = "packages/calc-rs-test" }
 cosmwasm-schema = "2.2.0"
 cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1"] }
 cosmwasm-storage = "1.5.2"
@@ -30,3 +31,5 @@ rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "171f878c6e
 schemars = "0.8.16"
 serde = { version = "1.0.197", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.58" }
+calc-rs = { path = "packages/calc-rs" }
+calc-rs-test = { path = "packages/calc-rs-test" }
