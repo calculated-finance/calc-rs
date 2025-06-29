@@ -1,6 +1,6 @@
 use calc_rs::{
     scheduler::{ConditionFilter, Trigger},
-    types::Condition,
+    core::Condition,
 };
 use cosmwasm_std::{Addr, Deps, Env, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};

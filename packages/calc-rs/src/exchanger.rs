@@ -1,6 +1,6 @@
-use crate::types::Callback;
+use crate::core::Callback;
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Coin, Decimal};
+use cosmwasm_std::{Addr, Coin};
 
 #[cw_serde]
 pub enum Route {
@@ -12,6 +12,7 @@ pub enum Route {
 pub enum ExchangeExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
+        maximum_slippage_bps: u128,
         route: Option<Route>,
         recipient: Option<Addr>,
         on_complete: Option<Callback>,
@@ -27,24 +28,6 @@ pub struct ExpectedReceiveAmount {
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum ExchangeQueryMsg {
-    #[returns(bool)]
-    CanSwap {
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
-        route: Option<Route>,
-    },
-    #[returns(Vec<Coin>)]
-    Path {
-        swap_amount: Coin,
-        target_denom: String,
-        route: Option<Route>,
-    },
-    #[returns(Decimal)]
-    SpotPrice {
-        swap_denom: String,
-        target_denom: String,
-        route: Option<Route>,
-    },
     #[returns(ExpectedReceiveAmount)]
     ExpectedReceiveAmount {
         swap_amount: Coin,

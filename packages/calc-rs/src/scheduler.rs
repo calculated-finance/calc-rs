@@ -1,4 +1,4 @@
-use crate::types::Condition;
+use crate::core::Condition;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Deps, Env, MessageInfo, StdResult, Timestamp};
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Condition, MsgDeposit};
+use crate::core::{Condition, MsgDeposit};
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
     to_json_string, Addr, BankMsg, Binary, Coin, CosmosMsg, Deps, Env, Event, StdResult, Uint128,
@@ -94,9 +94,9 @@ pub enum DistributorExecuteMsg {
 #[derive(QueryResponses)]
 pub enum DistributorQueryMsg {
     #[returns(DistributorConfig)]
-    Config,
+    Config {},
     #[returns(DistributorStatistics)]
-    Statistics,
+    Statistics {},
 }
 
 pub enum DomainEvent {

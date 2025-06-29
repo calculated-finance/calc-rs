@@ -1,4 +1,4 @@
-use calc_rs::{twap::TwapConfig, types::Condition};
+use calc_rs::{twap::TwapConfig, core::Condition};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
 

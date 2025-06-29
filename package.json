@@ -14,8 +14,11 @@
     "@cosmjs/cosmwasm-stargate": "^0.33.1",
     "@cosmjs/proto-signing": "^0.33.1",
     "@cosmjs/stargate": "^0.33.1",
+    "@scure/base": "^1.2.6",
     "@types/node": "^22.15.29",
+    "bech32": "^2.0.0",
     "dotenv": "^16.5.0",
+    "protobufjs": "^7.5.3",
     "ws": "^8.18.2"
   }
 }

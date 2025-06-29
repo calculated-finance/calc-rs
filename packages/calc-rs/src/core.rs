@@ -15,7 +15,7 @@ use rujira_rs::{
 use thiserror::Error;
 
 use crate::{
-    exchanger::{ExchangeQueryMsg, ExpectedReceiveAmount},
+    exchanger::{ExchangeQueryMsg, ExpectedReceiveAmount, Route},
     manager::{ManagerQueryMsg, Strategy},
 };
 
@@ -95,6 +95,7 @@ pub enum Condition {
         swap_amount: Coin,
         minimum_receive_amount: Coin,
         maximum_slippage_bps: u128,
+        route: Option<Route>,
     },
     BalanceAvailable {
         address: Addr,
@@ -163,6 +164,7 @@ impl Condition {
                 swap_amount,
                 minimum_receive_amount,
                 maximum_slippage_bps,
+                route,
             } => {
                 let expected_receive_amount =
                     deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
@@ -170,7 +172,7 @@ impl Condition {
                         &ExchangeQueryMsg::ExpectedReceiveAmount {
                             swap_amount: swap_amount.clone(),
                             target_denom: minimum_receive_amount.denom.clone(),
-                            route: None,
+                            route: route.clone(),
                         },
                     )?;
 
@@ -359,11 +361,11 @@ impl Schedule {
         match self {
             Schedule::Blocks { interval, previous } => {
                 let last_block = previous.unwrap_or(0);
-                env.block.height >= last_block + interval
+                env.block.height > last_block + interval
             }
             Schedule::Time { duration, previous } => {
                 let last_time = previous.unwrap_or(Timestamp::from_seconds(0));
-                env.block.time.seconds() >= last_time.seconds() + duration.as_secs()
+                env.block.time.seconds() > last_time.seconds() + duration.as_secs()
             }
         }
     }

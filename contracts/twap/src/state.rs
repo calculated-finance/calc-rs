@@ -1,7 +1,7 @@
 use calc_rs::{
+    core::{Condition, Schedule, StrategyStatus},
     manager::StrategyExecuteMsg,
     twap::TwapConfig,
-    types::{Condition, Schedule, StrategyStatus},
 };
 use cosmwasm_std::{Coin, Env, StdError, StdResult, Storage, Timestamp};
 use cw_storage_plus::Item;
@@ -43,6 +43,7 @@ impl ConfigStore {
                     swap_amount: update.swap_amount.clone(),
                     minimum_receive_amount: update.minimum_receive_amount.clone(),
                     maximum_slippage_bps: update.maximum_slippage_bps,
+                    route: update.route.clone(),
                 },
             ],
             schedule_conditions: vec![

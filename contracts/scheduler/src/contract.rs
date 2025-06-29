@@ -2,7 +2,7 @@ use std::vec;
 
 use calc_rs::{
     scheduler::{ConditionFilter, SchedulerExecuteMsg, SchedulerQueryMsg, Trigger},
-    types::{Contract, ContractError, ContractResult},
+    core::{Contract, ContractError, ContractResult},
 };
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
@@ -175,7 +175,7 @@ pub fn reply(_deps: DepsMut, _env: Env, _reply: Reply) -> ContractResult {
 #[cfg(test)]
 fn default_create_trigger_command() -> calc_rs::scheduler::CreateTrigger {
     calc_rs::scheduler::CreateTrigger {
-        conditions: vec![calc_rs::types::Condition::BlocksCompleted(
+        conditions: vec![calc_rs::core::Condition::BlocksCompleted(
             cosmwasm_std::testing::mock_env().block.height + 10,
         )],
         threshold: calc_rs::scheduler::TriggerConditionsThreshold::All,
@@ -498,7 +498,7 @@ mod set_triggers_tests {
 mod execute_trigger_tests {
     use super::*;
     use calc_rs::scheduler::CreateTrigger;
-    use calc_rs::types::Condition;
+    use calc_rs::core::Condition;
     use cosmwasm_std::testing::message_info;
     use cosmwasm_std::WasmMsg;
     use cosmwasm_std::{

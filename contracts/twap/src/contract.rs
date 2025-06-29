@@ -1,6 +1,7 @@
 use std::cmp::min;
 
 use calc_rs::{
+    core::{Callback, Condition, Contract, ContractError, ContractResult, StrategyStatus},
     distributor::{
         Destination, DistributorConfig, DistributorExecuteMsg, DistributorQueryMsg,
         DistributorStatistics, Recipient,
@@ -12,9 +13,7 @@ use calc_rs::{
     },
     scheduler::{CreateTrigger, SchedulerExecuteMsg, TriggerConditionsThreshold},
     twap::TwapConfig,
-    types::{Callback, Condition, Contract, ContractError, ContractResult, StrategyStatus},
 };
-#[cfg(test)]
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -111,7 +110,7 @@ pub fn instantiate(
                 code_id: config.distributor_code_id,
                 label: "Distributor".to_string(),
                 msg: to_json_binary(&DistributorConfig {
-                    owner: env.contract.address.clone(),
+                    owner: config.owner.clone(),
                     denoms: vec![config.minimum_receive_amount.denom.clone()],
                     mutable_destinations: config.mutable_destinations,
                     immutable_destinations: [config.immutable_destinations, fee_destinations]
@@ -169,6 +168,14 @@ pub fn instantiate(
                 .add_event(strategy_instantiated_event))
         }
     }
+}
+
+#[cw_serde]
+pub struct MigrateMsg {}
+
+#[entry_point]
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
+    Ok(Response::default())
 }
 
 #[entry_point]
@@ -303,6 +310,7 @@ pub fn execute(
                             minimum_receive_amount,
                             config.minimum_receive_amount.denom.clone(),
                         ),
+                        maximum_slippage_bps: config.maximum_slippage_bps,
                         route: config.route.clone(),
                         // send funds to the distributor contract
                         recipient: Some(config.distributor_contract.clone()),
@@ -601,7 +609,7 @@ fn default_config() -> TwapConfig {
         minimum_receive_amount: Coin::new(900u128, "uruji"),
         maximum_slippage_bps: 100,
         route: None,
-        swap_cadence: calc_rs::types::Schedule::Blocks {
+        swap_cadence: calc_rs::core::Schedule::Blocks {
             interval: 100,
             previous: None,
         },
@@ -616,8 +624,8 @@ mod instantiate_tests {
     use super::*;
 
     use calc_rs::{
+        core::{Condition, Schedule},
         twap::InstantiateTwapCommand,
-        types::{Condition, Schedule},
     };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
@@ -716,7 +724,7 @@ mod instantiate_tests {
                 code_id: msg.distributor_code_id,
                 label: "Distributor".to_string(),
                 msg: to_json_binary(&DistributorConfig {
-                    owner: env.contract.address.clone(),
+                    owner: msg.owner.clone(),
                     denoms: vec![msg.minimum_receive_amount.denom.clone()],
                     mutable_destinations: msg.mutable_destinations,
                     immutable_destinations: vec![calc_fee_collector_destination],
@@ -724,8 +732,12 @@ mod instantiate_tests {
                 })
                 .unwrap(),
                 funds: vec![],
-                salt: to_json_binary(&(msg.owner, env.block.time, msg.distributor_code_id))
-                    .unwrap(),
+                salt: to_json_binary(&(
+                    msg.owner.to_string().truncate(16),
+                    env.block.time.seconds(),
+                    msg.distributor_code_id
+                ))
+                .unwrap(),
             })
         );
     }
@@ -823,7 +835,7 @@ mod instantiate_tests {
                 code_id: msg.distributor_code_id,
                 label: "Distributor".to_string(),
                 msg: to_json_binary(&DistributorConfig {
-                    owner: env.contract.address.clone(),
+                    owner: msg.owner.clone(),
                     denoms: vec![msg.minimum_receive_amount.denom.clone()],
                     mutable_destinations: msg.mutable_destinations,
                     immutable_destinations: vec![
@@ -834,8 +846,12 @@ mod instantiate_tests {
                 })
                 .unwrap(),
                 funds: vec![],
-                salt: to_json_binary(&(msg.owner, env.block.time, msg.distributor_code_id))
-                    .unwrap(),
+                salt: to_json_binary(&(
+                    msg.owner.to_string().truncate(16),
+                    env.block.time.seconds(),
+                    msg.distributor_code_id
+                ))
+                .unwrap(),
             })
         );
     }
@@ -902,7 +918,7 @@ mod instantiate_tests {
                 code_id: msg.distributor_code_id,
                 label: "Distributor".to_string(),
                 msg: to_json_binary(&DistributorConfig {
-                    owner: env.contract.address.clone(),
+                    owner: msg.owner.clone(),
                     denoms: vec![msg.minimum_receive_amount.denom.clone()],
                     mutable_destinations: msg.mutable_destinations,
                     immutable_destinations: vec![calc_fee_collector_destination],
@@ -913,8 +929,12 @@ mod instantiate_tests {
                 })
                 .unwrap(),
                 funds: vec![],
-                salt: to_json_binary(&(msg.owner, env.block.time, msg.distributor_code_id))
-                    .unwrap(),
+                salt: to_json_binary(&(
+                    msg.owner.to_string().truncate(16),
+                    env.block.time.seconds(),
+                    msg.distributor_code_id
+                ))
+                .unwrap(),
             })
         );
     }
@@ -1024,6 +1044,7 @@ mod instantiate_tests {
                     swap_amount: msg.swap_amount.clone(),
                     minimum_receive_amount: msg.minimum_receive_amount.clone(),
                     maximum_slippage_bps: msg.maximum_slippage_bps,
+                    route: msg.route.clone(),
                 },
             ]
         );
@@ -1078,7 +1099,7 @@ mod instantiate_tests {
 mod update_tests {
     use super::*;
 
-    use calc_rs::types::Schedule;
+    use calc_rs::core::Schedule;
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr, Coin, Timestamp,
@@ -1373,6 +1394,7 @@ mod update_tests {
                         swap_amount: new_config.swap_amount.clone(),
                         minimum_receive_amount: new_config.minimum_receive_amount.clone(),
                         maximum_slippage_bps: new_config.maximum_slippage_bps,
+                        route: new_config.route.clone(),
                     },
                 ],
                 schedule_conditions: vec![
@@ -1396,7 +1418,7 @@ mod update_tests {
 mod execute_tests {
     use super::*;
 
-    use calc_rs::{exchanger::ExpectedReceiveAmount, manager::Strategy, types::Schedule};
+    use calc_rs::{core::Schedule, exchanger::ExpectedReceiveAmount, manager::Strategy};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         to_json_binary, Addr, Coin, ContractResult, Event, SubMsg, SystemResult, WasmMsg,
@@ -1712,6 +1734,7 @@ mod execute_tests {
                     contract_addr: config.exchanger_contract.to_string(),
                     msg: to_json_binary(&ExchangeExecuteMsg::Swap {
                         minimum_receive_amount: config.minimum_receive_amount.clone(),
+                        maximum_slippage_bps: config.maximum_slippage_bps,
                         route: config.route.clone(),
                         recipient: Some(config.distributor_contract.clone()),
                         on_complete: Some(Callback {
@@ -1784,7 +1807,8 @@ mod execute_tests {
                             exchanger_contract: config.exchanger_contract,
                             swap_amount: config.swap_amount,
                             minimum_receive_amount: config.minimum_receive_amount,
-                            maximum_slippage_bps: config.maximum_slippage_bps
+                            maximum_slippage_bps: config.maximum_slippage_bps,
+                            route: config.route.clone(),
                         }
                         .check(deps.as_ref(), &env)
                         .unwrap_err(),
@@ -1849,7 +1873,8 @@ mod execute_tests {
                         exchanger_contract: config.exchanger_contract,
                         swap_amount: config.swap_amount,
                         minimum_receive_amount: config.minimum_receive_amount,
-                        maximum_slippage_bps: config.maximum_slippage_bps
+                        maximum_slippage_bps: config.maximum_slippage_bps,
+                        route: config.route.clone(),
                     }
                     .check(deps.as_ref(), &env)
                     .unwrap_err(),]

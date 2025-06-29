@@ -3,7 +3,7 @@ use calc_rs::{
         DomainEvent, ManagerConfig, ManagerExecuteMsg, ManagerInstantiateMsg, ManagerQueryMsg,
         Strategy, StrategyExecuteMsg, StrategyInstantiateMsg,
     },
-    types::{Contract, ContractError, ContractResult, StrategyStatus},
+    core::{Contract, ContractError, ContractResult, StrategyStatus},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -288,7 +288,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use calc_rs::types::StrategyStatus;
+    use calc_rs::core::StrategyStatus;
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         to_json_binary, Addr,

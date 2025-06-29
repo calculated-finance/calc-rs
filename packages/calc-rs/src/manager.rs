@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::twap::{InstantiateTwapCommand, TwapConfig};
-use crate::types::StrategyStatus;
+use crate::core::StrategyStatus;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Event};
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};

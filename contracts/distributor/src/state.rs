@@ -1,6 +1,6 @@
 use calc_rs::{
+    core::{Condition, DEPOSIT_FEE},
     distributor::{DistributorConfig, DistributorStatistics, Recipient},
-    types::{Condition, DEPOSIT_FEE},
 };
 use cosmwasm_std::{Coin, DepsMut, Env, StdError, StdResult, Storage, Uint128};
 use cw_storage_plus::Item;

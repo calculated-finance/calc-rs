@@ -5,8 +5,9 @@ use calc_rs::{
         Distribution, DistributorConfig, DistributorExecuteMsg, DistributorQueryMsg,
         DistributorStatistics, DomainEvent,
     },
-    types::{ContractError, ContractResult},
+    core::{ContractError, ContractResult},
 };
+use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
@@ -33,6 +34,14 @@ pub fn instantiate(
         },
     )?;
 
+    Ok(Response::default())
+}
+
+#[cw_serde]
+pub struct MigrateMsg {}
+
+#[entry_point]
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
     Ok(Response::default())
 }
 
@@ -331,7 +340,7 @@ mod distribute_tests {
 
     use super::*;
     use calc_rs::distributor::{Destination, Recipient};
-    use calc_rs::types::{Condition, MsgDeposit, DEPOSIT_FEE};
+    use calc_rs::core::{Condition, MsgDeposit, DEPOSIT_FEE};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr, CosmosMsg, Event, SubMsg, WasmMsg,

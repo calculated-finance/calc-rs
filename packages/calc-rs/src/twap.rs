@@ -1,6 +1,6 @@
 use crate::distributor::Destination;
 use crate::exchanger::Route;
-use crate::types::{Condition, Schedule};
+use crate::core::{Condition, Schedule};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin};
 

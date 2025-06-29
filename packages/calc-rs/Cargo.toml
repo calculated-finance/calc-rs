@@ -16,3 +16,4 @@ cosmwasm-std = { workspace = true }
 thiserror = { workspace = true }
 cw-storage-plus = { workspace = true }
 rujira-rs = { workspace = true }
+prost = { workspace = true }

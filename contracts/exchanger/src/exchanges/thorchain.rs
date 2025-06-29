@@ -1,268 +1,67 @@
 use calc_rs::{
     exchanger::{ExpectedReceiveAmount, Route},
     scheduler::{CreateTrigger, SchedulerExecuteMsg, TriggerConditionsThreshold},
-    types::{
-        layer_1_asset, secured_asset, Callback, Condition, Contract, ContractError, ContractResult,
-        MsgDeposit,
-    },
+    thorchain::{SwapQuote, SwapQuoteRequest},
+    core::{Callback, Condition, Contract, ContractError, ContractResult, MsgDeposit},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, CosmosMsg, Decimal, Deps, Env, MessageInfo, Response, StdError,
-    StdResult, Uint128,
+    to_json_binary, Addr, Coin, CosmosMsg, Deps, Env, MessageInfo, Response, StdError, StdResult,
+    Uint128,
 };
-use cw_storage_plus::Item;
-#[cfg(test)]
-use rujira_rs::proto::types::QueryPoolResponse;
-use rujira_rs::{query::Pool, Asset, Layer1Asset, NativeAsset};
 
-use crate::types::Exchange;
-
-pub const SCHEDULER: Item<Addr> = Item::new("scheduler");
+use crate::types::{Exchange, ExchangeConfig};
 
 #[cw_serde]
 pub struct ThorchainExchange {
-    scheduler: Addr,
+    scheduler_address: Addr,
+    affiliate_code: Option<String>,
+    affiliate_bps: Option<u64>,
 }
 
 impl ThorchainExchange {
-    pub fn new(deps: Deps) -> Self {
+    pub fn new(config: ExchangeConfig) -> Self {
         ThorchainExchange {
-            scheduler: SCHEDULER.load(deps.storage).unwrap(),
+            scheduler_address: config.scheduler_address,
+            affiliate_code: config.affiliate_code,
+            affiliate_bps: config.affiliate_bps,
         }
-    }
-}
-
-fn load_pool(deps: Deps, asset: &Layer1Asset) -> StdResult<Pool> {
-    Ok(Pool::load(deps.querier, asset).map_err(|_| {
-        StdError::generic_err(format!(
-            "Failed to load pool for asset {}",
-            asset.denom_string(),
-        ))
-    })?)
-}
-
-fn get_pools(
-    deps: Deps,
-    swap_denom: &NativeAsset,
-    target_denom: &NativeAsset,
-) -> Result<Vec<Pool>, StdError> {
-    Ok([swap_denom, target_denom]
-        .iter()
-        .filter(|&&denom| !denom.denom_string().contains("rune"))
-        .map(|&denom| load_pool(deps, &layer_1_asset(denom)?))
-        .collect::<StdResult<Vec<Pool>>>()?)
-}
-
-fn get_expected_receive_amount(
-    pool: &Pool,
-    swap_asset: &Layer1Asset,
-    swap_amount: &Uint128,
-) -> StdResult<(Layer1Asset, Uint128)> {
-    let receive_asset = match swap_asset.denom_string().as_str() {
-        "thor.rune" => match pool.asset.clone() {
-            Asset::Layer1(asset) => asset,
-            _ => return Err(StdError::generic_err("Pool asset is not a Layer 1 asset")),
-        },
-        _ => Layer1Asset::new("THOR", "RUNE"),
-    };
-
-    let receive_amount = swap_amount
-        .checked_mul(pool.balance_asset)?
-        .checked_mul(pool.balance_rune)?
-        .checked_div(
-            swap_amount
-                .checked_add(match swap_asset.denom_string().as_str() {
-                    "thor.rune" => pool.balance_rune,
-                    _ => pool.balance_asset,
-                })?
-                .pow(2),
-        )?;
-
-    Ok((receive_asset, receive_amount))
-}
-
-fn get_spot_price(pool: &Pool, swap_asset: &Layer1Asset) -> StdResult<(Layer1Asset, Decimal)> {
-    let pool_asset = match pool.asset.clone() {
-        Asset::Layer1(asset) => asset,
-        _ => return Err(StdError::generic_err("Pool asset is not a Layer 1 asset")),
-    };
-
-    let pool_asset_price = Decimal::from_ratio(pool.balance_rune, pool.balance_asset);
-
-    match swap_asset.denom_string().as_str() {
-        "thor.rune" => Ok((pool_asset, pool_asset_price)),
-        _ => Ok((
-            Layer1Asset::new("THOR", "RUNE"),
-            Decimal::one() / (pool_asset_price),
-        )),
     }
 }
 
 impl Exchange for ThorchainExchange {
-    fn can_swap(
-        &self,
-        deps: Deps,
-        swap_amount: &Coin,
-        minimum_receive_amount: &Coin,
-        route: &Option<Route>,
-    ) -> StdResult<bool> {
-        let expected_receive_amount = self.expected_receive_amount(
-            deps,
-            swap_amount,
-            &NativeAsset::new(&minimum_receive_amount.denom),
-            route,
-        )?;
-
-        Ok(expected_receive_amount.receive_amount.amount >= minimum_receive_amount.amount)
-    }
-
-    fn path(
-        &self,
-        deps: Deps,
-        swap_amount: &Coin,
-        target_denom: &NativeAsset,
-        route: &Option<Route>,
-    ) -> StdResult<Vec<Coin>> {
-        if let Some(route) = route {
-            match route {
-                Route::Thorchain {} => {}
-                _ => {
-                    return Err(StdError::generic_err(
-                        "Route type not supported for Thorchain exchange",
-                    ));
-                }
-            }
-        }
-
-        let pools = get_pools(deps, &NativeAsset::new(&swap_amount.denom), target_denom)?;
-
-        if pools.is_empty() {
-            return Err(StdError::generic_err("No valid route found"));
-        }
-
-        let mut route = vec![swap_amount.clone()];
-
-        for (i, pool) in pools.iter().enumerate() {
-            let (out_asset, out_amount) = get_expected_receive_amount(
-                pool,
-                &layer_1_asset(&NativeAsset::new(&route[i].denom))?,
-                &route[i].amount,
-            )?;
-
-            if out_amount.is_zero() {
-                return Err(StdError::generic_err("Received zero amount from pool"));
-            }
-
-            route.push(Coin {
-                denom: if out_asset.is_rune() {
-                    "rune".to_string()
-                } else {
-                    secured_asset(&out_asset)?.denom_string()
-                },
-                amount: out_amount,
-            });
-        }
-
-        Ok(route)
-    }
-
     fn expected_receive_amount(
         &self,
         deps: Deps,
         swap_amount: &Coin,
-        target_denom: &NativeAsset,
-        route: &Option<Route>,
+        target_denom: &str,
+        _route: &Option<Route>,
     ) -> StdResult<ExpectedReceiveAmount> {
-        if let Some(route) = route {
-            match route {
-                Route::Thorchain {} => {}
-                _ => {
-                    return Err(StdError::generic_err(
-                        "Route not supported for Thorchain exchange",
-                    ));
-                }
-            }
-        }
+        let quote_request = SwapQuoteRequest {
+            from_asset: swap_amount.denom.clone(),
+            to_asset: target_denom.to_string(),
+            amount: swap_amount.amount,
+            streaming_interval: Uint128::zero(),
+            streaming_quantity: Uint128::zero(),
+            destination: "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka".to_string(),
+            refund_address: "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka".to_string(),
+            affiliate: self
+                .affiliate_code
+                .clone()
+                .map_or_else(|| vec![], |c| vec![c]),
+            affiliate_bps: self.affiliate_bps.map_or_else(|| vec![], |b| vec![b]),
+        };
 
-        let swap_asset = NativeAsset::new(&swap_amount.denom);
-
-        let pools = get_pools(deps, &swap_asset, target_denom)?;
-
-        if pools.is_empty() {
-            return Err(StdError::generic_err("No valid route found"));
-        }
-
-        let (_, out_amount) = pools.iter().fold(
-            (layer_1_asset(&swap_asset)?, swap_amount.amount),
-            |(in_asset, in_amount), pool| {
-                get_expected_receive_amount(pool, &in_asset, &in_amount).expect(
-                    format!(
-                        "Failed to get expected receive amount for swapping {} {} in {} pool",
-                        in_amount,
-                        in_asset.denom_string(),
-                        pool.asset
-                    )
-                    .as_str(),
-                )
-            },
-        );
-
-        let spot_price = self.spot_price(deps, &swap_asset, target_denom, route)?;
-
-        let optimal_return_amount = swap_amount.amount.mul_floor(Decimal::one() / spot_price);
-
-        let slippage_bps = Uint128::new(10_000).mul_ceil(
-            Decimal::one().checked_sub(Decimal::from_ratio(out_amount, optimal_return_amount))?,
-        );
+        let quote = SwapQuote::get(deps.querier, &quote_request)
+            .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {}", e)))?;
 
         Ok(ExpectedReceiveAmount {
             receive_amount: Coin {
-                denom: target_denom.denom_string(),
-                amount: out_amount,
+                denom: target_denom.to_string(),
+                amount: quote.expected_amount_out,
             },
-            slippage_bps: slippage_bps.into(),
+            slippage_bps: quote.fees.map(|f| f.slippage_bps).unwrap_or(0).into(),
         })
-    }
-
-    fn spot_price(
-        &self,
-        deps: Deps,
-        swap_denom: &NativeAsset,
-        target_denom: &NativeAsset,
-        route: &Option<Route>,
-    ) -> StdResult<Decimal> {
-        if let Some(route) = route {
-            match route {
-                Route::Thorchain {} => {}
-                _ => {
-                    return Err(StdError::generic_err(
-                        "Route type not supported for Thorchain exchange",
-                    ));
-                }
-            }
-        }
-
-        let pools = get_pools(deps, swap_denom, target_denom)?;
-
-        if pools.is_empty() {
-            return Err(StdError::generic_err("No valid route found"));
-        }
-
-        let (_, price) = pools.iter().fold(
-            (layer_1_asset(swap_denom)?, Decimal::one()),
-            |(asset, out_price), pool| {
-                get_spot_price(pool, &asset)
-                    .map(|(asset, price)| (asset, out_price * price))
-                    .expect(&format!(
-                        "Failed to get spot price for swapping {} in {} pool",
-                        asset.denom_string(),
-                        pool.asset
-                    ))
-            },
-        );
-
-        Ok(price)
     }
 
     fn swap(
@@ -272,62 +71,68 @@ impl Exchange for ThorchainExchange {
         _info: &MessageInfo,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
-        route: &Option<Route>,
+        maximum_slippage_bps: u128,
+        _route: &Option<Route>,
         recipient: Addr,
         on_complete: Option<Callback>,
     ) -> ContractResult {
-        if !self.can_swap(deps, swap_amount, minimum_receive_amount, route)? {
-            return Err(ContractError::Std(StdError::generic_err(format!(
-                "Unable to swap {} {} into at least {} {}",
-                swap_amount.amount,
-                swap_amount.denom,
-                minimum_receive_amount.amount,
-                minimum_receive_amount.denom
-            ))));
+        let quote_request = SwapQuoteRequest {
+            from_asset: swap_amount.denom.clone(),
+            to_asset: minimum_receive_amount.denom.clone(),
+            amount: swap_amount.amount,
+            streaming_interval: Uint128::zero(),
+            streaming_quantity: Uint128::zero(),
+            destination: recipient.to_string(),
+            refund_address: recipient.to_string(),
+            affiliate: self
+                .affiliate_code
+                .clone()
+                .map_or_else(|| vec![], |c| vec![c]),
+            affiliate_bps: self.affiliate_bps.map_or_else(|| vec![], |b| vec![b]),
+        };
+
+        let quote = SwapQuote::get(deps.querier, &quote_request)
+            .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {}", e)))?;
+
+        if quote.expected_amount_out < minimum_receive_amount.amount {
+            return Err(ContractError::generic_err(format!(
+                "Expected amount out {} is less than minimum receive amount {}",
+                quote.expected_amount_out, minimum_receive_amount.amount
+            )));
         }
 
-        let swap_asset = if swap_amount.denom.to_ascii_lowercase().contains("rune") {
-            "THOR.RUNE".to_string()
-        } else {
-            swap_amount.denom.to_ascii_uppercase()
-        };
-
-        let receive_asset = if minimum_receive_amount
-            .denom
-            .to_ascii_lowercase()
-            .contains("rune")
-        {
-            "THOR.RUNE".to_string()
-        } else {
-            minimum_receive_amount.denom.to_ascii_uppercase()
-        };
-
-        let memo = format!(
-            "=:{}:{}:{}:rj:10:calc-swap",
-            receive_asset, recipient, minimum_receive_amount.amount
-        );
+        if let Some(fees) = quote.fees {
+            if fees.slippage_bps as u128 > maximum_slippage_bps {
+                return Err(ContractError::generic_err(format!(
+                    "Slippage too high: {} > {}",
+                    fees.slippage_bps, maximum_slippage_bps
+                )));
+            }
+        }
 
         let swap_msg = CosmosMsg::from(MsgDeposit {
-            memo,
-            coins: vec![Coin {
-                denom: swap_asset,
-                amount: swap_amount.amount,
-            }],
+            memo: quote.memo,
+            coins: vec![swap_amount.clone()],
             signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
         });
 
         let mut messages = vec![swap_msg];
 
-        if let Some(callback) = on_complete {
-            messages.push(Contract(self.scheduler.clone()).call(
+        if let Some(on_complete) = on_complete {
+            // schedule a trigger to execute after the swap is complete, in this instance
+            // 1 block later given deposit msgs are processed in the subsequent block and
+            // we don't support streaming swaps.
+            let after_swap_msg = Contract(self.scheduler_address.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                    conditions: vec![Condition::BlocksCompleted(env.block.height + 5)],
+                    conditions: vec![Condition::BlocksCompleted(env.block.height + 1)],
                     threshold: TriggerConditionsThreshold::All,
-                    to: callback.contract,
-                    msg: callback.msg,
+                    to: on_complete.contract,
+                    msg: on_complete.msg,
                 }))?,
-                callback.execution_rebate,
-            ));
+                on_complete.execution_rebate,
+            );
+
+            messages.push(after_swap_msg);
         }
 
         Ok(Response::default().add_messages(messages))
@@ -335,867 +140,77 @@ impl Exchange for ThorchainExchange {
 }
 
 #[cfg(test)]
-mod asset_tests {
-    use super::*;
-
-    #[test]
-    fn test_layer_1_asset() {
-        let denom_string = layer_1_asset(&NativeAsset::new("rune"))
-            .unwrap()
-            .denom_string();
-        let (chain, symbol) = denom_string.split_once('.').unwrap();
-
-        assert_eq!(chain, "thor");
-        assert_eq!(symbol, "rune");
-
-        let denom_string = layer_1_asset(&NativeAsset::new("eth-usd"))
-            .unwrap()
-            .denom_string();
-        let (chain, symbol) = denom_string.split_once('.').unwrap();
-
-        assert_eq!(chain, "eth");
-        assert_eq!(symbol, "usd");
-
-        let denom_string = layer_1_asset(&NativeAsset::new(
-            "eth-usd-0xdac17f958d2ee523a2206206994597c13d831ec7",
-        ))
-        .unwrap()
-        .denom_string();
-        let (chain, symbol) = denom_string.split_once('.').unwrap();
-
-        assert_eq!(chain, "eth");
-        assert_eq!(symbol, "usd-0xdac17f958d2ee523a2206206994597c13d831ec7");
-
-        let err = layer_1_asset(&NativeAsset::new("uruji")).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Generic error: Invalid layer 1 asset: RUNE.uruji"
-        );
-    }
-
-    #[test]
-    fn test_secured_asset() {
-        let secured = secured_asset(&layer_1_asset(&NativeAsset::new("eth-eth")).unwrap())
-            .unwrap()
-            .denom_string();
-        let (chain, symbol) = secured.split_once('-').unwrap();
-
-        assert_eq!(chain, "eth");
-        assert_eq!(symbol, "eth");
-
-        let secured = secured_asset(&layer_1_asset(&NativeAsset::new("rune")).unwrap())
-            .unwrap()
-            .denom_string();
-        let (chain, symbol) = secured.split_once('-').unwrap();
-
-        assert_eq!(chain, "thor");
-        assert_eq!(symbol, "rune");
-    }
-}
-
-#[cfg(test)]
-fn default_pool_response() -> QueryPoolResponse {
-    QueryPoolResponse {
-        asset: "ETH.ETH".to_string(),
-        status: rujira_rs::proto::types::PoolStatus::Available
-            .as_str_name()
-            .to_string(),
-        short_code: "eth".to_string(),
-        decimals: 8,
-        pending_inbound_asset: "0".to_string(),
-        pending_inbound_rune: "0".to_string(),
-        balance_asset: "10000000000".to_string(),
-        balance_rune: "10000000000".to_string(),
-        asset_tor_price: "1.0".to_string(),
-        pool_units: "10000000000".to_string(),
-        lp_units: "10000000000".to_string(),
-        synth_units: "10000000000".to_string(),
-        synth_supply: "10000000000".to_string(),
-        savers_depth: "10000000000".to_string(),
-        savers_units: "10000000000".to_string(),
-        savers_fill_bps: "0".to_string(),
-        savers_capacity_remaining: "0".to_string(),
-        synth_mint_paused: false,
-        synth_supply_remaining: "0".to_string(),
-        loan_collateral: "0".to_string(),
-        loan_collateral_remaining: "0".to_string(),
-        loan_cr: "0".to_string(),
-        derived_depth_bps: "0".to_string(),
-    }
-}
-
-#[cfg(test)]
-mod pools_tests {
-    use super::*;
-
-    use calc_rs_test::test::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{Binary, ContractResult, SystemResult};
-    use prost::Message;
-    use rujira_rs::{
-        proto::types::{QueryPoolRequest, QueryPoolResponse},
-        NativeAsset,
-    };
-
-    #[test]
-    fn fails_to_fetch_pools_for_non_l1_asset() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_asset = NativeAsset::new("uruji");
-        let target_asset = NativeAsset::new("eth-usdc");
-
-        let error = get_pools(deps.as_ref(), &swap_asset, &target_asset).unwrap_err();
-
-        assert_eq!(
-            error,
-            StdError::generic_err(format!(
-                "Invalid layer 1 asset: RUNE.{}",
-                swap_asset.denom_string(),
-            ))
-        );
-    }
-
-    #[test]
-    fn gets_single_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_asset = NativeAsset::new("arb-eth");
-        let target_asset = NativeAsset::new("rune");
-
-        let result = vec![Pool::try_from(QueryPoolResponse {
-            asset: layer_1_asset(&swap_asset).unwrap().to_string(),
-            ..default_pool_response()
-        })
-        .unwrap()];
-
-        let pools = get_pools(deps.as_ref(), &swap_asset, &target_asset).unwrap();
-
-        assert_eq!(pools, result);
-    }
-
-    #[test]
-    fn gets_multiple_pools() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_asset = NativeAsset::new("arb-eth");
-        let target_asset = NativeAsset::new("eth-usdc");
-
-        let result = vec![
-            Pool::try_from(QueryPoolResponse {
-                asset: layer_1_asset(&swap_asset).unwrap().to_string(),
-                ..default_pool_response()
-            })
-            .unwrap(),
-            Pool::try_from(QueryPoolResponse {
-                asset: layer_1_asset(&target_asset).unwrap().to_string(),
-                ..default_pool_response()
-            })
-            .unwrap(),
-        ];
-
-        let pools = get_pools(deps.as_ref(), &swap_asset, &target_asset).unwrap();
-
-        assert_eq!(pools, result);
-    }
-}
-
-#[cfg(test)]
-mod can_swap_tests {
-    use super::*;
-
-    use calc_rs_test::test::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{Addr, Binary, Coin, ContractResult, StdError, SystemResult, Uint128};
-    use prost::Message;
-    use rujira_rs::{
-        proto::types::{QueryPoolRequest, QueryPoolResponse},
-        NativeAsset,
-    };
-
-    use crate::{
-        exchanges::thorchain::{default_pool_response, ThorchainExchange, SCHEDULER},
-        types::Exchange,
-    };
-
-    #[test]
-    fn cannot_swap_with_no_pools() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "eth-usdc".to_string().clone(),
-            amount: Uint128::new(50),
-        };
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount, &None)
-                .unwrap_err(),
-            StdError::generic_err(format!(
-                "Failed to load pool for asset {}",
-                layer_1_asset(&NativeAsset::new(&swap_amount.denom))
-                    .unwrap()
-                    .denom_string()
-            ))
-        );
-    }
-
-    #[test]
-    fn cannot_swap_with_non_thor_route() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "eth-usdc".to_string().clone(),
-            amount: Uint128::new(50),
-        };
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .can_swap(
-                    deps.as_ref(),
-                    &swap_amount,
-                    &minimum_receive_amount,
-                    &Some(Route::Fin {
-                        address: Addr::unchecked("pair")
-                    })
-                )
-                .unwrap_err(),
-            StdError::generic_err("Route not supported for Thorchain exchange")
-        );
-    }
-
-    #[test]
-    fn can_swap_with_single_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "rune".to_string().clone(),
-            amount: Uint128::new(50),
-        };
-
-        assert!(ThorchainExchange::new(deps.as_ref())
-            .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount, &None)
-            .unwrap());
-    }
-
-    #[test]
-    fn can_swap_with_multiple_pools() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "eth-usdc".to_string().clone(),
-            amount: Uint128::new(50),
-        };
-
-        assert!(ThorchainExchange::new(deps.as_ref())
-            .can_swap(deps.as_ref(), &swap_amount, &minimum_receive_amount, &None)
-            .unwrap());
-    }
-}
-
-#[cfg(test)]
-mod route_tests {
-    use super::*;
-
-    use calc_rs_test::test::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{
-        Addr, Binary, Coin, ContractResult, StdError, SystemError, SystemResult, Uint128,
-    };
-    use prost::Message;
-    use rujira_rs::{
-        proto::types::{QueryPoolRequest, QueryPoolResponse},
-        NativeAsset,
-    };
-
-    #[test]
-    fn fails_to_get_route_with_no_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(|query| {
-            SystemResult::Err(SystemError::InvalidRequest {
-                error: "No such pool".to_string(),
-                request: query.data.clone(),
-            })
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("eth-usdc");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap_err(),
-            StdError::generic_err(format!(
-                "Failed to load pool for asset {}",
-                layer_1_asset(&NativeAsset::new(&swap_amount.denom))
-                    .unwrap()
-                    .denom_string()
-            ))
-        );
-    }
-
-    #[test]
-    fn gets_route_with_single_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("rune");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            vec![
-                swap_amount,
-                Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(99)
-                }
-            ]
-        );
-
-        let swap_amount = Coin {
-            denom: "rune".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("arb-eth");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            vec![
-                swap_amount,
-                Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(99)
-                }
-            ]
-        );
-    }
-
-    #[test]
-    fn gets_route_with_multiple_pools() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("eth-usdc");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            vec![
-                swap_amount,
-                Coin {
-                    denom: "rune".to_string(),
-                    amount: Uint128::new(99)
-                },
-                Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(98)
-                }
-            ]
-        );
-
-        let swap_amount = Coin {
-            denom: "eth-usdc".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("arb-eth");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            vec![
-                swap_amount,
-                Coin {
-                    denom: "rune".to_string(),
-                    amount: Uint128::new(99)
-                },
-                Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(98)
-                }
-            ]
-        );
-    }
-}
-
-#[cfg(test)]
 mod expected_receive_amount_tests {
-
-    use calc_rs_test::test::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{Binary, ContractResult, SystemError, SystemResult};
-    use prost::Message;
-    use rujira_rs::proto::types::QueryPoolRequest;
-
-    use super::*;
-
-    #[test]
-    fn fails_to_get_expected_receive_amount_with_no_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(|query| {
-            SystemResult::Err(SystemError::InvalidRequest {
-                error: "No such pool".to_string(),
-                request: query.data.clone(),
-            })
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("eth-usdc");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .path(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap_err(),
-            StdError::generic_err(format!(
-                "Failed to load pool for asset {}",
-                layer_1_asset(&NativeAsset::new(&swap_amount.denom))
-                    .unwrap()
-                    .denom_string()
-            ))
-        );
-    }
-
-    #[test]
-    fn gets_expected_receive_amount_with_single_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("rune");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            ExpectedReceiveAmount {
-                receive_amount: Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(99)
-                },
-                slippage_bps: 100u128
-            }
-        );
-
-        let swap_amount = Coin {
-            denom: "rune".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("arb-eth");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            ExpectedReceiveAmount {
-                receive_amount: Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(99)
-                },
-                slippage_bps: 100u128
-            }
-        );
-    }
-
-    #[test]
-    fn gets_expected_receive_amount_with_multiple_pools() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("eth-usdc");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            ExpectedReceiveAmount {
-                receive_amount: Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(98)
-                },
-                slippage_bps: 200u128
-            }
-        );
-
-        let swap_amount = Coin {
-            denom: "eth-usdc".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
-        let target_denom = NativeAsset::new("arb-eth");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
-                .unwrap(),
-            ExpectedReceiveAmount {
-                receive_amount: Coin {
-                    denom: target_denom.denom_string(),
-                    amount: Uint128::new(98)
-                },
-                slippage_bps: 200u128
-            }
-        );
-    }
-}
-
-#[cfg(test)]
-mod spot_price_tests {
-
-    use std::str::FromStr;
-
     use super::*;
 
     use calc_rs_test::test::mock_dependencies_with_custom_querier;
-    use cosmwasm_std::{
-        Addr, Binary, ContractResult, Decimal, StdError, SystemError, SystemResult,
-    };
+    use cosmwasm_std::{ContractResult, SystemResult};
     use prost::Message;
-    use rujira_rs::{
-        proto::types::{QueryPoolRequest, QueryPoolResponse},
-        NativeAsset,
-    };
+    use rujira_rs::proto::types::{QueryQuoteSwapResponse, QuoteFees};
 
     #[test]
-    fn fails_to_get_spot_price_with_no_pool() {
+    fn maps_expected_receive_amount_and_slippage() {
         let mut deps = mock_dependencies_with_custom_querier();
 
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
+        let expected_receive_amount = Uint128::new(237463);
+        let expected_slippage_bps = 123i64;
 
-        deps.querier.with_grpc_handler(|query| {
-            SystemResult::Err(SystemError::InvalidRequest {
-                error: "No such pool".to_string(),
-                request: query.data.clone(),
+        deps.querier.with_grpc_handler(move |_| {
+            let mut buf = Vec::new();
+            QueryQuoteSwapResponse {
+                inbound_address: "0".to_string(),
+                inbound_confirmation_blocks: 0,
+                inbound_confirmation_seconds: 0,
+                outbound_delay_blocks: 0,
+                outbound_delay_seconds: 0,
+                fees: Some(QuoteFees {
+                    asset: "0".to_string(),
+                    affiliate: "0".to_string(),
+                    outbound: "0".to_string(),
+                    liquidity: "0".to_string(),
+                    total: "0".to_string(),
+                    slippage_bps: expected_slippage_bps.clone(),
+                    total_bps: 145,
+                }),
+                router: "0".to_string(),
+                expiry: 0,
+                warning: "0".to_string(),
+                notes: "0".to_string(),
+                dust_threshold: "0".to_string(),
+                recommended_min_amount_in: "0".to_string(),
+                recommended_gas_rate: "0".to_string(),
+                gas_rate_units: "0".to_string(),
+                memo: "0".to_string(),
+                expected_amount_out: expected_receive_amount.clone().to_string(),
+                max_streaming_quantity: 1,
+                streaming_swap_blocks: 1,
+                streaming_swap_seconds: 1,
+                total_swap_seconds: 1,
+            }
+            .encode(&mut buf)
+            .unwrap();
+            SystemResult::Ok(ContractResult::Ok(buf.into()))
+        });
+
+        let swap_amount = Coin {
+            denom: "arb-eth".to_string().clone(),
+            amount: Uint128::new(100),
+        };
+
+        let target_denom = "eth-usdc";
+
+        assert_eq!(
+            ThorchainExchange::new(ExchangeConfig {
+                scheduler_address: Addr::unchecked("scheduler"),
+                affiliate_code: None,
+                affiliate_bps: None
             })
-        });
-
-        let swap_asset = NativeAsset::new("arb-eth");
-        let target_denom = NativeAsset::new("eth-usdc");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
-                .unwrap_err(),
-            StdError::generic_err(format!(
-                "Failed to load pool for asset {}",
-                layer_1_asset(&swap_asset).unwrap().denom_string()
-            ))
-        );
-    }
-
-    #[test]
-    fn gets_spot_price_with_single_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                balance_asset: "100".to_string(),
-                balance_rune: "500".to_string(),
-                ..default_pool_response()
+            .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
+            .unwrap(),
+            ExpectedReceiveAmount {
+                receive_amount: Coin::new(expected_receive_amount, target_denom),
+                slippage_bps: expected_slippage_bps as u128
             }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_asset = NativeAsset::new("arb-eth");
-        let target_denom = NativeAsset::new("rune");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
-                .unwrap(),
-            Decimal::from_str("0.2").unwrap()
-        );
-
-        let swap_asset = NativeAsset::new("rune");
-        let target_denom = NativeAsset::new("arb-eth");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
-                .unwrap(),
-            Decimal::from_str("5").unwrap()
-        );
-    }
-
-    #[test]
-    fn gets_spot_price_with_multiple_pools() {
-        let mut deps = mock_dependencies_with_custom_querier();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
-            let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                balance_asset: "100".to_string(),
-                balance_rune: "500".to_string(),
-                ..default_pool_response()
-            }
-            .encode(&mut buf)
-            .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
-        });
-
-        let swap_asset = NativeAsset::new("arb-eth");
-        let target_denom = NativeAsset::new("eth-usdc");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
-                .unwrap(),
-            Decimal::from_str("1").unwrap()
-        );
-
-        let swap_asset = NativeAsset::new("arb-eth");
-        let target_denom = NativeAsset::new("eth-usdc");
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .spot_price(deps.as_ref(), &swap_asset, &target_denom, &None)
-                .unwrap(),
-            Decimal::from_str("1").unwrap()
         );
     }
 }
@@ -1204,89 +219,57 @@ mod spot_price_tests {
 mod swap_tests {
     use super::*;
 
+    use calc_rs::core::ContractError;
     use calc_rs_test::test::mock_dependencies_with_custom_querier;
     use cosmwasm_std::{
-        testing::mock_env, Addr, Api, Binary, Coin, ContractResult, MessageInfo, Response,
-        StdError, SystemError, SystemResult, Uint128,
+        testing::{message_info, mock_env},
+        Addr, Api, Binary, Coin, ContractResult, SubMsg, SystemResult, Uint128,
     };
     use prost::Message;
-    use rujira_rs::{
-        proto::types::{QueryPoolRequest, QueryPoolResponse},
-        NativeAsset,
-    };
+    use rujira_rs::proto::types::{QueryQuoteSwapRequest, QueryQuoteSwapResponse, QuoteFees};
 
     #[test]
-    fn fails_to_swap_with_no_pool() {
+    fn fails_if_expected_receive_amount_too_low() {
         let mut deps = mock_dependencies_with_custom_querier();
 
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
+        let expected_receive_amount = Uint128::new(237463);
+        let expected_slippage_bps = 123i64;
 
-        deps.querier.with_grpc_handler(|query| {
-            SystemResult::Err(SystemError::InvalidRequest {
-                error: "No such pool".to_string(),
-                request: query.data.clone(),
-            })
-        });
-
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "eth-usdc".to_string(),
-            amount: Uint128::new(50),
-        };
-
-        assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .swap(
-                    deps.as_ref(),
-                    &mock_env(),
-                    &MessageInfo {
-                        sender: Addr::unchecked("sender"),
-                        funds: vec![],
-                    },
-                    &swap_amount,
-                    &minimum_receive_amount,
-                    &None,
-                    Addr::unchecked("recipient"),
-                    None
-                )
-                .unwrap_err(),
-            ContractError::Std(StdError::generic_err(format!(
-                "Failed to load pool for asset {}",
-                layer_1_asset(&NativeAsset::new(&swap_amount.denom))
-                    .unwrap()
-                    .denom_string()
-            )))
-        );
-    }
-
-    #[test]
-    fn swaps_with_single_pool() {
-        let mut deps = mock_dependencies_with_custom_querier();
-        let env = mock_env();
-
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
-
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
+        deps.querier.with_grpc_handler(move |_| {
             let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
+            QueryQuoteSwapResponse {
+                inbound_address: "0".to_string(),
+                inbound_confirmation_blocks: 0,
+                inbound_confirmation_seconds: 0,
+                outbound_delay_blocks: 0,
+                outbound_delay_seconds: 0,
+                fees: Some(QuoteFees {
+                    asset: "0".to_string(),
+                    affiliate: "0".to_string(),
+                    outbound: "0".to_string(),
+                    liquidity: "0".to_string(),
+                    total: "0".to_string(),
+                    slippage_bps: expected_slippage_bps.clone(),
+                    total_bps: 145,
+                }),
+                router: "0".to_string(),
+                expiry: 0,
+                warning: "0".to_string(),
+                notes: "0".to_string(),
+                dust_threshold: "0".to_string(),
+                recommended_min_amount_in: "0".to_string(),
+                recommended_gas_rate: "0".to_string(),
+                gas_rate_units: "0".to_string(),
+                memo: "0".to_string(),
+                expected_amount_out: expected_receive_amount.clone().to_string(),
+                max_streaming_quantity: 1,
+                streaming_swap_blocks: 1,
+                streaming_swap_seconds: 1,
+                total_swap_seconds: 1,
             }
             .encode(&mut buf)
             .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
+            SystemResult::Ok(ContractResult::Ok(buf.into()))
         });
 
         let swap_amount = Coin {
@@ -1294,71 +277,234 @@ mod swap_tests {
             amount: Uint128::new(100),
         };
 
-        let minimum_receive_amount = Coin {
-            denom: "rune".to_string(),
-            amount: Uint128::new(50),
-        };
-
-        let recipient = Addr::unchecked("recipient");
+        let minimum_receive_amount = Coin::new(expected_receive_amount + Uint128::one(), "eth-eth");
 
         assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
-                .swap(
-                    deps.as_ref(),
-                    &mock_env(),
-                    &MessageInfo {
-                        sender: Addr::unchecked("sender"),
-                        funds: vec![],
-                    },
-                    &swap_amount,
-                    &minimum_receive_amount,
-                    &None,
-                    recipient.clone(),
-                    None
-                )
-                .unwrap(),
-            Response::default().add_message(MsgDeposit {
-                memo: format!(
-                    "=:{}:{}:{}:rj:10:calc-swap",
-                    "THOR.RUNE".to_string(),
-                    recipient.to_string(),
-                    minimum_receive_amount.amount
-                )
-                .to_string(),
-                coins: vec![Coin {
-                    denom: swap_amount.denom.to_string(),
-                    amount: swap_amount.amount,
-                }],
+            ThorchainExchange::new(ExchangeConfig {
+                scheduler_address: Addr::unchecked("scheduler"),
+                affiliate_code: None,
+                affiliate_bps: None
+            })
+            .swap(
+                deps.as_ref(),
+                &mock_env(),
+                &message_info(&Addr::unchecked("sender"), &[swap_amount.clone()]),
+                &swap_amount,
+                &minimum_receive_amount,
+                expected_slippage_bps as u128,
+                &None,
+                Addr::unchecked("recipient"),
+                None
+            )
+            .unwrap_err(),
+            ContractError::generic_err(format!(
+                "Expected amount out {} is less than minimum receive amount {}",
+                expected_receive_amount, minimum_receive_amount.amount
+            ))
+        );
+    }
+
+    #[test]
+    fn fails_if_slippage_bps_too_high() {
+        let mut deps = mock_dependencies_with_custom_querier();
+
+        let expected_receive_amount = Uint128::new(237463);
+        let expected_slippage_bps = 123i64;
+
+        deps.querier.with_grpc_handler(move |_| {
+            let mut buf = Vec::new();
+            QueryQuoteSwapResponse {
+                inbound_address: "0".to_string(),
+                inbound_confirmation_blocks: 0,
+                inbound_confirmation_seconds: 0,
+                outbound_delay_blocks: 0,
+                outbound_delay_seconds: 0,
+                fees: Some(QuoteFees {
+                    asset: "0".to_string(),
+                    affiliate: "0".to_string(),
+                    outbound: "0".to_string(),
+                    liquidity: "0".to_string(),
+                    total: "0".to_string(),
+                    slippage_bps: expected_slippage_bps.clone(),
+                    total_bps: 145,
+                }),
+                router: "0".to_string(),
+                expiry: 0,
+                warning: "0".to_string(),
+                notes: "0".to_string(),
+                dust_threshold: "0".to_string(),
+                recommended_min_amount_in: "0".to_string(),
+                recommended_gas_rate: "0".to_string(),
+                gas_rate_units: "0".to_string(),
+                memo: "0".to_string(),
+                expected_amount_out: expected_receive_amount.clone().to_string(),
+                max_streaming_quantity: 1,
+                streaming_swap_blocks: 1,
+                streaming_swap_seconds: 1,
+                total_swap_seconds: 1,
+            }
+            .encode(&mut buf)
+            .unwrap();
+            SystemResult::Ok(ContractResult::Ok(buf.into()))
+        });
+
+        let swap_amount = Coin {
+            denom: "arb-eth".to_string().clone(),
+            amount: Uint128::new(100),
+        };
+
+        let minimum_receive_amount = Coin::new(expected_receive_amount, "eth-eth");
+
+        assert_eq!(
+            ThorchainExchange::new(ExchangeConfig {
+                scheduler_address: Addr::unchecked("scheduler"),
+                affiliate_code: None,
+                affiliate_bps: None
+            })
+            .swap(
+                deps.as_ref(),
+                &mock_env(),
+                &message_info(&Addr::unchecked("sender"), &[swap_amount.clone()]),
+                &swap_amount,
+                &minimum_receive_amount,
+                expected_slippage_bps as u128 - 1,
+                &None,
+                Addr::unchecked("recipient"),
+                None
+            )
+            .unwrap_err(),
+            ContractError::generic_err(format!(
+                "Slippage too high: {} > {}",
+                expected_slippage_bps,
+                expected_slippage_bps as u128 - 1
+            ))
+        );
+    }
+
+    #[test]
+    fn executes_swap_if_liquidity_ok() {
+        let mut deps = mock_dependencies_with_custom_querier();
+
+        let expected_receive_amount = Uint128::new(237463);
+        let expected_slippage_bps = 123i64;
+
+        deps.querier.with_grpc_handler(move |_| {
+            let mut buf = Vec::new();
+            QueryQuoteSwapResponse {
+                inbound_address: "0".to_string(),
+                inbound_confirmation_blocks: 0,
+                inbound_confirmation_seconds: 0,
+                outbound_delay_blocks: 0,
+                outbound_delay_seconds: 0,
+                fees: Some(QuoteFees {
+                    asset: "0".to_string(),
+                    affiliate: "0".to_string(),
+                    outbound: "0".to_string(),
+                    liquidity: "0".to_string(),
+                    total: "0".to_string(),
+                    slippage_bps: expected_slippage_bps.clone(),
+                    total_bps: 145,
+                }),
+                router: "0".to_string(),
+                expiry: 0,
+                warning: "0".to_string(),
+                notes: "0".to_string(),
+                dust_threshold: "0".to_string(),
+                recommended_min_amount_in: "0".to_string(),
+                recommended_gas_rate: "0".to_string(),
+                gas_rate_units: "0".to_string(),
+                memo: "=:rune:my-address:237463".to_string(),
+                expected_amount_out: expected_receive_amount.clone().to_string(),
+                max_streaming_quantity: 1,
+                streaming_swap_blocks: 1,
+                streaming_swap_seconds: 1,
+                total_swap_seconds: 1,
+            }
+            .encode(&mut buf)
+            .unwrap();
+            SystemResult::Ok(ContractResult::Ok(buf.into()))
+        });
+
+        let swap_amount = Coin {
+            denom: "arb-eth".to_string().clone(),
+            amount: Uint128::new(100),
+        };
+
+        let minimum_receive_amount = Coin::new(expected_receive_amount, "eth-eth");
+        let env = mock_env();
+
+        assert_eq!(
+            ThorchainExchange::new(ExchangeConfig {
+                scheduler_address: Addr::unchecked("scheduler"),
+                affiliate_code: None,
+                affiliate_bps: None
+            })
+            .swap(
+                deps.as_ref(),
+                &env,
+                &message_info(&deps.api.addr_make("sender"), &[swap_amount.clone()]),
+                &swap_amount,
+                &minimum_receive_amount,
+                expected_slippage_bps as u128 + 1,
+                &None,
+                Addr::unchecked("recipient"),
+                None
+            )
+            .unwrap()
+            .messages[0],
+            SubMsg::new(CosmosMsg::from(MsgDeposit {
+                memo: "=:rune:my-address:237463".to_string(),
+                coins: vec![swap_amount],
                 signer: deps
                     .api
-                    .addr_canonicalize(env.contract.address.as_str())
-                    .unwrap(),
-            })
+                    .addr_canonicalize(&env.contract.address.to_string())
+                    .unwrap()
+            }))
         );
     }
 
     #[test]
-    fn swaps_with_multiple_pools() {
+    fn schedules_after_complete_if_provided() {
         let mut deps = mock_dependencies_with_custom_querier();
-        let env = mock_env();
 
-        SCHEDULER
-            .save(deps.as_mut().storage, &Addr::unchecked("scheduler"))
-            .unwrap();
+        let expected_receive_amount = Uint128::new(237463);
+        let expected_slippage_bps = 123i64;
 
-        deps.querier.with_grpc_handler(move |query| {
-            let pool_query = QueryPoolRequest::decode(query.data.as_slice()).unwrap();
-
+        deps.querier.with_grpc_handler(move |_| {
             let mut buf = Vec::new();
-
-            QueryPoolResponse {
-                asset: pool_query.asset,
-                ..default_pool_response()
+            QueryQuoteSwapResponse {
+                inbound_address: "0".to_string(),
+                inbound_confirmation_blocks: 0,
+                inbound_confirmation_seconds: 0,
+                outbound_delay_blocks: 0,
+                outbound_delay_seconds: 0,
+                fees: Some(QuoteFees {
+                    asset: "0".to_string(),
+                    affiliate: "0".to_string(),
+                    outbound: "0".to_string(),
+                    liquidity: "0".to_string(),
+                    total: "0".to_string(),
+                    slippage_bps: expected_slippage_bps.clone(),
+                    total_bps: 145,
+                }),
+                router: "0".to_string(),
+                expiry: 0,
+                warning: "0".to_string(),
+                notes: "0".to_string(),
+                dust_threshold: "0".to_string(),
+                recommended_min_amount_in: "0".to_string(),
+                recommended_gas_rate: "0".to_string(),
+                gas_rate_units: "0".to_string(),
+                memo: "=:rune:my-address:237463".to_string(),
+                expected_amount_out: expected_receive_amount.clone().to_string(),
+                max_streaming_quantity: 1,
+                streaming_swap_blocks: 1,
+                streaming_swap_seconds: 1,
+                total_swap_seconds: 1,
             }
             .encode(&mut buf)
             .unwrap();
-
-            SystemResult::Ok(ContractResult::Ok(Binary::from(buf)))
+            SystemResult::Ok(ContractResult::Ok(buf.into()))
         });
 
         let swap_amount = Coin {
@@ -1366,52 +512,108 @@ mod swap_tests {
             amount: Uint128::new(100),
         };
 
-        let minimum_receive_amount = Coin {
-            denom: "eth-usdc".to_string(),
-            amount: Uint128::new(50),
+        let minimum_receive_amount = Coin::new(expected_receive_amount, "eth-eth");
+        let env = mock_env();
+
+        let config = ExchangeConfig {
+            scheduler_address: Addr::unchecked("scheduler"),
+            affiliate_code: None,
+            affiliate_bps: None,
         };
 
-        let recipient = Addr::unchecked("recipient");
-
         assert_eq!(
-            ThorchainExchange::new(deps.as_ref())
+            ThorchainExchange::new(config.clone())
                 .swap(
                     deps.as_ref(),
                     &env,
-                    &MessageInfo {
-                        sender: Addr::unchecked("sender"),
-                        funds: vec![],
-                    },
+                    &message_info(&deps.api.addr_make("sender"), &[swap_amount.clone()]),
                     &swap_amount,
                     &minimum_receive_amount,
+                    expected_slippage_bps as u128 + 1,
                     &None,
-                    recipient.clone(),
-                    None
+                    Addr::unchecked("recipient"),
+                    Some(Callback {
+                        contract: Addr::unchecked("twap"),
+                        msg: to_json_binary("dummy message").unwrap(),
+                        execution_rebate: vec![Coin::new(1u128, "rune")],
+                    })
                 )
-                .unwrap(),
-            Response::default().add_message(MsgDeposit {
-                memo: format!(
-                    "=:{}:{}:{}:rj:10:calc-swap",
-                    secured_asset(
-                        &layer_1_asset(&NativeAsset::new(&minimum_receive_amount.denom)).unwrap()
-                    )
-                    .unwrap()
-                    .denom_string()
-                    .to_ascii_uppercase()
-                    .to_string(),
-                    recipient.to_string(),
-                    minimum_receive_amount.amount
-                )
-                .to_string(),
-                coins: vec![Coin {
-                    denom: swap_amount.denom.to_string(),
-                    amount: swap_amount.amount,
-                }],
-                signer: deps
-                    .api
-                    .addr_canonicalize(env.contract.address.as_str())
+                .unwrap()
+                .messages[1],
+            SubMsg::new(
+                Contract(config.scheduler_address.clone()).call(
+                    to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
+                        conditions: vec![Condition::BlocksCompleted(env.block.height + 1)],
+                        threshold: TriggerConditionsThreshold::All,
+                        to: Addr::unchecked("twap"),
+                        msg: to_json_binary("dummy message").unwrap(),
+                    }))
                     .unwrap(),
-            })
+                    vec![Coin::new(1u128, "rune")],
+                )
+            ),
         );
+    }
+
+    #[test]
+    fn includes_affiliate_if_configured() {
+        let mut deps = mock_dependencies_with_custom_querier();
+
+        let from_asset = "arb-eth".to_string();
+        let swap_amount = Coin::new(100u128, from_asset.clone());
+        let to_asset = "eth-eth".to_string();
+        let minimum_receive_amount = Coin::new(128u128, to_asset.clone());
+
+        let affiliate_code = Some("rj".to_string());
+        let affiliate_bps = Some(10);
+
+        let config = ExchangeConfig {
+            scheduler_address: Addr::unchecked("scheduler"),
+            affiliate_code: affiliate_code.clone(),
+            affiliate_bps: affiliate_bps.clone(),
+        };
+
+        deps.querier.with_grpc_handler(move |query| {
+            assert_eq!(query.path, "/types.Query/QuoteSwap");
+
+            let request = QueryQuoteSwapRequest {
+                from_asset: from_asset.clone(),
+                to_asset: to_asset.clone(),
+                amount: swap_amount.amount.to_string(),
+                streaming_interval: "0".to_string(),
+                streaming_quantity: "0".to_string(),
+                destination: "recipient".to_string(),
+                refund_address: "recipient".to_string(),
+                affiliate: vec![affiliate_code.clone().unwrap()],
+                affiliate_bps: vec![affiliate_bps.clone().unwrap().to_string()],
+                height: "".to_string(),
+                tolerance_bps: "".to_string(),
+                liquidity_tolerance_bps: "".to_string(),
+            };
+
+            let mut buf = Vec::new();
+            request.encode(&mut buf).unwrap();
+            assert_eq!(query.data, Binary::from(buf));
+
+            SystemResult::Ok(ContractResult::Ok(to_json_binary(&"ignored").unwrap()))
+        });
+
+        ThorchainExchange::new(config.clone())
+            .swap(
+                deps.as_ref(),
+                &mock_env(),
+                &message_info(&deps.api.addr_make("sender"), &[swap_amount.clone()]),
+                &swap_amount,
+                &minimum_receive_amount,
+                100,
+                &None,
+                Addr::unchecked("recipient"),
+                Some(Callback {
+                    contract: Addr::unchecked("twap"),
+                    msg: to_json_binary("dummy message").unwrap(),
+                    execution_rebate: vec![Coin::new(1u128, "rune")],
+                }),
+            )
+            .unwrap_err();
     }
 }
