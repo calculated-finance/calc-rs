@@ -1,19 +1,20 @@
 use calc_rs::{
+    core::{Contract, ContractError, ContractResult},
     manager::{
-        DomainEvent, ManagerConfig, ManagerExecuteMsg, ManagerInstantiateMsg, ManagerQueryMsg,
-        Strategy, StrategyExecuteMsg, StrategyInstantiateMsg,
+        Affiliate, DomainEvent, ManagerConfig, ManagerExecuteMsg, ManagerInstantiateMsg,
+        ManagerMigrateMsg, ManagerQueryMsg, Strategy, StrategyExecuteMsg, StrategyInstantiateMsg,
+        StrategyStatus,
     },
-    core::{Contract, ContractError, ContractResult, StrategyStatus},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
-    Order, Response, StdError, StdResult, WasmMsg,
+    instantiate2_address, to_json_binary, Binary, Coins, CosmosMsg, Deps, DepsMut, Env,
+    MessageInfo, Order, Response, StdError, StdResult, WasmMsg,
 };
 use cw_storage_plus::Bound;
 
-use crate::state::{strategy_store, AFFILIATES, CODE_IDS, CONFIG, STRATEGY_COUNTER};
+use crate::state::{strategy_store, AFFILIATES, CONFIG, STRATEGY_COUNTER};
 
 #[entry_point]
 pub fn instantiate(
@@ -25,14 +26,13 @@ pub fn instantiate(
     CONFIG.save(
         deps.storage,
         &ManagerConfig {
-            admin: info.sender,
-            fee_collector: msg.fee_collector,
+            admin: msg.admin.clone(),
+            code_ids: msg.code_ids,
+            fee_collector: info.sender.clone(),
+            affiliate_creation_fee: msg.affiliate_creation_fee,
+            default_affiliate_bps: msg.default_affiliate_bps,
         },
     )?;
-
-    for (strategy_type, code_id) in msg.code_ids {
-        CODE_IDS.save(deps.storage, strategy_type, &code_id)?;
-    }
 
     STRATEGY_COUNTER.save(deps.storage, &0)?;
 
@@ -40,10 +40,19 @@ pub fn instantiate(
 }
 
 #[entry_point]
-pub fn migrate(deps: DepsMut, _env: Env, msg: ManagerInstantiateMsg) -> ContractResult {
-    for (strategy_type, code_id) in msg.code_ids {
-        CODE_IDS.save(deps.storage, strategy_type, &code_id)?;
-    }
+pub fn migrate(deps: DepsMut, _env: Env, msg: ManagerMigrateMsg) -> ContractResult {
+    let config = CONFIG.load(deps.storage)?;
+
+    CONFIG.save(
+        deps.storage,
+        &ManagerConfig {
+            admin: config.admin,
+            code_ids: msg.code_ids,
+            fee_collector: msg.fee_collector,
+            affiliate_creation_fee: msg.affiliate_creation_fee,
+            default_affiliate_bps: msg.default_affiliate_bps,
+        },
+    )?;
 
     Ok(Response::default())
 }
@@ -67,18 +76,22 @@ pub fn execute(
             let config = CONFIG.load(deps.storage)?;
             let strategy_id = STRATEGY_COUNTER.load(deps.storage)? + 1;
 
-            let salt = to_json_binary(&(
-                owner.clone(),
-                strategy_id,
-                env.block.time.seconds(),
-            ))?;
+            let salt = to_json_binary(&(owner.clone(), strategy_id, env.block.time.seconds()))?;
 
-            let code_id = CODE_IDS.load(deps.storage, strategy.strategy_type())?;
+            let code_id = config
+                .code_ids
+                .get(&strategy.strategy_type())
+                .ok_or_else(|| {
+                    StdError::generic_err(format!(
+                        "Code ID for strategy type {:?} not found",
+                        strategy.strategy_type()
+                    ))
+                })?;
 
             let strategy_address = deps.api.addr_humanize(&instantiate2_address(
                 &deps
                     .querier
-                    .query_wasm_code_info(code_id)?
+                    .query_wasm_code_info(*code_id)?
                     .checksum
                     .as_slice(),
                 &deps.api.addr_canonicalize(env.contract.address.as_str())?,
@@ -103,7 +116,7 @@ pub fn execute(
 
             let instantiate_strategy_msg = WasmMsg::Instantiate2 {
                 admin: Some(owner.to_string()),
-                code_id,
+                code_id: *code_id,
                 label,
                 msg: to_json_binary(&StrategyInstantiateMsg {
                     fee_collector: config.fee_collector,
@@ -113,13 +126,16 @@ pub fn execute(
                 salt,
             };
 
-            let strategy_instantiated_event = DomainEvent::StrategyInstantiated { contract_address: strategy_address };
+            let strategy_instantiated_event = DomainEvent::StrategyInstantiated {
+                contract_address: strategy_address,
+            };
 
             messages.push(instantiate_strategy_msg.into());
             events.push(strategy_instantiated_event);
         }
         ManagerExecuteMsg::ExecuteStrategy {
-            contract_address, .. // We include optional an msg in the API for future extension
+            contract_address,
+            msg: _, // We include optional an msg in the API for future extension
         } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
 
@@ -133,7 +149,7 @@ pub fn execute(
             )?;
 
             let execute_msg = Contract(contract_address.clone())
-                    .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds);
+                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds);
 
             let execute_event = DomainEvent::StrategyExecuted { contract_address };
 
@@ -160,18 +176,19 @@ pub fn execute(
             )?;
 
             let update_msg = Contract(contract_address.clone()).call(
-                    to_json_binary(&StrategyExecuteMsg::Update(update))?,
-                    info.funds,
-                );
+                to_json_binary(&StrategyExecuteMsg::Update(update))?,
+                info.funds,
+            );
 
-            let update_event = DomainEvent::StrategyUpdated {
-                contract_address,
-            };
+            let update_event = DomainEvent::StrategyUpdated { contract_address };
 
             messages.push(update_msg.into());
             events.push(update_event);
         }
-        ManagerExecuteMsg::UpdateStrategyStatus { contract_address, status } => {
+        ManagerExecuteMsg::UpdateStrategyStatus {
+            contract_address,
+            status,
+        } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
 
             if strategy.owner != info.sender {
@@ -189,22 +206,37 @@ pub fn execute(
             )?;
 
             let update_status_msg = Contract(contract_address.clone()).call(
-                    to_json_binary(&StrategyExecuteMsg::UpdateStatus(status))?,
-                    info.funds,
-                );
+                to_json_binary(&StrategyExecuteMsg::UpdateStatus(status))?,
+                info.funds,
+            );
 
-            let update_status_event = DomainEvent::StrategyStatusUpdated {
-                contract_address,
-            };
+            let update_status_event = DomainEvent::StrategyStatusUpdated { contract_address };
 
             messages.push(update_status_msg.into());
             events.push(update_status_event);
         }
-        ManagerExecuteMsg::AddAffiliate { affiliate } => {
-            AFFILIATES.save(deps.storage, affiliate.code.clone(), &affiliate)?;
-        }
-        ManagerExecuteMsg::RemoveAffiliate { code } => {
-            AFFILIATES.remove(deps.storage, code);
+        ManagerExecuteMsg::AddAffiliate { code, address } => {
+            let config = CONFIG.load(deps.storage)?;
+            let deposit = Coins::try_from(info.funds)?;
+
+            if deposit.amount_of(&config.affiliate_creation_fee.denom)
+                < config.affiliate_creation_fee.amount
+            {
+                return Err(ContractError::Std(StdError::generic_err(format!(
+                    "Must include at least {:?} to create an affiliate",
+                    config.affiliate_creation_fee
+                ))));
+            }
+
+            AFFILIATES.save(
+                deps.storage,
+                code.clone(),
+                &Affiliate {
+                    bps: config.default_affiliate_bps,
+                    code,
+                    address,
+                },
+            )?;
         }
     };
 
@@ -217,11 +249,6 @@ pub fn execute(
 pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
         ManagerQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
-        ManagerQueryMsg::CodeId(strategy_type) => to_json_binary(
-            &CODE_IDS
-                .load(deps.storage, strategy_type)
-                .map_err(|_| StdError::generic_err("Code ID not found"))?,
-        ),
         ManagerQueryMsg::Strategy { address } => {
             to_json_binary(&strategy_store().load(deps.storage, address)?)
         }
@@ -286,9 +313,11 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 }
 
 #[cfg(test)]
-mod tests {
+mod create_strategy_tests {}
+
+#[cfg(test)]
+mod fetch_strategies_tests {
     use super::*;
-    use calc_rs::core::StrategyStatus;
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         to_json_binary, Addr,

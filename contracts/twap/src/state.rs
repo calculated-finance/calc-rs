@@ -1,6 +1,6 @@
 use calc_rs::{
-    core::{Condition, Schedule, StrategyStatus},
-    manager::StrategyExecuteMsg,
+    core::{Condition, Schedule},
+    manager::{StrategyExecuteMsg, StrategyStatus},
     twap::TwapConfig,
 };
 use cosmwasm_std::{Coin, Env, StdError, StdResult, Storage, Timestamp};
@@ -20,7 +20,7 @@ impl ConfigStore {
             ));
         }
 
-        let config = TwapConfig {
+        let mut config = TwapConfig {
             swap_conditions: vec![
                 match update.swap_cadence {
                     Schedule::Blocks { interval, previous } => Condition::BlocksCompleted(
@@ -60,6 +60,13 @@ impl ConfigStore {
             ..update.clone()
         };
 
+        if let Some(rebate) = update.execution_rebate.clone() {
+            config.swap_conditions.push(Condition::BalanceAvailable {
+                address: env.contract.address.clone(),
+                amount: rebate,
+            })
+        }
+
         self.item.save(storage, &config)
     }
 
@@ -69,7 +76,9 @@ impl ConfigStore {
 }
 
 pub const STATE: Item<StrategyExecuteMsg> = Item::new("state");
+
 pub const CONFIG: ConfigStore = ConfigStore {
     item: Item::new("config"),
 };
-pub const STATS: Item<TwapStatistics> = Item::new("statistics");
+
+pub const STATS: Item<TwapStatistics> = Item::new("stats");

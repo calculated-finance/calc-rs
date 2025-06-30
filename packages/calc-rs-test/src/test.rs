@@ -8,7 +8,7 @@ use std::sync::Arc;
 pub type GrpcHandler = Arc<dyn Fn(&GrpcQuery) -> QuerierResult + Send + Sync>;
 
 pub struct CustomMockQuerier<C: DeserializeOwned = Empty> {
-    default: MockQuerier<C>,
+    pub default: MockQuerier<C>,
     grpc_handler: Option<GrpcHandler>,
 }
 
@@ -63,7 +63,7 @@ impl Default for CustomMockQuerier {
     }
 }
 
-pub fn mock_dependencies_with_custom_querier(
+pub fn mock_dependencies_with_custom_grpc_querier(
 ) -> OwnedDeps<MockStorage, MockApi, CustomMockQuerier, Empty> {
     OwnedDeps {
         storage: MockStorage::default(),

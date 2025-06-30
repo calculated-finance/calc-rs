@@ -25,7 +25,7 @@ const STRATEGY_ADDRESS =
   "sthor13wx9rc53am928agavdch5ap0p3e6hhuvn033tdf2vlrh0h4yqkpqss8l9j";
 
 const DISTRIBUTOR_ADDRESS =
-  "sthor1220yawjr4ejsvsekzxschwfsg3mgak6nj5s76sa8438j9lesgzmqmkuafg";
+  "sthor1xjkswqj9fwqvfxasugzxx5qg0duvh2lw77dwpxmntx0etx0mhd2ssgjnqw";
 
 const PAIR_ADDRESS =
   "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";
@@ -887,7 +887,9 @@ const run = async () => {
 // getConfig(STRATEGY_ADDRESS).then((c) =>
 //   console.log(JSON.stringify(c, null, 2))
 // );
-// getStatistics(STRATEGY_ADDRESS).then(console.log);
+// getStatistics(STRATEGY_ADDRESS).then((s) =>
+//   console.log(JSON.stringify(s, null, 2))
+// );
 // executeTriggersWith(getBlockTriggers);
 // executeTriggersWith(getTimeTriggers);
 // run();
@@ -896,7 +898,9 @@ const run = async () => {
 // executeStrategy(STRATEGY_ADDRESS);
 // executeTriggers(STRATEGY_ADDRESS).then((result) => {
 //   console.log("Trigger execution result:", result);
-// getStatistics(STRATEGY_ADDRESS).then(console.log);
+// getStatistics(STRATEGY_ADDRESS).then((c) =>
+//   console.log(JSON.stringify(c, null, 2))
+// );
 // });
 // queryPool().then(console.log);
 // queryQuote().then(console.log);
@@ -904,7 +908,7 @@ const run = async () => {
 // getTransaction(
 //   "5A54E3F51A2DB27BDAA857914EBA49CE9309BE07C4D66AA8A10F1A6FE97962B9"
 // ).then((t) => console.log(JSON.stringify(t.events, null, 2)));
-// withdrawFromStrategy(STRATEGY_ADDRESS);
+// withdrawFromStrategy(DISTRIBUTOR_ADDRESS);
 // uploadAndMigrateTwapContract();
 // uploadDistributorContract().then(console.log);
 // uploadAndMigrateDistributorContract();

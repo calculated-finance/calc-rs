@@ -1,11 +1,11 @@
 use std::{cmp::min, collections::HashMap};
 
 use calc_rs::{
+    core::{ContractError, ContractResult},
     distributor::{
         Distribution, DistributorConfig, DistributorExecuteMsg, DistributorQueryMsg,
         DistributorStatistics, DomainEvent,
     },
-    core::{ContractError, ContractResult},
 };
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
@@ -96,13 +96,13 @@ pub fn execute(
                     for destination in destinations.clone() {
                         let distribution = Distribution {
                             destination: destination.clone(),
-                            amount: vec![Coin {
-                                denom: balance.denom.clone(),
-                                amount: balance.amount.mul_floor(Decimal::from_ratio(
+                            amount: vec![Coin::new(
+                                balance.amount.mul_floor(Decimal::from_ratio(
                                     destination.shares,
                                     total_shares,
                                 )),
-                            }],
+                                balance.denom.clone(),
+                            )],
                         };
 
                         stats
@@ -277,7 +277,7 @@ mod update_tests {
     }
 
     #[test]
-    fn updates_config() {
+    fn does_not_update_immutable_destinations() {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
@@ -339,13 +339,18 @@ mod distribute_tests {
     use crate::test::default_config;
 
     use super::*;
+    use calc_rs::core::Condition;
     use calc_rs::distributor::{Destination, Recipient};
-    use calc_rs::core::{Condition, MsgDeposit, DEPOSIT_FEE};
+    use calc_rs::thorchain::MsgDeposit;
+    use calc_rs_test::test::mock_dependencies_with_custom_grpc_querier;
+    use cosmwasm_std::SystemResult;
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr, CosmosMsg, Event, SubMsg, WasmMsg,
+        Addr, ContractResult as CosmwasmResult, CosmosMsg, Event, SubMsg, WasmMsg,
     };
+    use prost::Message;
     use rstest::rstest;
+    use rujira_rs::proto::types::QueryNetworkResponse;
 
     #[test]
     fn does_nothing_if_conditions_not_met() {
@@ -452,12 +457,12 @@ mod distribute_tests {
             .into_iter()
             .map(|d| Distribution {
                 destination: d.clone(),
-                amount: vec![Coin {
-                    denom: balance.denom.clone(),
-                    amount: balance
+                amount: vec![Coin::new(
+                    balance
                         .amount
                         .mul_floor(Decimal::from_ratio(d.shares, total_shares)),
-                }],
+                    balance.denom.clone(),
+                )],
             })
             .collect::<Vec<_>>();
 
@@ -568,7 +573,7 @@ mod distribute_tests {
             ("destination3".to_string(), 4, Some(to_json_binary(&"test").unwrap())),
         ],
     )]
-    fn distributes_funds_correctly(
+    fn distributes_funds_accurately(
         #[case] balance: u128,
         #[case] mutable_destinations: Vec<(String, u128, Option<Binary>)>,
         #[case] immutable_destinations: Vec<(String, u128, Option<Binary>)>,
@@ -719,7 +724,7 @@ mod distribute_tests {
 
     #[test]
     fn distributes_secured_asset_correctly() {
-        let mut deps = mock_dependencies();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
         let env = mock_env();
 
         STATS
@@ -747,13 +752,39 @@ mod distribute_tests {
             ..default_config()
         };
 
+        let deposit_fee = 2_000_000_u128;
+
+        deps.querier.with_grpc_handler(move |_| {
+            let response = QueryNetworkResponse {
+                bond_reward_rune: "4726527489".to_string(),
+                total_bond_units: "277404".to_string(),
+                effective_security_bond: "90126604378071".to_string(),
+                total_reserve: "4994080222948541".to_string(),
+                vaults_migrating: true,
+                gas_spent_rune: "0".to_string(),
+                gas_withheld_rune: "0".to_string(),
+                outbound_fee_multiplier: "30000".to_string(),
+                native_outbound_fee_rune: "2000000".to_string(),
+                native_tx_fee_rune: deposit_fee.to_string(),
+                tns_register_fee_rune: "1000000000".to_string(),
+                tns_fee_per_block_rune: "20".to_string(),
+                rune_price_in_tor: "1.14130903".to_string(),
+                tor_price_in_rune: "0.87618688".to_string(),
+            };
+
+            let mut buf = Vec::new();
+            response.encode(&mut buf).unwrap();
+
+            SystemResult::Ok(CosmwasmResult::Ok(buf.into()))
+        });
+
         CONFIG.save(&mut deps.as_mut(), &env, &mut config).unwrap();
 
-        deps.querier.bank.update_balance(
+        deps.querier.default.bank.update_balance(
             &env.contract.address,
             vec![
                 Coin::new(1_000_u128, "eth-eth"),
-                Coin::new(DEPOSIT_FEE, "rune"),
+                Coin::new(deposit_fee, "rune"),
             ],
         );
 
@@ -767,15 +798,19 @@ mod distribute_tests {
 
         assert_eq!(
             response.messages,
-            vec![SubMsg::new(CosmosMsg::from(MsgDeposit {
-                memo: format!("SECURE-:{}", recipient_address),
-                coins: vec![Coin::new(1_000_u128, "eth-eth")],
-                signer: deps
-                    .as_ref()
-                    .api
-                    .addr_canonicalize(&env.contract.address.as_str())
-                    .unwrap(),
-            }))]
+            vec![SubMsg::new(CosmosMsg::from(
+                MsgDeposit {
+                    memo: format!("SECURE-:{}", recipient_address),
+                    coins: vec![Coin::new(1_000_u128, "eth-eth")],
+                    signer: deps
+                        .as_ref()
+                        .api
+                        .addr_canonicalize(&env.contract.address.as_str())
+                        .unwrap(),
+                }
+                .into_cosmos_msg()
+                .unwrap()
+            ))]
         );
     }
 
@@ -862,7 +897,7 @@ mod distribute_tests {
 
     #[test]
     fn updates_statistics() {
-        let mut deps = mock_dependencies();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
         let env = mock_env();
 
         let bank_recipient = deps.api.addr_make("destination1");
@@ -900,6 +935,32 @@ mod distribute_tests {
             ..default_config()
         };
 
+        let deposit_fee = 2_000_000_u128;
+
+        deps.querier.with_grpc_handler(move |_| {
+            let response = QueryNetworkResponse {
+                bond_reward_rune: "4726527489".to_string(),
+                total_bond_units: "277404".to_string(),
+                effective_security_bond: "90126604378071".to_string(),
+                total_reserve: "4994080222948541".to_string(),
+                vaults_migrating: true,
+                gas_spent_rune: "0".to_string(),
+                gas_withheld_rune: "0".to_string(),
+                outbound_fee_multiplier: "30000".to_string(),
+                native_outbound_fee_rune: "2000000".to_string(),
+                native_tx_fee_rune: deposit_fee.to_string(),
+                tns_register_fee_rune: "1000000000".to_string(),
+                tns_fee_per_block_rune: "20".to_string(),
+                rune_price_in_tor: "1.14130903".to_string(),
+                tor_price_in_rune: "0.87618688".to_string(),
+            };
+
+            let mut buf = Vec::new();
+            response.encode(&mut buf).unwrap();
+
+            SystemResult::Ok(CosmwasmResult::Ok(buf.into()))
+        });
+
         CONFIG.save(&mut deps.as_mut(), &env, &mut config).unwrap();
 
         STATS
@@ -914,9 +975,9 @@ mod distribute_tests {
 
         let balance = Coin::new(1_000_u128, denom.clone());
 
-        deps.querier.bank.update_balance(
+        deps.querier.default.bank.update_balance(
             &env.contract.address,
-            vec![balance.clone(), Coin::new(DEPOSIT_FEE, "rune")],
+            vec![balance.clone(), Coin::new(deposit_fee, "rune")],
         );
 
         STATS
@@ -1025,12 +1086,12 @@ mod distribute_tests {
                     .chain(config.immutable_destinations.iter())
                     .map(|d| Distribution {
                         destination: d.clone(),
-                        amount: vec![Coin {
-                            denom: "rune".to_string(),
-                            amount: balance
+                        amount: vec![Coin::new(
+                            balance
                                 .amount
                                 .mul_floor(Decimal::from_ratio(d.shares, total_shares)),
-                        }],
+                            "rune"
+                        )],
                     })
                     .collect(),
             }]
@@ -1075,10 +1136,7 @@ mod withdraw_tests {
             env,
             message_info(&Addr::unchecked("not_owner"), &[]),
             DistributorExecuteMsg::Withdraw {
-                amounts: vec![Coin {
-                    denom: "rune".to_string(),
-                    amount: Uint128::new(1000),
-                }],
+                amounts: vec![Coin::new(1000u128, "rune")],
             },
         )
         .unwrap_err();
@@ -1090,16 +1148,6 @@ mod withdraw_tests {
     fn withdraws_funds_correctly() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &DistributorStatistics {
-                    distributed: HashMap::new(),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
 
         let mut config = default_config();
 
@@ -1153,5 +1201,52 @@ mod withdraw_tests {
             .map(Event::from)
             .collect::<Vec<Event>>(),
         );
+    }
+
+    #[test]
+    fn updates_statistics() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let mut config = default_config();
+
+        CONFIG.save(&mut deps.as_mut(), &env, &mut config).unwrap();
+
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &DistributorStatistics {
+                    distributed: HashMap::new(),
+                    withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        deps.querier.bank.update_balance(
+            &env.contract.address,
+            vec![
+                Coin::new(1_000_u128, "rune"),
+                Coin::new(1_000_u128, "uruji"),
+                Coin::new(1_000_u128, "btc-btc"),
+            ],
+        );
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&config.owner, &[]),
+            DistributorExecuteMsg::Withdraw {
+                amounts: vec![Coin::new(1_000_u128, "rune"), Coin::new(500_u128, "uruji")],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            STATS.load(deps.as_mut().storage).unwrap(),
+            DistributorStatistics {
+                distributed: HashMap::new(),
+                withdrawn: vec![Coin::new(1_000_u128, "rune"), Coin::new(500_u128, "uruji")],
+            },
+        )
     }
 }

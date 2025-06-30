@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::core::{Condition, MsgDeposit};
+use crate::{core::Condition, thorchain::MsgDeposit};
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
     to_json_string, Addr, BankMsg, Binary, Coin, CosmosMsg, Deps, Env, Event, StdResult, Uint128,
@@ -55,7 +55,7 @@ impl Distribution {
                 coins: self.amount,
                 signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
             }
-            .into()),
+            .into_cosmos_msg()?),
         }
     }
 }
@@ -135,5 +135,93 @@ impl From<DomainEvent> for Event {
                     to_json_string(&funds).expect("Failed to serialize withdrawn funds"),
                 ),
         }
+    }
+}
+
+#[cfg(test)]
+mod distribution_tests {
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        to_json_binary, Api, BankMsg, Coin, CosmosMsg, Uint128, WasmMsg,
+    };
+
+    use crate::{
+        distributor::{Destination, Distribution, Recipient},
+        thorchain::MsgDeposit,
+    };
+
+    #[test]
+    fn builds_accurate_distribution_msg() {
+        let deps = mock_dependencies();
+        let env = mock_env();
+        let address = deps.api.addr_make("cosmos1xyz");
+        let amount = Coin::new(100u128, "gaia-atom");
+
+        assert_eq!(
+            Distribution {
+                amount: vec![amount.clone()],
+                destination: Destination {
+                    recipient: Recipient::Bank {
+                        address: address.clone()
+                    },
+                    shares: Uint128::new(10000),
+                    label: None,
+                },
+            }
+            .get_msg(deps.as_ref(), &env)
+            .unwrap(),
+            CosmosMsg::Bank(BankMsg::Send {
+                to_address: address.to_string(),
+                amount: vec![amount.clone()],
+            })
+        );
+
+        let msg = to_json_binary(&"test-message").unwrap();
+
+        assert_eq!(
+            Distribution {
+                amount: vec![amount.clone()],
+                destination: Destination {
+                    recipient: Recipient::Wasm {
+                        address: address.clone(),
+                        msg: msg.clone()
+                    },
+                    shares: Uint128::new(10000),
+                    label: None,
+                },
+            }
+            .get_msg(deps.as_ref(), &env)
+            .unwrap(),
+            CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: address.to_string(),
+                msg: msg.clone(),
+                funds: vec![amount.clone()],
+            })
+        );
+
+        let memo = "=:random-memo:test".to_string();
+
+        assert_eq!(
+            Distribution {
+                amount: vec![amount.clone()],
+                destination: Destination {
+                    recipient: Recipient::Deposit { memo: memo.clone() },
+                    shares: Uint128::new(10000),
+                    label: None
+                }
+            }
+            .get_msg(deps.as_ref(), &env)
+            .unwrap(),
+            MsgDeposit {
+                memo,
+                coins: vec![amount],
+                signer: deps
+                    .api
+                    .addr_canonicalize(env.contract.address.as_str())
+                    .unwrap()
+            }
+            .into_cosmos_msg()
+            .unwrap()
+        );
     }
 }

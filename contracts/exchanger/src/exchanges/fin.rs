@@ -1,8 +1,8 @@
 use std::{cmp::max, str::FromStr};
 
 use calc_rs::{
-    exchanger::{ExpectedReceiveAmount, Route},
     core::{Callback, Contract, ContractError, ContractResult},
+    exchanger::{ExpectedReceiveAmount, Route},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -250,13 +250,8 @@ mod expected_receive_amount_tests {
     fn fails_to_get_expected_receive_amount_from_non_existing_pair() {
         let deps = mock_dependencies();
 
-        let swap_amount = Coin {
-            denom: "uruji".to_string(),
-            amount: Uint128::new(100),
-        };
-
+        let swap_amount = Coin::new(100u128, "uruju");
         let target_denom = "usdc";
-
         let pair_address = Addr::unchecked("pair-address");
 
         let result = FinExchange::new()
@@ -289,10 +284,7 @@ mod expected_receive_amount_tests {
             address: Addr::unchecked("pair-address"),
         };
 
-        let swap_amount = Coin {
-            denom: "uruji".to_string(),
-            amount: Uint128::new(100),
-        };
+        let swap_amount = Coin::new(100u128, "uruji");
 
         let target_denom = "usdc";
 
@@ -384,16 +376,8 @@ mod swap_tests {
     fn fails_to_swap_with_non_existing_pair() {
         let deps = mock_dependencies();
 
-        let swap_amount = Coin {
-            denom: "uruji".to_string(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "rune".to_string(),
-            amount: Uint128::new(50),
-        };
-
+        let swap_amount = Coin::new(100u128, "uruji");
+        let minimum_receive_amount = Coin::new(50u128, "rune");
         let pair_address = Addr::unchecked("non-existing-pair-address");
 
         let result = FinExchange::new()
@@ -428,15 +412,8 @@ mod swap_tests {
     fn fails_to_swap_with_no_route() {
         let deps = mock_dependencies();
 
-        let swap_amount = Coin {
-            denom: "uruji".to_string(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "rune".to_string(),
-            amount: Uint128::new(50),
-        };
+        let swap_amount = Coin::new(100u128, "uruji");
+        let minimum_receive_amount = Coin::new(50u128, "rune");
 
         let result = FinExchange::new()
             .swap(
@@ -467,15 +444,8 @@ mod swap_tests {
     fn fails_to_swap_with_non_fin_route() {
         let deps = mock_dependencies();
 
-        let swap_amount = Coin {
-            denom: "uruji".to_string(),
-            amount: Uint128::new(100),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: "rune".to_string(),
-            amount: Uint128::new(50),
-        };
+        let swap_amount = Coin::new(100u128, "uruji");
+        let minimum_receive_amount = Coin::new(50u128, "rune");
 
         let result = FinExchange::new()
             .swap(
@@ -530,15 +500,8 @@ mod swap_tests {
             ))
         });
 
-        let swap_amount = Coin {
-            denom: pair.base_denom.clone(),
-            amount: 100u128.into(),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: pair.quote_denom.clone(),
-            amount: 50u128.into(),
-        };
+        let swap_amount = Coin::new(100u128, pair.base_denom.clone());
+        let minimum_receive_amount = Coin::new(50u128, pair.quote_denom.clone());
 
         assert_eq!(
             FinExchange::new()
@@ -619,15 +582,11 @@ mod swap_tests {
             }))
         });
 
-        let swap_amount = Coin {
-            denom: base_denom.clone(),
-            amount: 100u128.into(),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: quote_denom.clone(),
-            amount: expected_receive_amount + Uint128::new(1),
-        };
+        let swap_amount = Coin::new(100u128, base_denom.clone());
+        let minimum_receive_amount = Coin::new(
+            expected_receive_amount + Uint128::one(),
+            quote_denom.clone(),
+        );
 
         assert_eq!(
             FinExchange::new()
@@ -708,15 +667,11 @@ mod swap_tests {
             }))
         });
 
-        let swap_amount = Coin {
-            denom: base_denom.clone(),
-            amount: 100u128.into(),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: quote_denom.clone(),
-            amount: expected_receive_amount,
-        };
+        let swap_amount = Coin::new(100u128, base_denom.clone());
+        let minimum_receive_amount = Coin::new(
+            expected_receive_amount - Uint128::one(),
+            quote_denom.clone(),
+        );
 
         assert_eq!(
             FinExchange::new()
@@ -795,16 +750,8 @@ mod swap_tests {
             }))
         });
 
-        let swap_amount = Coin {
-            denom: base_denom.clone(),
-            amount: 100u128.into(),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: quote_denom.clone(),
-            amount: 50u128.into(),
-        };
-
+        let swap_amount = Coin::new(100u128, base_denom.clone());
+        let minimum_receive_amount = Coin::new(50u128, quote_denom.clone());
         let recipient = Addr::unchecked("recipient-address");
 
         let response = FinExchange::new()
@@ -892,18 +839,9 @@ mod swap_tests {
             }))
         });
 
-        let swap_amount = Coin {
-            denom: base_denom.clone(),
-            amount: 100u128.into(),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: quote_denom.clone(),
-            amount: 100u128.into(),
-        };
-
+        let swap_amount = Coin::new(100u128, base_denom.clone());
+        let minimum_receive_amount = Coin::new(100u128, quote_denom.clone());
         let recipient = Addr::unchecked("recipient-address");
-
         let execution_rebate = vec![Coin::new(1u128, "rune")];
 
         let response = FinExchange::new()
@@ -995,16 +933,8 @@ mod swap_tests {
             }))
         });
 
-        let swap_amount = Coin {
-            denom: base_denom.clone(),
-            amount: 100u128.into(),
-        };
-
-        let minimum_receive_amount = Coin {
-            denom: quote_denom.clone(),
-            amount: 100u128.into(),
-        };
-
+        let swap_amount = Coin::new(100u128, base_denom.clone());
+        let minimum_receive_amount = Coin::new(100u128, quote_denom.clone());
         let recipient = Addr::unchecked("recipient-address");
 
         let callback = Callback {

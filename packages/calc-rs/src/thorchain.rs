@@ -1,15 +1,69 @@
 use std::{
     num::{ParseIntError, TryFromIntError},
+    ops::Div,
     str::FromStr,
 };
 
+use anybuf::Anybuf;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Binary, QuerierWrapper, StdError, Uint128};
+use cosmwasm_std::{
+    AnyMsg, Binary, CanonicalAddr, Coin, CosmosMsg, Decimal, QuerierWrapper, StdError, StdResult,
+    Uint128,
+};
 use prost::{DecodeError, EncodeError, Message};
 use rujira_rs::proto::types::{
-    QueryQuoteSwapRequest, QueryQuoteSwapResponse, QuoteFees as QuerySwapQuoteResponseFees,
+    QueryNetworkRequest, QueryNetworkResponse, QueryQuoteSwapRequest, QueryQuoteSwapResponse,
+    QuoteFees as QuerySwapQuoteResponseFees,
 };
 use thiserror::Error;
+
+#[cw_serde]
+pub struct MsgDeposit {
+    pub memo: String,
+    pub coins: Vec<Coin>,
+    pub signer: CanonicalAddr,
+}
+
+impl MsgDeposit {
+    pub fn into_cosmos_msg(self) -> StdResult<CosmosMsg> {
+        let coins: Vec<Anybuf> = self
+            .coins
+            .iter()
+            .map(|c| {
+                let (chain, symbol) = if c.denom.to_ascii_lowercase().contains("rune") {
+                    ("THOR", "RUNE")
+                } else {
+                    c.denom.split_once("-").expect(
+                        format!("Cannot use native denom {} in deposit msg", c.denom).as_str(),
+                    )
+                };
+
+                Anybuf::new()
+                    .append_message(
+                        1,
+                        &Anybuf::new()
+                            .append_string(1, chain)
+                            .append_string(2, symbol)
+                            .append_string(3, symbol)
+                            .append_bool(4, false)
+                            .append_bool(5, false)
+                            .append_bool(6, chain != "THOR" && symbol != "RUNE"),
+                    )
+                    .append_string(2, c.amount.to_string())
+            })
+            .collect();
+
+        let value = Anybuf::new()
+            .append_repeated_message(1, &coins)
+            .append_string(2, self.memo)
+            .append_bytes(3, self.signer.to_vec());
+
+        Ok(CosmosMsg::Any(AnyMsg {
+            type_url: "/types.MsgDeposit".to_string(),
+            value: value.as_bytes().into(),
+        }))
+    }
+}
 
 pub trait QueryablePair {
     type Request: Message + Default;
@@ -193,13 +247,189 @@ pub enum TryFromQuoteSwapResponseError {
     Asset(#[from] AssetError),
 }
 
-// #[cw_serde]
-// pub struct QuoteFees {
-//     pub asset: String,
-//     pub affiliate: String,
-//     pub outbound: Uint128,
-//     pub liquidity: Uint128,
-//     pub total: Uint128,
-//     pub slippage_bps: u64,
-//     pub total_bps: u64,
-// }
+impl QueryablePair for QueryNetworkResponse {
+    type Request = QueryNetworkRequest;
+    type Response = QueryNetworkResponse;
+
+    fn grpc_path() -> &'static str {
+        "/types.Query/Network"
+    }
+}
+
+#[cw_serde]
+pub struct Network {
+    pub bond_reward_rune: Uint128,
+    pub total_bond_units: Uint128,
+    pub effective_security_bond: Uint128,
+    pub total_reserve: Uint128,
+    pub vaults_migrating: bool,
+    pub gas_spent_rune: Uint128,
+    pub gas_withheld_rune: Uint128,
+    pub outbound_fee_multiplier: u16,
+    pub native_outbound_fee_rune: Uint128,
+    pub native_tx_fee_rune: Uint128,
+    pub tns_register_fee_rune: Uint128,
+    pub tns_fee_per_block_rune: Uint128,
+    pub rune_price_in_tor: Decimal,
+    pub tor_price_in_rune: Decimal,
+}
+
+impl TryFrom<QueryNetworkResponse> for Network {
+    type Error = TryFromNetworkError;
+
+    fn try_from(value: QueryNetworkResponse) -> Result<Self, Self::Error> {
+        Ok(Self {
+            bond_reward_rune: Uint128::from_str(value.bond_reward_rune.as_str())?,
+            total_bond_units: Uint128::from_str(value.total_bond_units.as_str())?,
+            effective_security_bond: Uint128::from_str(value.effective_security_bond.as_str())?,
+            total_reserve: Uint128::from_str(value.total_reserve.as_str())?,
+            vaults_migrating: value.vaults_migrating,
+            gas_spent_rune: Uint128::from_str(value.gas_spent_rune.as_str())?,
+            gas_withheld_rune: Uint128::from_str(value.gas_withheld_rune.as_str())?,
+            outbound_fee_multiplier: u16::from_str(value.outbound_fee_multiplier.as_str())?,
+            native_outbound_fee_rune: Uint128::from_str(value.native_outbound_fee_rune.as_str())?,
+            native_tx_fee_rune: Uint128::from_str(value.native_tx_fee_rune.as_str())?,
+            tns_register_fee_rune: Uint128::from_str(value.tns_register_fee_rune.as_str())?,
+            tns_fee_per_block_rune: Uint128::from_str(value.tns_fee_per_block_rune.as_str())?,
+            rune_price_in_tor: Decimal::from_str(value.rune_price_in_tor.as_str())?
+                .div(Uint128::from(10u128).pow(8)),
+            tor_price_in_rune: Decimal::from_str(value.tor_price_in_rune.as_str())?
+                .div(Uint128::from(10u128).pow(8)),
+        })
+    }
+}
+
+impl Network {
+    pub fn load(q: QuerierWrapper) -> Result<Self, TryFromNetworkError> {
+        let req = QueryNetworkRequest {
+            height: "0".to_string(),
+        };
+        let res = QueryNetworkResponse::get(q, req)?;
+        Network::try_from(res)
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum TryFromNetworkError {
+    #[error("{0}")]
+    Std(#[from] StdError),
+    #[error("{0}")]
+    ParseInt(#[from] ParseIntError),
+    #[error("{0}")]
+    Query(#[from] QueryError),
+}
+
+#[cfg(test)]
+mod msg_deposit_tests {
+    use anybuf::Anybuf;
+    use cosmwasm_std::{testing::mock_dependencies, AnyMsg, Api, Coin, CosmosMsg};
+
+    use crate::thorchain::MsgDeposit;
+
+    #[test]
+    fn encodes_rune_deposit() {
+        let deps = mock_dependencies();
+
+        let deposit_msg = MsgDeposit {
+            memo: "test".to_string(),
+            coins: vec![Coin::new(1000u128, "rune")],
+            signer: deps
+                .api
+                .addr_canonicalize(deps.api.addr_make("test").as_str())
+                .unwrap(),
+        };
+
+        assert_eq!(
+            deposit_msg.clone().into_cosmos_msg().unwrap(),
+            CosmosMsg::Any(AnyMsg {
+                type_url: "/types.MsgDeposit".to_string(),
+                value: Anybuf::new()
+                    .append_repeated_message(
+                        1,
+                        &deposit_msg
+                            .coins
+                            .iter()
+                            .map(|c| Anybuf::new()
+                                .append_message(
+                                    1,
+                                    &Anybuf::new()
+                                        .append_string(1, "THOR")
+                                        .append_string(2, "RUNE")
+                                        .append_string(3, "RUNE")
+                                        .append_bool(4, false)
+                                        .append_bool(5, false)
+                                        .append_bool(6, false),
+                                )
+                                .append_string(2, c.amount.to_string()))
+                            .collect::<Vec<_>>()
+                    )
+                    .append_string(2, deposit_msg.memo)
+                    .append_bytes(3, deposit_msg.signer.clone().to_vec())
+                    .as_bytes()
+                    .into()
+            })
+        );
+    }
+
+    #[test]
+    fn encode_secured_asset() {
+        let deps = mock_dependencies();
+
+        let deposit_msg = MsgDeposit {
+            memo: "test".to_string(),
+            coins: vec![Coin::new(1000u128, "gaia-atom")],
+            signer: deps
+                .api
+                .addr_canonicalize(deps.api.addr_make("test").as_str())
+                .unwrap(),
+        };
+
+        assert_eq!(
+            deposit_msg.clone().into_cosmos_msg().unwrap(),
+            CosmosMsg::Any(AnyMsg {
+                type_url: "/types.MsgDeposit".to_string(),
+                value: Anybuf::new()
+                    .append_repeated_message(
+                        1,
+                        &deposit_msg
+                            .coins
+                            .iter()
+                            .map(|c| Anybuf::new()
+                                .append_message(
+                                    1,
+                                    &Anybuf::new()
+                                        .append_string(1, "gaia")
+                                        .append_string(2, "atom")
+                                        .append_string(3, "atom")
+                                        .append_bool(4, false)
+                                        .append_bool(5, false)
+                                        .append_bool(6, true),
+                                )
+                                .append_string(2, c.amount.to_string()))
+                            .collect::<Vec<_>>()
+                    )
+                    .append_string(2, deposit_msg.memo)
+                    .append_bytes(3, deposit_msg.signer.clone().to_vec())
+                    .as_bytes()
+                    .into()
+            })
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn fails_to_encode_native_asset() {
+        let deps = mock_dependencies();
+
+        let deposit_msg = MsgDeposit {
+            memo: "test".to_string(),
+            coins: vec![Coin::new(1000u128, "x/ruji")],
+            signer: deps
+                .api
+                .addr_canonicalize(deps.api.addr_make("test").as_str())
+                .unwrap(),
+        };
+
+        deposit_msg.into_cosmos_msg().unwrap();
+    }
+}

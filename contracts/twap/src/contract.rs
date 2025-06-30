@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 use calc_rs::{
-    core::{Callback, Condition, Contract, ContractError, ContractResult, StrategyStatus},
+    core::{Callback, Condition, Contract, ContractError, ContractResult},
     distributor::{
         Destination, DistributorConfig, DistributorExecuteMsg, DistributorQueryMsg,
         DistributorStatistics, Recipient,
@@ -10,6 +10,7 @@ use calc_rs::{
     manager::{
         Affiliate, CreateStrategyConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyConfig,
         StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg, StrategyStatistics,
+        StrategyStatus,
     },
     scheduler::{CreateTrigger, SchedulerExecuteMsg, TriggerConditionsThreshold},
     twap::TwapConfig,
@@ -146,14 +147,6 @@ pub fn instantiate(
                 },
             )?;
 
-            let execute_msg = Contract(env.contract.address.clone())
-                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
-
-            let strategy_instantiated_event = DomainEvent::TwapStrategyCreated {
-                contract_address: env.contract.address,
-                config: CONFIG.load(deps.storage)?,
-            };
-
             STATS.save(
                 deps.storage,
                 &TwapStatistics {
@@ -161,6 +154,14 @@ pub fn instantiate(
                     withdrawn: vec![],
                 },
             )?;
+
+            let execute_msg = Contract(env.contract.address.clone())
+                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
+
+            let strategy_instantiated_event = DomainEvent::TwapStrategyCreated {
+                contract_address: env.contract.address,
+                config: CONFIG.load(deps.storage)?,
+            };
 
             Ok(Response::default()
                 .add_message(instantiate_distributor_msg)
@@ -290,10 +291,10 @@ pub fn execute(
                     config.swap_amount.denom.clone(),
                 )?;
 
-                let swap_amount = Coin {
-                    denom: config.swap_amount.denom.clone(),
-                    amount: min(balance.amount, config.swap_amount.amount),
-                };
+                let swap_amount = Coin::new(
+                    min(balance.amount, config.swap_amount.amount),
+                    config.swap_amount.denom.clone(),
+                );
 
                 let minimum_receive_amount =
                     config
@@ -304,6 +305,12 @@ pub fn execute(
                             config.swap_amount.amount,
                         ));
 
+                let mut swap_funds = vec![swap_amount.clone()];
+
+                if let Some(rebate) = config.execution_rebate.clone() {
+                    swap_funds.push(rebate);
+                }
+
                 let swap_msg = Contract(config.exchanger_contract.clone()).call(
                     to_json_binary(&ExchangeExecuteMsg::Swap {
                         minimum_receive_amount: Coin::new(
@@ -312,9 +319,9 @@ pub fn execute(
                         ),
                         maximum_slippage_bps: config.maximum_slippage_bps,
                         route: config.route.clone(),
-                        // send funds to the distributor contract
+                        // send funds directly to the distributor contract
                         recipient: Some(config.distributor_contract.clone()),
-                        // callback to the distributor contract after swap
+                        // callback to pump the distributor contract after swap
                         on_complete: Some(Callback {
                             contract: config.distributor_contract.clone(),
                             msg: to_json_binary(&DistributorExecuteMsg::Distribute {})?,
@@ -324,7 +331,7 @@ pub fn execute(
                                 .map_or(vec![], |f| vec![f]),
                         }),
                     })?,
-                    vec![swap_amount.clone()],
+                    swap_funds,
                 );
 
                 sub_messages.push(SubMsg::reply_always(swap_msg, EXECUTE_REPLY_ID));
@@ -587,7 +594,8 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     }
 }
 
-// We defining our own CodeInfoResponse because the library one restricts creation
+// We define our own CodeInfoResponse for testing
+// because the library one restricts creation.
 #[cfg(test)]
 #[cw_serde]
 struct CodeInfoResponse {
@@ -1099,7 +1107,7 @@ mod instantiate_tests {
 mod update_tests {
     use super::*;
 
-    use calc_rs::core::Schedule;
+    use calc_rs::{core::Schedule, exchanger::Route};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr, Coin, Timestamp,
@@ -1329,7 +1337,7 @@ mod update_tests {
     }
 
     #[test]
-    fn updates_config() {
+    fn updates_mutable_config() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let config = default_config();
@@ -1357,6 +1365,10 @@ mod update_tests {
                 interval: 236473,
                 previous: Some(1265),
             },
+            route: Some(Route::Fin {
+                address: Addr::unchecked("pair"),
+            }),
+            execution_rebate: Some(Coin::new(2u128, "rune")),
             ..config.clone()
         };
 
@@ -1396,6 +1408,10 @@ mod update_tests {
                         maximum_slippage_bps: new_config.maximum_slippage_bps,
                         route: new_config.route.clone(),
                     },
+                    Condition::BalanceAvailable {
+                        address: env.contract.address.clone(),
+                        amount: new_config.execution_rebate.clone().unwrap()
+                    }
                 ],
                 schedule_conditions: vec![
                     Condition::BalanceAvailable {
@@ -1748,6 +1764,78 @@ mod execute_tests {
                     })
                     .unwrap(),
                     funds: vec![config.swap_amount.clone()],
+                },
+                EXECUTE_REPLY_ID
+            )
+        );
+    }
+
+    #[test]
+    fn includes_execution_rebate_if_it_is_set() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let execution_rebate = Coin::new(2u128, "rune");
+        let config = TwapConfig {
+            execution_rebate: Some(execution_rebate.clone()),
+            ..default_config()
+        };
+
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &TwapStatistics {
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![config.swap_amount.clone(), execution_rebate.clone()],
+        );
+
+        deps.querier.update_wasm(move |_| {
+            let minimum_receive_amount = default_config().minimum_receive_amount;
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&ExpectedReceiveAmount {
+                    receive_amount: Coin::new(
+                        minimum_receive_amount.amount.u128() + 1,
+                        minimum_receive_amount.denom.clone(),
+                    ),
+                    slippage_bps: config.maximum_slippage_bps - 1,
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&config.manager_contract, &[]),
+                StrategyExecuteMsg::Execute {}
+            )
+            .unwrap()
+            .messages[0],
+            SubMsg::reply_always(
+                WasmMsg::Execute {
+                    contract_addr: config.exchanger_contract.to_string(),
+                    msg: to_json_binary(&ExchangeExecuteMsg::Swap {
+                        minimum_receive_amount: config.minimum_receive_amount.clone(),
+                        maximum_slippage_bps: config.maximum_slippage_bps,
+                        route: config.route.clone(),
+                        recipient: Some(config.distributor_contract.clone()),
+                        on_complete: Some(Callback {
+                            contract: config.distributor_contract.clone(),
+                            msg: to_json_binary(&DistributorExecuteMsg::Distribute {}).unwrap(),
+                            execution_rebate: vec![execution_rebate.clone()],
+                        }),
+                    })
+                    .unwrap(),
+                    funds: vec![config.swap_amount, execution_rebate],
                 },
                 EXECUTE_REPLY_ID
             )

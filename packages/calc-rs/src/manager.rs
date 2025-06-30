@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::twap::{InstantiateTwapCommand, TwapConfig};
-use crate::core::StrategyStatus;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Event};
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
@@ -10,6 +9,9 @@ use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 pub struct ManagerConfig {
     pub admin: Addr,
     pub fee_collector: Addr,
+    pub affiliate_creation_fee: Coin,
+    pub default_affiliate_bps: u64,
+    pub code_ids: HashMap<StrategyType, u64>,
 }
 
 #[derive(Hash, Eq)]
@@ -25,6 +27,30 @@ impl<'a> Prefixer<'a> for StrategyType {
 }
 
 impl<'a> PrimaryKey<'a> for StrategyType {
+    type Prefix = Self;
+    type SubPrefix = Self;
+    type Suffix = ();
+    type SuperSuffix = ();
+
+    fn key(&self) -> Vec<Key> {
+        vec![Key::Val8([self.clone() as u8])]
+    }
+}
+
+#[cw_serde]
+pub enum StrategyStatus {
+    Active,
+    Paused,
+    Archived,
+}
+
+impl<'a> Prefixer<'a> for StrategyStatus {
+    fn prefix(&self) -> Vec<Key> {
+        vec![Key::Val8([self.clone() as u8])]
+    }
+}
+
+impl<'a> PrimaryKey<'a> for StrategyStatus {
     type Prefix = Self;
     type SubPrefix = Self;
     type Suffix = ();
@@ -108,14 +134,19 @@ pub enum StrategyQueryMsg {
 
 #[cw_serde]
 pub struct ManagerInstantiateMsg {
-    pub code_ids: Vec<(StrategyType, u64)>,
+    pub admin: Addr,
+    pub code_ids: HashMap<StrategyType, u64>,
     pub fee_collector: Addr,
+    pub affiliate_creation_fee: Coin,
+    pub default_affiliate_bps: u64,
 }
 
 #[cw_serde]
 pub struct ManagerMigrateMsg {
-    pub code_ids: Vec<(StrategyType, u64)>,
+    pub code_ids: HashMap<StrategyType, u64>,
     pub fee_collector: Addr,
+    pub affiliate_creation_fee: Coin,
+    pub default_affiliate_bps: u64,
 }
 
 #[cw_serde]
@@ -138,10 +169,8 @@ pub enum ManagerExecuteMsg {
         update: StrategyConfig,
     },
     AddAffiliate {
-        affiliate: Affiliate,
-    },
-    RemoveAffiliate {
         code: String,
+        address: Addr,
     },
 }
 
@@ -150,8 +179,6 @@ pub enum ManagerExecuteMsg {
 pub enum ManagerQueryMsg {
     #[returns(ManagerConfig)]
     Config {},
-    #[returns(u64)]
-    CodeId(StrategyType),
     #[returns(Strategy)]
     Strategy { address: Addr },
     #[returns(Vec<Strategy>)]

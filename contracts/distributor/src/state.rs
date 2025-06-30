@@ -1,6 +1,7 @@
 use calc_rs::{
-    core::{Condition, DEPOSIT_FEE},
+    core::Condition,
     distributor::{DistributorConfig, DistributorStatistics, Recipient},
+    thorchain::Network,
 };
 use cosmwasm_std::{Coin, DepsMut, Env, StdError, StdResult, Storage, Uint128};
 use cw_storage_plus::Item;
@@ -40,7 +41,9 @@ impl ConfigStore {
 
         let has_native_denoms = msg.denoms.iter().any(|d| !d.contains("-"));
         let mut total_shares = Uint128::zero();
-        let mut required_rune_balance = 0_u128;
+        let mut required_rune_balance = Uint128::zero();
+
+        let mut network: Option<Network> = None;
 
         for destination in destinations.clone() {
             if destination.shares.is_zero() {
@@ -63,7 +66,18 @@ impl ConfigStore {
                         )));
                     }
 
-                    required_rune_balance += DEPOSIT_FEE;
+                    if let Some(network) = &network {
+                        required_rune_balance += network.native_tx_fee_rune;
+                    } else {
+                        network = Some(Network::load(deps.querier).map_err(|e| {
+                            StdError::generic_err(format!("Failed to load network: {}", e))
+                        })?);
+
+                        required_rune_balance += network
+                            .as_ref()
+                            .expect("Failed to load native tx fee")
+                            .native_tx_fee_rune;
+                    }
                 }
             }
 
@@ -76,8 +90,21 @@ impl ConfigStore {
             ));
         }
 
+        let existing_config = self.load(deps.storage).unwrap_or(msg.clone());
+
+        let total_existing_shares = existing_config
+            .mutable_destinations
+            .iter()
+            .chain(existing_config.immutable_destinations.iter())
+            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
+        if total_shares.ne(&total_existing_shares) {
+            // This is to prevent fee %'s from being diluted
+            return Err(StdError::generic_err("Total share count must not change"));
+        }
+
         // The contract needs to have enough RUNE to cover the deposit fee(s)
-        if required_rune_balance > 0 {
+        if required_rune_balance.gt(&Uint128::zero()) {
             msg.conditions.push(Condition::BalanceAvailable {
                 address: env.contract.address.clone(),
                 amount: Coin::new(required_rune_balance, "rune"),
@@ -100,15 +127,19 @@ pub const STATS: Item<DistributorStatistics> = Item::new("statistics");
 
 #[cfg(test)]
 mod save_config_tests {
+    use super::*;
+
     use crate::test::{default_config, default_destination};
 
-    use super::*;
     use calc_rs::distributor::Destination;
+    use calc_rs_test::test::mock_dependencies_with_custom_grpc_querier;
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
-        Addr,
+        Addr, ContractResult, SystemResult,
     };
+    use prost::Message;
     use rstest::rstest;
+    use rujira_rs::proto::types::QueryNetworkResponse;
 
     #[rstest]
     #[case(
@@ -202,6 +233,36 @@ mod save_config_tests {
         );
     }
 
+    #[test]
+    fn changing_total_share_count_fails() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        CONFIG
+            .save(&mut deps.as_mut(), &env, &mut default_config())
+            .unwrap();
+
+        let recipient = deps.api.addr_make("dest");
+
+        assert_eq!(
+            CONFIG
+                .save(
+                    &mut deps.as_mut(),
+                    &env,
+                    &mut DistributorConfig {
+                        mutable_destinations: vec![Destination {
+                            recipient: Recipient::Bank { address: recipient },
+                            shares: Uint128::new(2736478323223432),
+                            label: None
+                        }],
+                        ..default_config()
+                    }
+                )
+                .unwrap_err(),
+            StdError::generic_err("Total share count must not change")
+        )
+    }
+
     #[rstest]
     fn valid_config_succeeds() {
         let mut deps = mock_dependencies();
@@ -215,8 +276,34 @@ mod save_config_tests {
 
     #[rstest]
     fn appends_rune_balance_condition_for_deposit_recipients() {
-        let mut deps = mock_dependencies();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
         let env = mock_env();
+
+        let deposit_fee = 2_000_000u128;
+
+        deps.querier.with_grpc_handler(move |_| {
+            let response = QueryNetworkResponse {
+                bond_reward_rune: "4726527489".to_string(),
+                total_bond_units: "277404".to_string(),
+                effective_security_bond: "90126604378071".to_string(),
+                total_reserve: "4994080222948541".to_string(),
+                vaults_migrating: true,
+                gas_spent_rune: "0".to_string(),
+                gas_withheld_rune: "0".to_string(),
+                outbound_fee_multiplier: "30000".to_string(),
+                native_outbound_fee_rune: "2000000".to_string(),
+                native_tx_fee_rune: deposit_fee.to_string(),
+                tns_register_fee_rune: "1000000000".to_string(),
+                tns_fee_per_block_rune: "20".to_string(),
+                rune_price_in_tor: "1.14130903".to_string(),
+                tor_price_in_rune: "0.87618688".to_string(),
+            };
+
+            let mut buf = Vec::new();
+            response.encode(&mut buf).unwrap();
+
+            SystemResult::Ok(ContractResult::Ok(buf.into()))
+        });
 
         let mut msg = DistributorConfig {
             denoms: vec!["eth-eth".to_string()],
@@ -247,7 +334,7 @@ mod save_config_tests {
             config.conditions,
             vec![Condition::BalanceAvailable {
                 address: env.contract.address,
-                amount: Coin::new(DEPOSIT_FEE * 2, "rune"),
+                amount: Coin::new(deposit_fee * 2, "rune"),
             }]
         );
     }

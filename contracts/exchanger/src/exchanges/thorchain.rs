@@ -1,8 +1,8 @@
 use calc_rs::{
+    core::{Callback, Condition, Contract, ContractError, ContractResult},
     exchanger::{ExpectedReceiveAmount, Route},
     scheduler::{CreateTrigger, SchedulerExecuteMsg, TriggerConditionsThreshold},
-    thorchain::{SwapQuote, SwapQuoteRequest},
-    core::{Callback, Condition, Contract, ContractError, ContractResult, MsgDeposit},
+    thorchain::{MsgDeposit, SwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -56,10 +56,7 @@ impl Exchange for ThorchainExchange {
             .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {}", e)))?;
 
         Ok(ExpectedReceiveAmount {
-            receive_amount: Coin {
-                denom: target_denom.to_string(),
-                amount: quote.expected_amount_out,
-            },
+            receive_amount: Coin::new(quote.expected_amount_out, target_denom),
             slippage_bps: quote.fees.map(|f| f.slippage_bps).unwrap_or(0).into(),
         })
     }
@@ -110,11 +107,14 @@ impl Exchange for ThorchainExchange {
             }
         }
 
-        let swap_msg = CosmosMsg::from(MsgDeposit {
-            memo: quote.memo,
-            coins: vec![swap_amount.clone()],
-            signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
-        });
+        let swap_msg = CosmosMsg::from(
+            MsgDeposit {
+                memo: quote.memo,
+                coins: vec![swap_amount.clone()],
+                signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
+            }
+            .into_cosmos_msg()?,
+        );
 
         let mut messages = vec![swap_msg];
 
@@ -143,14 +143,14 @@ impl Exchange for ThorchainExchange {
 mod expected_receive_amount_tests {
     use super::*;
 
-    use calc_rs_test::test::mock_dependencies_with_custom_querier;
+    use calc_rs_test::test::mock_dependencies_with_custom_grpc_querier;
     use cosmwasm_std::{ContractResult, SystemResult};
     use prost::Message;
     use rujira_rs::proto::types::{QueryQuoteSwapResponse, QuoteFees};
 
     #[test]
     fn maps_expected_receive_amount_and_slippage() {
-        let mut deps = mock_dependencies_with_custom_querier();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
 
         let expected_receive_amount = Uint128::new(237463);
         let expected_slippage_bps = 123i64;
@@ -192,11 +192,7 @@ mod expected_receive_amount_tests {
             SystemResult::Ok(ContractResult::Ok(buf.into()))
         });
 
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
+        let swap_amount = Coin::new(100u128, "arb-eth");
         let target_denom = "eth-usdc";
 
         assert_eq!(
@@ -220,7 +216,7 @@ mod swap_tests {
     use super::*;
 
     use calc_rs::core::ContractError;
-    use calc_rs_test::test::mock_dependencies_with_custom_querier;
+    use calc_rs_test::test::mock_dependencies_with_custom_grpc_querier;
     use cosmwasm_std::{
         testing::{message_info, mock_env},
         Addr, Api, Binary, Coin, ContractResult, SubMsg, SystemResult, Uint128,
@@ -230,7 +226,7 @@ mod swap_tests {
 
     #[test]
     fn fails_if_expected_receive_amount_too_low() {
-        let mut deps = mock_dependencies_with_custom_querier();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
 
         let expected_receive_amount = Uint128::new(237463);
         let expected_slippage_bps = 123i64;
@@ -272,11 +268,7 @@ mod swap_tests {
             SystemResult::Ok(ContractResult::Ok(buf.into()))
         });
 
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
+        let swap_amount = Coin::new(100u128, "arb-eth");
         let minimum_receive_amount = Coin::new(expected_receive_amount + Uint128::one(), "eth-eth");
 
         assert_eq!(
@@ -306,7 +298,7 @@ mod swap_tests {
 
     #[test]
     fn fails_if_slippage_bps_too_high() {
-        let mut deps = mock_dependencies_with_custom_querier();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
 
         let expected_receive_amount = Uint128::new(237463);
         let expected_slippage_bps = 123i64;
@@ -348,11 +340,7 @@ mod swap_tests {
             SystemResult::Ok(ContractResult::Ok(buf.into()))
         });
 
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
+        let swap_amount = Coin::new(100u128, "arb-eth");
         let minimum_receive_amount = Coin::new(expected_receive_amount, "eth-eth");
 
         assert_eq!(
@@ -383,7 +371,7 @@ mod swap_tests {
 
     #[test]
     fn executes_swap_if_liquidity_ok() {
-        let mut deps = mock_dependencies_with_custom_querier();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
 
         let expected_receive_amount = Uint128::new(237463);
         let expected_slippage_bps = 123i64;
@@ -425,11 +413,7 @@ mod swap_tests {
             SystemResult::Ok(ContractResult::Ok(buf.into()))
         });
 
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
+        let swap_amount = Coin::new(100u128, "arb-eth");
         let minimum_receive_amount = Coin::new(expected_receive_amount, "eth-eth");
         let env = mock_env();
 
@@ -452,20 +436,24 @@ mod swap_tests {
             )
             .unwrap()
             .messages[0],
-            SubMsg::new(CosmosMsg::from(MsgDeposit {
-                memo: "=:rune:my-address:237463".to_string(),
-                coins: vec![swap_amount],
-                signer: deps
-                    .api
-                    .addr_canonicalize(&env.contract.address.to_string())
-                    .unwrap()
-            }))
+            SubMsg::new(CosmosMsg::from(
+                MsgDeposit {
+                    memo: "=:rune:my-address:237463".to_string(),
+                    coins: vec![swap_amount],
+                    signer: deps
+                        .api
+                        .addr_canonicalize(&env.contract.address.to_string())
+                        .unwrap()
+                }
+                .into_cosmos_msg()
+                .unwrap()
+            ))
         );
     }
 
     #[test]
     fn schedules_after_complete_if_provided() {
-        let mut deps = mock_dependencies_with_custom_querier();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
 
         let expected_receive_amount = Uint128::new(237463);
         let expected_slippage_bps = 123i64;
@@ -507,11 +495,7 @@ mod swap_tests {
             SystemResult::Ok(ContractResult::Ok(buf.into()))
         });
 
-        let swap_amount = Coin {
-            denom: "arb-eth".to_string().clone(),
-            amount: Uint128::new(100),
-        };
-
+        let swap_amount = Coin::new(100u128, "arb-eth");
         let minimum_receive_amount = Coin::new(expected_receive_amount, "eth-eth");
         let env = mock_env();
 
@@ -557,7 +541,7 @@ mod swap_tests {
 
     #[test]
     fn includes_affiliate_if_configured() {
-        let mut deps = mock_dependencies_with_custom_querier();
+        let mut deps = mock_dependencies_with_custom_grpc_querier();
 
         let from_asset = "arb-eth".to_string();
         let swap_amount = Coin::new(100u128, from_asset.clone());

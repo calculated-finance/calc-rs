@@ -1,25 +1,17 @@
 use std::{time::Duration, u8};
 
-use anybuf::Anybuf;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, AnyMsg, Binary, CanonicalAddr, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
-    CoinsError, CosmosMsg, Deps, Env, Instantiate2AddressError, OverflowError, Response, StdError,
-    StdResult, Timestamp, WasmMsg,
-};
-use cw_storage_plus::{Key, Prefixer, PrimaryKey};
-use rujira_rs::{
-    fin::{OrderResponse, Price, QueryMsg, Side},
-    Layer1Asset, NativeAsset, SecuredAsset,
+    Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
+    Deps, Env, Instantiate2AddressError, OverflowError, Response, StdError, StdResult, Timestamp,
+    WasmMsg,
 };
 use thiserror::Error;
 
 use crate::{
     exchanger::{ExchangeQueryMsg, ExpectedReceiveAmount, Route},
-    manager::{ManagerQueryMsg, Strategy},
+    manager::{ManagerQueryMsg, Strategy, StrategyStatus},
 };
-
-pub const DEPOSIT_FEE: u128 = 2_000_000; // 0.02 RUNE
 
 #[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
@@ -56,40 +48,34 @@ impl ContractError {
 
 pub type ContractResult = Result<Response, ContractError>;
 
+pub struct Contract(pub Addr);
+
+impl Contract {
+    pub fn addr(&self) -> Addr {
+        self.0.clone()
+    }
+
+    pub fn call(&self, msg: Binary, funds: Vec<Coin>) -> CosmosMsg {
+        WasmMsg::Execute {
+            contract_addr: self.addr().into(),
+            msg,
+            funds,
+        }
+        .into()
+    }
+}
+
 #[cw_serde]
-pub enum StrategyStatus {
-    Active,
-    Paused,
-    Archived,
-}
-
-impl<'a> Prefixer<'a> for StrategyStatus {
-    fn prefix(&self) -> Vec<Key> {
-        vec![Key::Val8([self.clone() as u8])]
-    }
-}
-
-impl<'a> PrimaryKey<'a> for StrategyStatus {
-    type Prefix = Self;
-    type SubPrefix = Self;
-    type Suffix = ();
-    type SuperSuffix = ();
-
-    fn key(&self) -> Vec<Key> {
-        vec![Key::Val8([self.clone() as u8])]
-    }
+pub struct Callback {
+    pub contract: Addr,
+    pub msg: Binary,
+    pub execution_rebate: Vec<Coin>,
 }
 
 #[cw_serde]
 pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
-    LimitOrderFilled {
-        owner: Addr,
-        pair_address: Addr,
-        side: Side,
-        price: Price,
-    },
     ExchangeLiquidityProvided {
         exchanger_contract: Addr,
         swap_amount: Coin,
@@ -129,34 +115,6 @@ impl Condition {
                 Err(StdError::generic_err(format!(
                     "Blocks not completed: current height ({}) is before required height ({})",
                     env.block.height, height
-                )))
-            }
-            Condition::LimitOrderFilled {
-                owner,
-                pair_address,
-                side,
-                price,
-            } => {
-                let order = deps
-                    .querier
-                    .query_wasm_smart::<OrderResponse>(
-                        pair_address,
-                        &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
-                    )
-                    .map_err(|e| {
-                        StdError::generic_err(format!(
-                            "Failed to query order ({:?} {:?} {:?}): {}",
-                            owner, side, price, e
-                        ))
-                    })?;
-
-                if order.remaining.is_zero() {
-                    return Ok(());
-                }
-
-                Err(StdError::generic_err(format!(
-                    "Limit order not filled ({} remaining)",
-                    order.remaining
                 )))
             }
             Condition::ExchangeLiquidityProvided {
@@ -233,15 +191,6 @@ impl Condition {
         match self {
             Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {}", timestamp),
             Condition::BlocksCompleted(height) => format!("blocks completed: {}", height),
-            Condition::LimitOrderFilled {
-                owner,
-                pair_address,
-                side,
-                price,
-            } => format!(
-                "limit order filled: owner={}, pair_address={}, side={:?}, price={}",
-                owner, pair_address, side, price
-            ),
             Condition::ExchangeLiquidityProvided {
                 swap_amount,
                 minimum_receive_amount,
@@ -260,87 +209,10 @@ impl Condition {
                 status,
                 ..
             } => format!(
-                "strategy ({}) in status: {:?}",
+                "strategy ({}) is in status: {:?}",
                 contract_address, status
             ),
         }
-    }
-}
-
-pub fn layer_1_asset(denom: &NativeAsset) -> StdResult<Layer1Asset> {
-    let denom_string = denom.denom_string();
-
-    if denom_string.contains("rune") {
-        return Ok(Layer1Asset::new("THOR", "RUNE"));
-    }
-
-    let (chain, symbol) = denom_string
-        .split_once('-')
-        .ok_or_else(|| StdError::generic_err(format!("Invalid layer 1 asset: {}", denom)))?;
-
-    Ok(Layer1Asset::new(
-        &chain.to_ascii_uppercase(),
-        &symbol.to_ascii_uppercase(),
-    ))
-}
-
-pub fn secured_asset(asset: &Layer1Asset) -> StdResult<SecuredAsset> {
-    match asset.denom_string().to_uppercase().split_once(".") {
-        Some((chain, symbol)) => {
-            if chain == "THOR" && symbol == "RUNE" {
-                return Ok(SecuredAsset::new("THOR", "RUNE"));
-            }
-            Ok(SecuredAsset::new(chain, symbol))
-        }
-        None => Err(StdError::generic_err(format!(
-            "Invalid layer 1 asset: {}",
-            asset.denom_string()
-        ))),
-    }
-}
-
-pub struct MsgDeposit {
-    pub memo: String,
-    pub coins: Vec<Coin>,
-    pub signer: CanonicalAddr,
-}
-
-impl From<MsgDeposit> for CosmosMsg {
-    fn from(value: MsgDeposit) -> Self {
-        let coins: Vec<Anybuf> = value
-            .coins
-            .iter()
-            .map(|c| {
-                let asset = layer_1_asset(&NativeAsset::new(&c.denom))
-                    .unwrap()
-                    .denom_string()
-                    .to_ascii_uppercase();
-                let (chain, symbol) = asset.split_once('.').unwrap();
-
-                Anybuf::new()
-                    .append_message(
-                        1,
-                        &Anybuf::new()
-                            .append_string(1, chain)
-                            .append_string(2, symbol)
-                            .append_string(3, symbol)
-                            .append_bool(4, false)
-                            .append_bool(5, false)
-                            .append_bool(6, c.denom.to_lowercase() != "rune"),
-                    )
-                    .append_string(2, c.amount.to_string())
-            })
-            .collect();
-
-        let value = Anybuf::new()
-            .append_repeated_message(1, &coins)
-            .append_string(2, value.memo)
-            .append_bytes(3, value.signer.to_vec());
-
-        CosmosMsg::Any(AnyMsg {
-            type_url: "/types.MsgDeposit".to_string(),
-            value: value.as_bytes().into(),
-        })
     }
 }
 
@@ -423,26 +295,455 @@ impl Schedule {
     }
 }
 
-pub struct Contract(pub Addr);
+#[cfg(test)]
+mod conditions_tests {
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        to_json_binary, Addr, Coin, ContractResult, SystemResult, Timestamp,
+    };
 
-impl Contract {
-    pub fn addr(&self) -> Addr {
-        self.0.clone()
+    use crate::{
+        core::{Condition, StrategyStatus},
+        exchanger::ExpectedReceiveAmount,
+        manager::Strategy,
+    };
+
+    #[test]
+    fn timestamp_elapsed_check() {
+        let deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(Condition::TimestampElapsed(Timestamp::from_seconds(0))
+            .check(deps.as_ref(), &env)
+            .is_ok());
+
+        assert!(Condition::TimestampElapsed(env.block.time)
+            .check(deps.as_ref(), &env)
+            .is_ok());
+
+        assert!(Condition::TimestampElapsed(env.block.time.plus_seconds(1))
+            .check(deps.as_ref(), &env)
+            .is_err());
     }
 
-    pub fn call(&self, msg: Binary, funds: Vec<Coin>) -> CosmosMsg {
-        WasmMsg::Execute {
-            contract_addr: self.addr().into(),
-            msg,
-            funds,
+    #[test]
+    fn blocks_completed_check() {
+        let deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(Condition::BlocksCompleted(0)
+            .check(deps.as_ref(), &env)
+            .is_ok());
+
+        assert!(Condition::BlocksCompleted(env.block.height)
+            .check(deps.as_ref(), &env)
+            .is_ok());
+
+        assert!(Condition::BlocksCompleted(env.block.height + 1)
+            .check(deps.as_ref(), &env)
+            .is_err());
+    }
+
+    #[test]
+    fn balance_available_check() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(Condition::BalanceAvailable {
+            address: env.contract.address.clone(),
+            amount: Coin::new(0u128, "rune"),
         }
-        .into()
+        .check(deps.as_ref(), &env)
+        .is_ok());
+
+        assert!(Condition::BalanceAvailable {
+            address: env.contract.address.clone(),
+            amount: Coin::new(1u128, "rune"),
+        }
+        .check(deps.as_ref(), &env)
+        .is_err());
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![Coin::new(100u128, "rune")],
+        );
+
+        assert!(Condition::BalanceAvailable {
+            address: env.contract.address.clone(),
+            amount: Coin::new(99u128, "rune"),
+        }
+        .check(deps.as_ref(), &env)
+        .is_ok());
+
+        assert!(Condition::BalanceAvailable {
+            address: env.contract.address.clone(),
+            amount: Coin::new(100u128, "rune"),
+        }
+        .check(deps.as_ref(), &env)
+        .is_ok());
+
+        assert!(Condition::BalanceAvailable {
+            address: env.contract.address.clone(),
+            amount: Coin::new(101u128, "rune"),
+        }
+        .check(deps.as_ref(), &env)
+        .is_err());
+    }
+
+    #[test]
+    fn exchange_liquidity_provided_check() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&ExpectedReceiveAmount {
+                    receive_amount: Coin::new(100u128, "rune"),
+                    slippage_bps: 10,
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert!(Condition::ExchangeLiquidityProvided {
+            exchanger_contract: env.contract.address.clone(),
+            swap_amount: Coin::new(100u128, "rune"),
+            minimum_receive_amount: Coin::new(101u128, "rune"),
+            maximum_slippage_bps: 10,
+            route: None,
+        }
+        .check(deps.as_ref(), &env)
+        .is_err());
+
+        assert!(Condition::ExchangeLiquidityProvided {
+            exchanger_contract: env.contract.address.clone(),
+            swap_amount: Coin::new(100u128, "rune"),
+            minimum_receive_amount: Coin::new(100u128, "rune"),
+            maximum_slippage_bps: 9,
+            route: None,
+        }
+        .check(deps.as_ref(), &env)
+        .is_err());
+
+        assert!(Condition::ExchangeLiquidityProvided {
+            exchanger_contract: env.contract.address.clone(),
+            swap_amount: Coin::new(100u128, "rune"),
+            minimum_receive_amount: Coin::new(100u128, "rune"),
+            maximum_slippage_bps: 10,
+            route: None,
+        }
+        .check(deps.as_ref(), &env)
+        .is_ok());
+    }
+
+    #[test]
+    fn strategy_status_check() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        deps.querier.update_wasm(move |_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&Strategy {
+                    contract_address: Addr::unchecked("strategy"),
+                    status: StrategyStatus::Active,
+                    owner: Addr::unchecked("owner"),
+                    created_at: 0,
+                    updated_at: 0,
+                    label: "label".to_string(),
+                    affiliates: vec![],
+                })
+                .unwrap(),
+            ))
+        });
+
+        let strategy_address = Addr::unchecked("strategy");
+
+        assert!(Condition::StrategyStatus {
+            manager_contract: Addr::unchecked("manager"),
+            contract_address: strategy_address.clone(),
+            status: StrategyStatus::Active,
+        }
+        .check(deps.as_ref(), &env)
+        .is_ok());
+
+        assert!(Condition::StrategyStatus {
+            manager_contract: Addr::unchecked("manager"),
+            contract_address: strategy_address.clone(),
+            status: StrategyStatus::Paused,
+        }
+        .check(deps.as_ref(), &env)
+        .is_err());
     }
 }
 
-#[cw_serde]
-pub struct Callback {
-    pub contract: Addr,
-    pub msg: Binary,
-    pub execution_rebate: Vec<Coin>,
+#[cfg(test)]
+mod schedule_tests {
+    use std::time::Duration;
+
+    use cosmwasm_std::{testing::mock_env, Timestamp};
+
+    use crate::core::{Condition, Schedule};
+
+    #[test]
+    fn updates_to_next_scheduled_block() {
+        let env = mock_env();
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: None
+            }
+            .next(&env),
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height)
+            }
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 5)
+            }
+            .next(&env),
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 5 + 10)
+            }
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 15)
+            }
+            .next(&env),
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 5)
+            }
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 155)
+            }
+            .next(&env),
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 5)
+            }
+        );
+    }
+
+    #[test]
+    fn updates_to_next_scheduled_time() {
+        let env = mock_env();
+
+        assert_eq!(
+            Schedule::Time {
+                duration: std::time::Duration::from_secs(10),
+                previous: None
+            }
+            .next(&env),
+            Schedule::Time {
+                duration: std::time::Duration::from_secs(10),
+                previous: Some(env.block.time)
+            }
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time.minus_seconds(5))
+            }
+            .next(&env),
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time.plus_seconds(5))
+            }
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time.minus_seconds(15))
+            }
+            .next(&env),
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(Timestamp::from_seconds(env.block.time.seconds() - 5))
+            }
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time.minus_seconds(155))
+            }
+            .next(&env),
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(Timestamp::from_seconds(env.block.time.seconds() - 5))
+            }
+        );
+    }
+
+    #[test]
+    fn gets_next_block_condition() {
+        let env = mock_env();
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: None
+            }
+            .into_condition(&env),
+            Condition::BlocksCompleted(env.block.height)
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height)
+            }
+            .into_condition(&env),
+            Condition::BlocksCompleted(env.block.height + 10)
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 5)
+            }
+            .into_condition(&env),
+            Condition::BlocksCompleted(env.block.height - 5 + 10)
+        );
+    }
+
+    #[test]
+    fn gets_next_time_condition() {
+        let env = mock_env();
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: None
+            }
+            .into_condition(&env),
+            Condition::TimestampElapsed(Timestamp::from_seconds(env.block.time.seconds()))
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time)
+            }
+            .into_condition(&env),
+            Condition::TimestampElapsed(Timestamp::from_seconds(env.block.time.seconds() + 10))
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time.minus_seconds(5))
+            }
+            .into_condition(&env),
+            Condition::TimestampElapsed(Timestamp::from_seconds(env.block.time.seconds() - 5 + 10))
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time.minus_seconds(155))
+            }
+            .into_condition(&env),
+            Condition::TimestampElapsed(Timestamp::from_seconds(
+                env.block.time.seconds() - 155 + 10
+            ))
+        );
+    }
+
+    #[test]
+    fn block_schedule_is_due() {
+        let env = mock_env();
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: None
+            }
+            .is_due(&env),
+            true
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 5)
+            }
+            .is_due(&env),
+            false
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 5,
+                previous: Some(env.block.height - 6)
+            }
+            .is_due(&env),
+            true
+        );
+
+        assert_eq!(
+            Schedule::Blocks {
+                interval: 5,
+                previous: Some(env.block.height - 5)
+            }
+            .is_due(&env),
+            false
+        );
+    }
+
+    #[test]
+    fn time_schedule_is_due() {
+        let env = mock_env();
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: None
+            }
+            .is_due(&env),
+            true
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(10),
+                previous: Some(env.block.time.minus_seconds(5))
+            }
+            .is_due(&env),
+            false
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(5),
+                previous: Some(env.block.time.minus_seconds(6))
+            }
+            .is_due(&env),
+            true
+        );
+
+        assert_eq!(
+            Schedule::Time {
+                duration: Duration::from_secs(5),
+                previous: Some(env.block.time.minus_seconds(5))
+            }
+            .is_due(&env),
+            false
+        );
+    }
 }
