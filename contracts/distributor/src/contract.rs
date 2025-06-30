@@ -38,10 +38,10 @@ pub fn instantiate(
 }
 
 #[cw_serde]
-pub struct MigrateMsg {}
+pub struct DistributeMigrateMsg {}
 
 #[entry_point]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: DistributeMigrateMsg) -> ContractResult {
     Ok(Response::default())
 }
 
@@ -239,7 +239,7 @@ mod update_tests {
     use crate::test::default_config;
 
     use super::*;
-    use calc_rs::distributor::{Destination, Recipient};
+
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr,
@@ -296,20 +296,8 @@ mod update_tests {
 
         let new_config = DistributorConfig {
             owner: deps.api.addr_make(&"new-owner"),
-            mutable_destinations: vec![Destination {
-                shares: Uint128::new(483723423),
-                recipient: Recipient::Bank {
-                    address: deps.api.addr_make(&"new-destination"),
-                },
-                label: Some("new-label".to_string()),
-            }],
-            immutable_destinations: vec![Destination {
-                shares: Uint128::new(735243223),
-                recipient: Recipient::Deposit {
-                    memo: "new-memo".to_string(),
-                },
-                label: Some("new-label".to_string()),
-            }],
+            mutable_destinations: config.immutable_destinations.clone(),
+            immutable_destinations: config.mutable_destinations.clone(),
             conditions: vec![],
             ..config
         };
@@ -1104,13 +1092,14 @@ mod distribute_tests {
 
 #[cfg(test)]
 mod withdraw_tests {
-    use crate::test::default_config;
-
     use super::*;
+
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr, CosmosMsg, Event, SubMsg,
     };
+
+    use crate::test::default_config;
 
     #[test]
     fn returns_unauthorised_when_sender_not_owner() {

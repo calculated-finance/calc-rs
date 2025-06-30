@@ -3,6 +3,9 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "types": "bun scripts/generate-types.ts"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "ts-node": "^10.9.2"
@@ -18,7 +21,9 @@
     "@types/node": "^22.15.29",
     "bech32": "^2.0.0",
     "dotenv": "^16.5.0",
+    "json-schema-to-typescript": "^15.0.4",
     "protobufjs": "^7.5.3",
+    "ts-morph": "^26.0.0",
     "ws": "^8.18.2"
   }
 }
