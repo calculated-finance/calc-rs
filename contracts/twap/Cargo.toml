@@ -35,4 +35,5 @@ serde = { workspace = true }
 thiserror = { workspace = true}
 
 [dev-dependencies]
+calc-rs-test = { workspace = true }
 rstest = { workspace = true }

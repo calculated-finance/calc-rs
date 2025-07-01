@@ -1,3 +1,4 @@
+use cosmwasm_schema::cw_serde;
 use cosmwasm_schema::serde::de::DeserializeOwned;
 use cosmwasm_std::{
     testing::{MockApi, MockQuerier, MockQuerierCustomHandlerResult, MockStorage},
@@ -71,4 +72,13 @@ pub fn mock_dependencies_with_custom_grpc_querier(
         querier: CustomMockQuerier::default(),
         custom_query_type: std::marker::PhantomData,
     }
+}
+
+// We define our own CodeInfoResponse for testing
+// because the library one restricts creation.
+#[cw_serde]
+pub struct CodeInfoResponse {
+    pub checksum: cosmwasm_std::Checksum,
+    pub code_id: u64,
+    pub creator: cosmwasm_std::Addr,
 }

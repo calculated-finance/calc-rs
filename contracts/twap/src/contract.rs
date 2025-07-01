@@ -155,8 +155,10 @@ pub fn instantiate(
                 },
             )?;
 
-            let execute_msg = Contract(env.contract.address.clone())
-                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
+            let execute_msg = Contract(env.contract.address.clone()).call(
+                to_json_binary(&StrategyExecuteMsg::Execute { msg: None })?,
+                vec![],
+            );
 
             let strategy_instantiated_event = DomainEvent::TwapStrategyCreated {
                 contract_address: env.contract.address,
@@ -220,7 +222,7 @@ pub fn execute(
 
     match msg.clone() {
         StrategyExecuteMsg::Update(new_config) => {
-            if info.sender != config.owner {
+            if info.sender != config.manager_contract {
                 return Err(ContractError::Unauthorized {});
             }
 
@@ -267,7 +269,7 @@ pub fn execute(
                 }
             }
         }
-        StrategyExecuteMsg::Execute {} => {
+        StrategyExecuteMsg::Execute { .. } => {
             if info.sender != config.manager_contract && info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
             }
@@ -381,7 +383,7 @@ pub fn execute(
                         to: config.manager_contract.clone(),
                         msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                             contract_address: env.contract.address.clone(),
-                            msg: Some(to_json_binary(&StrategyExecuteMsg::Execute {})?),
+                            msg: Some(to_json_binary(&StrategyExecuteMsg::Execute { msg: None })?),
                         })?,
                     }]))?,
                     config.execution_rebate.clone().map_or(vec![], |c| vec![c]),
@@ -465,8 +467,10 @@ pub fn execute(
 
             match status {
                 StrategyStatus::Active => {
-                    let execute_msg = Contract(env.contract.address.clone())
-                        .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
+                    let execute_msg = Contract(env.contract.address.clone()).call(
+                        to_json_binary(&StrategyExecuteMsg::Execute { msg: None })?,
+                        vec![],
+                    );
 
                     messages.push(execute_msg);
                 }
@@ -594,16 +598,6 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     }
 }
 
-// We define our own CodeInfoResponse for testing
-// because the library one restricts creation.
-#[cfg(test)]
-#[cw_serde]
-struct CodeInfoResponse {
-    pub checksum: cosmwasm_std::Checksum,
-    pub code_id: u64,
-    pub creator: cosmwasm_std::Addr,
-}
-
 #[cfg(test)]
 fn default_config() -> TwapConfig {
     let deps = cosmwasm_std::testing::mock_dependencies();
@@ -635,6 +629,7 @@ mod instantiate_tests {
         core::{Condition, Schedule},
         twap::InstantiateTwapCommand,
     };
+    use calc_rs_test::test::CodeInfoResponse;
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         to_json_binary, Addr, Checksum, Coin, ContractResult, Decimal, Event, SubMsg, SystemResult,
@@ -642,7 +637,7 @@ mod instantiate_tests {
     };
 
     use crate::{
-        contract::{instantiate, CodeInfoResponse, BASE_FEE_BPS},
+        contract::{instantiate, BASE_FEE_BPS},
         state::CONFIG,
         types::DomainEvent,
     };
@@ -984,7 +979,7 @@ mod instantiate_tests {
             response.messages[1],
             SubMsg::new(WasmMsg::Execute {
                 contract_addr: env.contract.address.to_string(),
-                msg: to_json_binary(&StrategyExecuteMsg::Execute {}).unwrap(),
+                msg: to_json_binary(&StrategyExecuteMsg::Execute { msg: None }).unwrap(),
                 funds: vec![]
             })
         );
@@ -1119,7 +1114,7 @@ mod update_tests {
     };
 
     #[test]
-    fn only_allows_owner_to_update() {
+    fn only_allows_manager_to_update() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let config = default_config();
@@ -1152,7 +1147,7 @@ mod update_tests {
             execute(
                 deps.as_mut(),
                 env.clone(),
-                message_info(&config.owner, &[]),
+                message_info(&config.manager_contract, &[]),
                 StrategyExecuteMsg::Update(StrategyConfig::Twap(config.clone()))
             )
             .is_ok(),
@@ -1186,7 +1181,7 @@ mod update_tests {
             execute(
                 deps.as_mut(),
                 env.clone(),
-                message_info(&config.owner, &[]),
+                message_info(&config.manager_contract, &[]),
                 new_config
             )
             .unwrap_err(),
@@ -1220,7 +1215,7 @@ mod update_tests {
             execute(
                 deps.as_mut(),
                 env.clone(),
-                message_info(&config.owner, &[]),
+                message_info(&config.manager_contract, &[]),
                 new_config
             )
             .unwrap_err(),
@@ -1254,7 +1249,7 @@ mod update_tests {
             execute(
                 deps.as_mut(),
                 env.clone(),
-                message_info(&config.owner, &[]),
+                message_info(&config.manager_contract, &[]),
                 new_config
             )
             .unwrap_err(),
@@ -1291,7 +1286,7 @@ mod update_tests {
             execute(
                 deps.as_mut(),
                 env.clone(),
-                message_info(&config.owner, &[]),
+                message_info(&config.manager_contract, &[]),
                 new_config
             )
             .unwrap_err(),
@@ -1328,7 +1323,7 @@ mod update_tests {
             execute(
                 deps.as_mut(),
                 env.clone(),
-                message_info(&config.owner, &[]),
+                message_info(&config.manager_contract, &[]),
                 new_config
             )
             .unwrap_err(),
@@ -1365,7 +1360,7 @@ mod update_tests {
                 interval: 236473,
                 previous: Some(1265),
             },
-            route: Some(Route::Fin {
+            route: Some(Route::FinMarket {
                 address: Addr::unchecked("pair"),
             }),
             execution_rebate: Some(Coin::new(2u128, "rune")),
@@ -1375,7 +1370,7 @@ mod update_tests {
         execute(
             deps.as_mut(),
             env.clone(),
-            message_info(&config.owner, &[]),
+            message_info(&config.manager_contract, &[]),
             StrategyExecuteMsg::Update(StrategyConfig::Twap(new_config.clone())),
         )
         .unwrap();
@@ -1469,7 +1464,7 @@ mod execute_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&config.manager_contract, &[]),
-            StrategyExecuteMsg::Execute {},
+            StrategyExecuteMsg::Execute { msg: None },
         )
         .unwrap();
 
@@ -1484,7 +1479,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap_err(),
             ContractError::generic_err("Contract is already in the requested state")
@@ -1492,7 +1487,7 @@ mod execute_tests {
 
         assert_eq!(
             STATE.load(deps.as_ref().storage).unwrap(),
-            StrategyExecuteMsg::Execute {}
+            StrategyExecuteMsg::Execute { msg: None }
         );
     }
 
@@ -1503,7 +1498,10 @@ mod execute_tests {
         let config = default_config();
 
         STATE
-            .save(deps.as_mut().storage, &StrategyExecuteMsg::Execute {})
+            .save(
+                deps.as_mut().storage,
+                &StrategyExecuteMsg::Execute { msg: None },
+            )
             .unwrap();
 
         STATS
@@ -1552,7 +1550,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&Addr::unchecked("not-manager"), &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap_err(),
             ContractError::Unauthorized {}
@@ -1566,7 +1564,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .is_ok(),
             true
@@ -1580,7 +1578,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&env.contract.address, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .is_ok(),
             true
@@ -1613,7 +1611,7 @@ mod execute_tests {
                     &config.manager_contract,
                     &[Coin::new(1000u128, config.swap_amount.denom.clone())]
                 ),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .is_ok(),
             true
@@ -1627,7 +1625,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&env.contract.address, &[Coin::new(500u128, "random")]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap_err(),
             ContractError::generic_err(format!(
@@ -1650,7 +1648,7 @@ mod execute_tests {
                         Coin::new(500u128, "random")
                     ]
                 ),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap_err(),
             ContractError::generic_err(format!(
@@ -1689,7 +1687,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap_err(),
             ContractError::generic_err(format!(
@@ -1741,7 +1739,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap()
             .messages[0],
@@ -1816,7 +1814,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap()
             .messages[0],
@@ -1876,7 +1874,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap()
             .events[0],
@@ -1949,7 +1947,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap()
             .events[0],
@@ -2025,6 +2023,7 @@ mod execute_tests {
                         .unwrap()
                     } else {
                         to_json_binary(&Strategy {
+                            id: 1,
                             owner: Addr::unchecked("owner"),
                             contract_address: Addr::unchecked("contract"),
                             created_at: 0,
@@ -2045,7 +2044,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap()
             .messages[1],
@@ -2058,7 +2057,9 @@ mod execute_tests {
                         to: config.manager_contract.clone(),
                         msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
                             contract_address: env.contract.address.clone(),
-                            msg: Some(to_json_binary(&StrategyExecuteMsg::Execute {}).unwrap()),
+                            msg: Some(
+                                to_json_binary(&StrategyExecuteMsg::Execute { msg: None }).unwrap()
+                            ),
                         })
                         .unwrap(),
                     }]))
@@ -2120,6 +2121,7 @@ mod execute_tests {
                         .unwrap()
                     } else {
                         to_json_binary(&Strategy {
+                            id: 1,
                             owner: Addr::unchecked("owner"),
                             contract_address: Addr::unchecked("contract"),
                             created_at: 0,
@@ -2139,7 +2141,7 @@ mod execute_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&config.manager_contract, &[]),
-            StrategyExecuteMsg::Execute {},
+            StrategyExecuteMsg::Execute { msg: None },
         )
         .unwrap();
 
@@ -2181,6 +2183,7 @@ mod execute_tests {
         deps.querier.update_wasm(|_| {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&Strategy {
+                    id: 1,
                     owner: Addr::unchecked("owner"),
                     contract_address: Addr::unchecked("contract"),
                     created_at: 0,
@@ -2198,7 +2201,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap()
             .events[1],
@@ -2262,6 +2265,7 @@ mod execute_tests {
         deps.querier.update_wasm(|_| {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&Strategy {
+                    id: 1,
                     owner: Addr::unchecked("owner"),
                     contract_address: Addr::unchecked("contract"),
                     created_at: 0,
@@ -2279,7 +2283,7 @@ mod execute_tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Execute {}
+                StrategyExecuteMsg::Execute { msg: None }
             )
             .unwrap()
             .events[1],
@@ -2344,7 +2348,7 @@ mod execute_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&config.manager_contract, &[]),
-            StrategyExecuteMsg::Execute {},
+            StrategyExecuteMsg::Execute { msg: None },
         )
         .unwrap();
 

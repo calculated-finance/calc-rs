@@ -13,21 +13,7 @@ use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
 };
 
-use crate::types::Exchange;
-
-#[cw_serde]
-#[derive(Hash)]
-pub enum PositionType {
-    Enter,
-    Exit,
-}
-
-#[cw_serde]
-pub struct Pair {
-    pub base_denom: String,
-    pub quote_denom: String,
-    pub address: Addr,
-}
+use crate::types::{Exchange, Pair, PositionType};
 
 pub fn get_pair(
     deps: Deps,
@@ -37,7 +23,7 @@ pub fn get_pair(
 ) -> StdResult<Pair> {
     match route {
         Some(route) => match route {
-            Route::Fin { address } => {
+            Route::FinMarket { address } => {
                 let config = deps
                     .querier
                     .query_wasm_smart::<ConfigResponse>(address, &QueryMsg::Config {})?;
@@ -66,13 +52,13 @@ pub fn get_pair(
             }
             _ => {
                 return Err(StdError::generic_err(
-                    "Route not supported for Fin exchange",
+                    "Route not supported for Fin market exchange",
                 ));
             }
         },
         None => {
             return Err(StdError::generic_err(
-                "Must provide a fin route to get a pair",
+                "Must provide a Fin market route to get a pair",
             ));
         }
     }
@@ -118,15 +104,15 @@ fn spot_price(
 }
 
 #[cw_serde]
-pub struct FinExchange {}
+pub struct FinMarketExchange {}
 
-impl FinExchange {
+impl FinMarketExchange {
     pub fn new() -> Self {
-        FinExchange {}
+        FinMarketExchange {}
     }
 }
 
-impl Exchange for FinExchange {
+impl Exchange for FinMarketExchange {
     fn expected_receive_amount(
         &self,
         deps: Deps,
@@ -241,11 +227,6 @@ mod expected_receive_amount_tests {
     };
     use rujira_rs::fin::{BookItemResponse, Denoms, Tick};
 
-    use crate::{
-        exchanges::fin::{FinExchange, Pair},
-        types::Exchange,
-    };
-
     #[test]
     fn fails_to_get_expected_receive_amount_from_non_existing_pair() {
         let deps = mock_dependencies();
@@ -254,12 +235,12 @@ mod expected_receive_amount_tests {
         let target_denom = "usdc";
         let pair_address = Addr::unchecked("pair-address");
 
-        let result = FinExchange::new()
+        let result = FinMarketExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
                 &swap_amount,
                 target_denom,
-                &Some(Route::Fin {
+                &Some(Route::FinMarket {
                     address: pair_address.clone(),
                 }),
             )
@@ -323,12 +304,12 @@ mod expected_receive_amount_tests {
             }))
         });
 
-        let expected_amount = FinExchange::new()
+        let expected_amount = FinMarketExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
                 &swap_amount,
                 target_denom,
-                &Some(Route::Fin {
+                &Some(Route::FinMarket {
                     address: Addr::unchecked("pair-address"),
                 }),
             )
@@ -367,11 +348,6 @@ mod swap_tests {
     use cosmwasm_std::{testing::mock_dependencies, to_json_binary, Addr, Coin};
     use rujira_rs::fin::{BookItemResponse, ConfigResponse, Denoms, ExecuteMsg, SwapRequest, Tick};
 
-    use crate::{
-        exchanges::fin::{FinExchange, Pair},
-        types::Exchange,
-    };
-
     #[test]
     fn fails_to_swap_with_non_existing_pair() {
         let deps = mock_dependencies();
@@ -380,7 +356,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, "rune");
         let pair_address = Addr::unchecked("non-existing-pair-address");
 
-        let result = FinExchange::new()
+        let result = FinMarketExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -391,7 +367,7 @@ mod swap_tests {
                 &swap_amount,
                 &minimum_receive_amount,
                 0,
-                &Some(Route::Fin {
+                &Some(Route::FinMarket {
                     address: pair_address.clone(),
                 }),
                 Addr::unchecked("recipient-address"),
@@ -415,7 +391,7 @@ mod swap_tests {
         let swap_amount = Coin::new(100u128, "uruji");
         let minimum_receive_amount = Coin::new(50u128, "rune");
 
-        let result = FinExchange::new()
+        let result = FinMarketExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -435,7 +411,7 @@ mod swap_tests {
         assert_eq!(
             result,
             ContractError::Std(StdError::generic_err(
-                "Must provide a fin route to get a pair"
+                "Must provide a Fin market route to get a pair"
             ))
         );
     }
@@ -447,7 +423,7 @@ mod swap_tests {
         let swap_amount = Coin::new(100u128, "uruji");
         let minimum_receive_amount = Coin::new(50u128, "rune");
 
-        let result = FinExchange::new()
+        let result = FinMarketExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -467,7 +443,7 @@ mod swap_tests {
         assert_eq!(
             result,
             ContractError::Std(StdError::generic_err(
-                "Route not supported for Fin exchange"
+                "Route not supported for Fin market exchange"
             ))
         );
     }
@@ -504,7 +480,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, pair.quote_denom.clone());
 
         assert_eq!(
-            FinExchange::new()
+            FinMarketExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -515,7 +491,7 @@ mod swap_tests {
                     &swap_amount,
                     &minimum_receive_amount,
                     0,
-                    &Some(Route::Fin {
+                    &Some(Route::FinMarket {
                         address: pair.address.clone(),
                     }),
                     Addr::unchecked("recipient-address"),
@@ -589,7 +565,7 @@ mod swap_tests {
         );
 
         assert_eq!(
-            FinExchange::new()
+            FinMarketExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -600,7 +576,7 @@ mod swap_tests {
                     &swap_amount,
                     &minimum_receive_amount,
                     0,
-                    &Some(Route::Fin {
+                    &Some(Route::FinMarket {
                         address: pair.address.clone(),
                     }),
                     Addr::unchecked("recipient-address"),
@@ -674,7 +650,7 @@ mod swap_tests {
         );
 
         assert_eq!(
-            FinExchange::new()
+            FinMarketExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -685,7 +661,7 @@ mod swap_tests {
                     &swap_amount,
                     &minimum_receive_amount,
                     100,
-                    &Some(Route::Fin {
+                    &Some(Route::FinMarket {
                         address: pair.address.clone(),
                     }),
                     Addr::unchecked("recipient-address"),
@@ -754,7 +730,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, quote_denom.clone());
         let recipient = Addr::unchecked("recipient-address");
 
-        let response = FinExchange::new()
+        let response = FinMarketExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -765,7 +741,7 @@ mod swap_tests {
                 &swap_amount,
                 &minimum_receive_amount,
                 100,
-                &Some(Route::Fin {
+                &Some(Route::FinMarket {
                     address: pair.address.clone(),
                 }),
                 recipient.clone(),
@@ -844,7 +820,7 @@ mod swap_tests {
         let recipient = Addr::unchecked("recipient-address");
         let execution_rebate = vec![Coin::new(1u128, "rune")];
 
-        let response = FinExchange::new()
+        let response = FinMarketExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -855,7 +831,7 @@ mod swap_tests {
                 &swap_amount,
                 &minimum_receive_amount,
                 100,
-                &Some(Route::Fin {
+                &Some(Route::FinMarket {
                     address: pair.address.clone(),
                 }),
                 recipient.clone(),
@@ -948,7 +924,7 @@ mod swap_tests {
             execution_rebate: vec![Coin::new(1u128, "rune")],
         };
 
-        let response = FinExchange::new()
+        let response = FinMarketExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -959,7 +935,7 @@ mod swap_tests {
                 &swap_amount,
                 &minimum_receive_amount,
                 100,
-                &Some(Route::Fin {
+                &Some(Route::FinMarket {
                     address: pair.address.clone(),
                 }),
                 recipient.clone(),

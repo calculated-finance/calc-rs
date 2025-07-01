@@ -911,6 +911,7 @@ name = "manager"
 version = "0.1.0"
 dependencies = [
  "calc-rs",
+ "calc-rs-test",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",
@@ -1581,6 +1582,7 @@ name = "twap"
 version = "0.1.0"
 dependencies = [
  "calc-rs",
+ "calc-rs-test",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",

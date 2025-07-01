@@ -8,8 +8,8 @@ use cosmwasm_std::{
     StdError, StdResult, Uint128,
 };
 
-use crate::exchanges::fin::FinExchange;
-use crate::exchanges::thorchain::ThorchainExchange;
+use crate::exchanges::{fin_market::FinMarketExchange, thorchain::ThorchainExchange};
+
 use crate::state::CONFIG;
 use crate::types::{Exchange, ExchangeConfig};
 
@@ -64,7 +64,7 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, St
 pub fn get_exchanges(deps: Deps) -> StdResult<Vec<Box<dyn Exchange>>> {
     let config = CONFIG.load(deps)?;
     Ok(vec![
-        Box::new(FinExchange::new()),
+        Box::new(FinMarketExchange::new()),
         Box::new(ThorchainExchange::new(config)),
     ])
 }

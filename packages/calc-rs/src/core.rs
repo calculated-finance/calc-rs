@@ -6,6 +6,7 @@ use cosmwasm_std::{
     Deps, Env, Instantiate2AddressError, OverflowError, Response, StdError, StdResult, Timestamp,
     WasmMsg,
 };
+use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 use thiserror::Error;
 
 use crate::{
@@ -83,6 +84,12 @@ pub enum Condition {
         maximum_slippage_bps: u128,
         route: Option<Route>,
     },
+    LimitOrderFilled {
+        owner: Addr,
+        pair_address: Addr,
+        side: Side,
+        price: Price,
+    },
     BalanceAvailable {
         address: Addr,
         amount: Coin,
@@ -115,6 +122,34 @@ impl Condition {
                 Err(StdError::generic_err(format!(
                     "Blocks not completed: current height ({}) is before required height ({})",
                     env.block.height, height
+                )))
+            }
+            Condition::LimitOrderFilled {
+                owner,
+                pair_address,
+                side,
+                price,
+            } => {
+                let order = deps
+                    .querier
+                    .query_wasm_smart::<OrderResponse>(
+                        pair_address,
+                        &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
+                    )
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Failed to query order ({:?} {:?} {:?}): {}",
+                            owner, side, price, e
+                        ))
+                    })?;
+
+                if order.remaining.is_zero() {
+                    return Ok(());
+                }
+
+                Err(StdError::generic_err(format!(
+                    "Limit order not filled ({} remaining)",
+                    order.remaining
                 )))
             }
             Condition::ExchangeLiquidityProvided {
@@ -199,6 +234,15 @@ impl Condition {
             } => format!(
                 "exchange liquidity provided: swap_amount={}, minimum_receive_amount={}, maximum_slippage_bps={}",
                 swap_amount, minimum_receive_amount, maximum_slippage_bps
+            ),
+            Condition::LimitOrderFilled {
+                owner,
+                pair_address,
+                side,
+                price,
+            } => format!(
+                "limit order filled: owner={}, pair_address={}, side={:?}, price={}",
+                owner, pair_address, side, price
             ),
             Condition::BalanceAvailable { address, amount } => format!(
                 "balance available: address={}, amount={}",
@@ -297,10 +341,14 @@ impl Schedule {
 
 #[cfg(test)]
 mod conditions_tests {
+    use std::str::FromStr;
+
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
-        to_json_binary, Addr, Coin, ContractResult, SystemResult, Timestamp,
+        to_json_binary, Addr, Coin, ContractResult, Decimal, StdError, SystemResult, Timestamp,
+        Uint128,
     };
+    use rujira_rs::fin::{OrderResponse, Price, Side};
 
     use crate::{
         core::{Condition, StrategyStatus},
@@ -437,6 +485,65 @@ mod conditions_tests {
     }
 
     #[test]
+    fn limit_order_filled_check() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        deps.querier.update_wasm(move |_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&OrderResponse {
+                    remaining: Uint128::new(100),
+                    filled: Uint128::new(100),
+                    owner: "owner".to_string(),
+                    side: Side::Base,
+                    price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+                    rate: Decimal::from_str("1.0").unwrap(),
+                    updated_at: Timestamp::from_seconds(env.block.time.seconds()),
+                    offer: Uint128::new(21029),
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert_eq!(
+            Condition::LimitOrderFilled {
+                owner: Addr::unchecked("owner"),
+                pair_address: Addr::unchecked("pair"),
+                side: Side::Base,
+                price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+            }
+            .check(deps.as_ref(), &env)
+            .unwrap_err(),
+            StdError::generic_err("Limit order not filled (100 remaining)",)
+        );
+
+        deps.querier.update_wasm(move |_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&OrderResponse {
+                    remaining: Uint128::new(0),
+                    filled: Uint128::new(100),
+                    owner: "owner".to_string(),
+                    side: Side::Base,
+                    price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+                    rate: Decimal::from_str("1.0").unwrap(),
+                    updated_at: Timestamp::from_seconds(env.block.time.seconds()),
+                    offer: Uint128::new(21029),
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert!(Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+        }
+        .check(deps.as_ref(), &env)
+        .is_ok());
+    }
+
+    #[test]
     fn strategy_status_check() {
         let mut deps = mock_dependencies();
         let env = mock_env();
@@ -444,6 +551,7 @@ mod conditions_tests {
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&Strategy {
+                    id: 1,
                     contract_address: Addr::unchecked("strategy"),
                     status: StrategyStatus::Active,
                     owner: Addr::unchecked("owner"),

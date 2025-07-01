@@ -1,6 +1,10 @@
 import { CodeDetails, SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { stringToPath } from "@cosmjs/crypto";
-import { DirectSecp256k1HdWallet, type Coin } from "@cosmjs/proto-signing";
+import {
+  DirectSecp256k1HdWallet,
+  DirectSecp256k1Wallet,
+  type Coin,
+} from "@cosmjs/proto-signing";
 import { GasPrice, StargateClient } from "@cosmjs/stargate";
 import { base64 } from "@scure/base";
 import { bech32 } from "bech32";
@@ -32,19 +36,26 @@ const PAIR_ADDRESS =
 
 const DISTRIBUTOR_CODE_ID = 415;
 
-const getWallet = async () =>
+const getWalletWithMnemonic = async () =>
   DirectSecp256k1HdWallet.fromMnemonic(process.env.MNEMONIC!, {
     prefix: process.env.PREFIX! || "sthor",
     hdPaths: [stringToPath(`m/44'/931'/0'/0/0`)],
   });
 
+const getWalletWithPrivateKey = async () =>
+  DirectSecp256k1Wallet.fromKey(
+    Buffer.from(process.env.PRIVATE_KEY, "hex"),
+    process.env.PREFIX || "sthor",
+  );
+
 const getSigner = async () => {
   const signer = await SigningCosmWasmClient.connectWithSigner(
     process.env.RPC_URL!,
-    await getWallet(),
+    await getWalletWithMnemonic(),
+    // await getWalletWithPrivateKey(),
     {
       gasPrice: GasPrice.fromString(process.env.GAS_PRICE || "0.0urune"),
-    }
+    },
   );
 
   signer.registry.register("/types.MsgDeposit", types.types.MsgDeposit);
@@ -53,14 +64,14 @@ const getSigner = async () => {
 };
 
 export const upload = async (binaryFilePath: string) => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const cosmWasmClient = await getSigner();
   const adminAddress = await getAccount(wallet);
 
   const { codeId } = await cosmWasmClient.upload(
     adminAddress,
     fs.readFileSync(binaryFilePath),
-    1.5
+    1.5,
   );
 
   return codeId;
@@ -71,14 +82,14 @@ export const uploadAndInstantiate = async (
   adminAddress: string,
   initMsg: Record<string, unknown>,
   label: string,
-  funds: Coin[] = []
+  funds: Coin[] = [],
 ): Promise<string> => {
   const cosmWasmClient = await getSigner();
 
   const { codeId } = await cosmWasmClient.upload(
     adminAddress,
     fs.readFileSync(binaryFilePath),
-    1.5
+    1.5,
   );
 
   console.log("Uploaded code id:", codeId);
@@ -89,7 +100,7 @@ export const uploadAndInstantiate = async (
     initMsg,
     label,
     1.5,
-    { funds, admin: adminAddress }
+    { funds, admin: adminAddress },
   );
 
   console.log(label, "contract address:", contractAddress);
@@ -101,13 +112,13 @@ export const uploadAndMigrate = async (
   binaryFilePath: string,
   adminAddress: string,
   contractAddress: string,
-  msg: Record<string, unknown> = {}
+  msg: Record<string, unknown> = {},
 ): Promise<void> => {
   const cosmWasmClient = await getSigner();
   const { codeId } = await cosmWasmClient.upload(
     adminAddress,
     fs.readFileSync(binaryFilePath),
-    1.5
+    1.5,
   );
 
   console.log("Uploaded code id:", codeId);
@@ -117,7 +128,7 @@ export const uploadAndMigrate = async (
     contractAddress,
     codeId,
     msg,
-    "auto"
+    "auto",
   );
 
   console.log("Migrated contract at address:", contractAddress);
@@ -137,9 +148,9 @@ const uploadDistributorContract = async () => {
 };
 
 const uploadAndInstantiateManagerContract = async (
-  code_ids: [string, number][]
+  code_ids: [string, number][],
 ) => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndInstantiate(
@@ -149,26 +160,26 @@ const uploadAndInstantiateManagerContract = async (
       code_ids,
       fee_collector: adminAddress,
     },
-    "Manager Contract"
+    "Manager Contract",
   );
 };
 
 const uploadAndInstantiateExchangeContract = async () => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndInstantiate(
     "artifacts/exchanger.wasm",
     adminAddress,
     {},
-    "Exchange Contract"
+    "Exchange Contract",
   );
 };
 
 const uploadAndMigrateManagerContract = async (
-  code_ids: [string, number][]
+  code_ids: [string, number][],
 ) => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndMigrate(
@@ -178,12 +189,12 @@ const uploadAndMigrateManagerContract = async (
     {
       code_ids,
       fee_collector: adminAddress,
-    }
+    },
   );
 };
 
 const uploadAndMigrateTwapContract = async () => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndMigrate(
@@ -192,24 +203,24 @@ const uploadAndMigrateTwapContract = async () => {
     STRATEGY_ADDRESS,
     {
       fee_collector: adminAddress,
-    }
+    },
   );
 };
 
 const uploadAndMigrateDistributorContract = async () => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndMigrate(
     "artifacts/distributor.wasm",
     adminAddress,
     DISTRIBUTOR_ADDRESS,
-    {}
+    {},
   );
 };
 
 const uploadAndMigrateExchangeContract = async () => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndMigrate(
@@ -220,30 +231,30 @@ const uploadAndMigrateExchangeContract = async () => {
       scheduler_address: SCHEDULER_ADDRESS,
       affiliate_code: undefined,
       affiliate_bps: undefined,
-    }
+    },
   );
 };
 
 const uploadAndMigrateSchedulerContract = async () => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndMigrate(
     "artifacts/scheduler.wasm",
     adminAddress,
-    SCHEDULER_ADDRESS
+    SCHEDULER_ADDRESS,
   );
 };
 
 const uploadAndInstantiateSchedulerContract = async () => {
-  const wallet = await getWallet();
+  const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndInstantiate(
     "artifacts/scheduler.wasm",
     adminAddress,
     {},
-    "Scheduler Contract"
+    "Scheduler Contract",
   );
 };
 
@@ -274,7 +285,7 @@ const uploadAndMigrateContractSuite = async () => {
 const uploadPairs = async () => {
   const cosmWasmClient = await getSigner();
 
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
 
   await cosmWasmClient.execute(
     account,
@@ -284,7 +295,7 @@ const uploadPairs = async () => {
         pairs: [{}],
       },
     },
-    "auto"
+    "auto",
   );
 };
 
@@ -316,7 +327,7 @@ const canSwap = async () => {
 const getExpectedReceiveAmount = async (
   swapAmount: Coin,
   targetDenom: string,
-  route: any
+  route: any,
 ) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
@@ -363,7 +374,7 @@ const getRoute = async () => {
 
 const swap = async (swapAmount: Coin, targetDenom: string, route: any) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.execute(
     account,
     EXCHANGE_ADDRESS,
@@ -379,7 +390,7 @@ const swap = async (swapAmount: Coin, targetDenom: string, route: any) => {
     },
     "auto",
     "Swap",
-    [swapAmount]
+    [swapAmount],
   );
 
   return response;
@@ -396,12 +407,12 @@ const getConfig = async (contractAddress: string) => {
 
 export const bech32ToBase64 = (address: string): string =>
   base64.encode(
-    Uint8Array.from(bech32.fromWords(bech32.decode(address).words))
+    Uint8Array.from(bech32.fromWords(bech32.decode(address).words)),
   );
 
 const executeDeposit = async (memo: string, funds: any[]) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
 
   const response = await cosmWasmClient.signAndBroadcast(
     account,
@@ -416,7 +427,7 @@ const executeDeposit = async (memo: string, funds: any[]) => {
       },
     ],
     "auto",
-    memo
+    memo,
   );
 
   return response;
@@ -424,7 +435,7 @@ const executeDeposit = async (memo: string, funds: any[]) => {
 
 const createStrategy = async () => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
 
   const response = await cosmWasmClient.execute(
     account,
@@ -486,7 +497,7 @@ const createStrategy = async () => {
         denom: "gaia-atom",
         amount: "100000000",
       },
-    ]
+    ],
   );
 
   return response;
@@ -523,7 +534,7 @@ const getStrategies = async () => {
 
 const executeStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.execute(
     account,
     MANAGER_ADDRESS,
@@ -532,7 +543,7 @@ const executeStrategy = async (address: string) => {
         contract_address: address,
       },
     },
-    "auto"
+    "auto",
   );
 
   return response;
@@ -581,7 +592,7 @@ const getAllTriggers = async () => {
 
 const executeTriggersWith = async (getTriggers: () => Promise<any[]>) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
   const triggers = await getTriggers();
 
   console.log("Triggers to execute:", triggers);
@@ -591,7 +602,7 @@ const executeTriggersWith = async (getTriggers: () => Promise<any[]>) => {
       account,
       SCHEDULER_ADDRESS,
       { execute_trigger: trigger.id },
-      "auto"
+      "auto",
     );
 
     console.log("Executed trigger:", trigger.id, response);
@@ -600,7 +611,7 @@ const executeTriggersWith = async (getTriggers: () => Promise<any[]>) => {
 
 const executeProvidedTriggers = async (triggers: any[]) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
 
   console.log("Provided triggers to execute:", triggers);
 
@@ -610,7 +621,7 @@ const executeProvidedTriggers = async (triggers: any[]) => {
         account,
         SCHEDULER_ADDRESS,
         { execute_trigger: trigger.id },
-        "auto"
+        "auto",
       );
 
       console.log("Executed trigger:", trigger.id, response);
@@ -622,7 +633,7 @@ const executeProvidedTriggers = async (triggers: any[]) => {
 
 const executeTriggers = async (owner: string) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
 
   const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
     triggers: {
@@ -643,7 +654,7 @@ const executeTriggers = async (owner: string) => {
       account,
       SCHEDULER_ADDRESS,
       { execute_trigger: id },
-      "auto"
+      "auto",
     );
 
     return response;
@@ -652,7 +663,7 @@ const executeTriggers = async (owner: string) => {
 
 const resumeStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.execute(
     account,
     MANAGER_ADDRESS,
@@ -661,7 +672,7 @@ const resumeStrategy = async (address: string) => {
         contract_address: address,
       },
     },
-    "auto"
+    "auto",
   );
 
   return response;
@@ -669,7 +680,7 @@ const resumeStrategy = async (address: string) => {
 
 const withdrawFromStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
   const balances = await fetchBalances(address);
   const response = await cosmWasmClient.execute(
     account,
@@ -679,7 +690,7 @@ const withdrawFromStrategy = async (address: string) => {
         amounts: balances,
       },
     },
-    "auto"
+    "auto",
   );
 
   return response;
@@ -687,12 +698,12 @@ const withdrawFromStrategy = async (address: string) => {
 
 const queryContract = async (
   contractAddress: string,
-  msg: Record<string, unknown>
+  msg: Record<string, unknown>,
 ) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(
     contractAddress,
-    msg
+    msg,
   );
 
   return response;
@@ -701,24 +712,24 @@ const queryContract = async (
 const executeTxn = async (
   contractAddress: string,
   msg: Record<string, unknown>,
-  funds: Coin[] = []
+  funds: Coin[] = [],
 ) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.execute(
     account,
     contractAddress,
     msg,
     "auto",
     undefined,
-    funds
+    funds,
   );
 
   return response;
 };
 
 const getMyBalances = async () => {
-  return fetchBalances(await getAccount(await getWallet()));
+  return fetchBalances(await getAccount(await getWalletWithMnemonic()));
 };
 
 const fetchFinBook = async (pairAddress: string) => {
@@ -762,7 +773,7 @@ const getSwapQuote = async ({
   affiliateBps?: number;
 }) => {
   const response = await fetch(
-    `https://stagenet-thornode.ninerealms.com/thorchain/quote/swap?from_asset=${swapAmount.denom}&to_asset=${targetDenom}&amount=${swapAmount.amount}&destination=${recipient}`
+    `https://stagenet-thornode.ninerealms.com/thorchain/quote/swap?from_asset=${swapAmount.denom}&to_asset=${targetDenom}&amount=${swapAmount.amount}&destination=${recipient}`,
   );
 
   return response.json();
@@ -782,7 +793,7 @@ const queryPool = async () => {
 
   const response = await stargateClient["getQueryClient"]().queryAbci(
     "/types.Query/Pool",
-    request
+    request,
   );
 
   return QueryPoolResponse.decode(response.value).toJSON();
@@ -805,7 +816,7 @@ const queryQuote = async () => {
 
   const response = await stargateClient["getQueryClient"]().queryAbci(
     "/types.Query/QuoteSwap",
-    request
+    request,
   );
 
   return QueryQuoteResponse.decode(response.value).toJSON();
@@ -813,13 +824,13 @@ const queryQuote = async () => {
 
 const updateStrategy = async (updates: Record<string, unknown>) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
 
   const existingConfig = await cosmWasmClient.queryContractSmart(
     STRATEGY_ADDRESS,
     {
       config: {},
-    }
+    },
   );
 
   const response = await cosmWasmClient.execute(
@@ -833,7 +844,7 @@ const updateStrategy = async (updates: Record<string, unknown>) => {
         },
       },
     },
-    "auto"
+    "auto",
   );
 
   return response;
@@ -841,13 +852,13 @@ const updateStrategy = async (updates: Record<string, unknown>) => {
 
 const bankSend = async (amount: Coin, recipient: string) => {
   const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWallet());
+  const account = await getAccount(await getWalletWithMnemonic());
 
   const response = await cosmWasmClient.sendTokens(
     account,
     recipient,
     [amount],
-    "auto"
+    "auto",
   );
 
   return response;
@@ -863,8 +874,8 @@ const run = async () => {
 };
 
 // uploadContractSuite();
-// fetchBalances(STRATEGY_ADDRESS).then(console.log);
-// getMyBalances().then(console.log);
+// fetchBalances("thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex").then(console.log);
+getMyBalances().then(console.log);
 // bankSend(
 //   {
 //     amount: "153236136",
@@ -941,22 +952,19 @@ const targetDenom = "rune";
 // queryContract(EXCHANGE_ADDRESS, {
 //   custom: {},
 // }).then(console.log);
-// executeDeposit(
-//   "=:THOR.RUNE:sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka:1::::::calc-swap",
-//   [
-//     {
-//       amount: "14043200",
-//       asset: {
-//         chain: "ETH",
-//         symbol: "USDT-0xdac17f958d2ee523a2206206994597c13d831ec7",
-//         ticker: "USDT-0xdac17f958d2ee523a2206206994597c13d831ec7",
-//         synth: false,
-//         trade: false,
-//         secured: true,
-//       },
-//     },
-//   ]
-// );
+executeDeposit("=:THOR.RUNE:thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex:1", [
+  {
+    amount: "1935463600",
+    asset: {
+      chain: "ETH",
+      symbol: "USDT",
+      ticker: "USDT",
+      synth: false,
+      trade: false,
+      secured: true,
+    },
+  },
+]).then(console.log);
 // uploadAndInstantiateExchangeContract();
 // executeTxn(EXCHANGE_ADDRESS, {
 //   withdraw: {

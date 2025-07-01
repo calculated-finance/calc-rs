@@ -1,6 +1,6 @@
 use calc_rs::{
-    exchanger::{ExpectedReceiveAmount, Route},
     core::{Callback, ContractResult},
+    exchanger::{ExpectedReceiveAmount, Route},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin, Deps, Env, MessageInfo, StdResult};
@@ -32,4 +32,18 @@ pub trait Exchange {
         recipient: Addr,
         on_complete: Option<Callback>,
     ) -> ContractResult;
+}
+
+#[cw_serde]
+#[derive(Hash)]
+pub enum PositionType {
+    Enter,
+    Exit,
+}
+
+#[cw_serde]
+pub struct Pair {
+    pub base_denom: String,
+    pub quote_denom: String,
+    pub address: Addr,
 }

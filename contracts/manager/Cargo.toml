@@ -32,3 +32,5 @@ rujira-rs = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 
+[dev-dependencies]
+calc-rs-test = { workspace = true }
