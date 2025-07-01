@@ -1,5 +1,5 @@
 [package]
-name = "twap"
+name = "stoploss"
 version = "0.1.0"
 authors = ["jamesgaddum"]
 edition = "2021"
@@ -31,7 +31,6 @@ cw2 = { workspace = true }
 rujira-rs = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
-thiserror = { workspace = true}
 
 [dev-dependencies]
 calc-rs-test = { workspace = true }

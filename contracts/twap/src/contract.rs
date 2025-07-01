@@ -160,7 +160,7 @@ pub fn instantiate(
                 vec![],
             );
 
-            let strategy_instantiated_event = DomainEvent::TwapStrategyCreated {
+            let strategy_instantiated_event = DomainEvent::StrategyCreated {
                 contract_address: env.contract.address,
                 config: CONFIG.load(deps.storage)?,
             };
@@ -169,6 +169,11 @@ pub fn instantiate(
                 .add_message(instantiate_distributor_msg)
                 .add_message(execute_msg)
                 .add_event(strategy_instantiated_event))
+        }
+        _ => {
+            return Err(ContractError::generic_err(
+                "Trying to instantiate a non-TWAP strategy with a TWAP contract implementation",
+            ));
         }
     }
 }
@@ -228,6 +233,10 @@ pub fn execute(
 
             match new_config {
                 StrategyConfig::Twap(new_config) => {
+                    if new_config.owner != config.owner {
+                        return Err(ContractError::generic_err("Cannot change the owner"));
+                    }
+
                     if new_config.manager_contract != config.manager_contract {
                         return Err(ContractError::generic_err(
                             "Cannot change the manager contract",
@@ -257,7 +266,7 @@ pub fn execute(
                         )));
                     }
 
-                    let updated_event = DomainEvent::TwapStrategyUpdated {
+                    let updated_event = DomainEvent::StrategyUpdated {
                         contract_address: env.contract.address.clone(),
                         old_config: config.clone(),
                         new_config: new_config.clone(),
@@ -266,6 +275,11 @@ pub fn execute(
                     events.push(updated_event);
 
                     config = new_config;
+                }
+                _ => {
+                    return Err(ContractError::generic_err(
+                        "Trying to update a TWAP strategy with a non-TWAP contract implementation",
+                    ));
                 }
             }
         }
@@ -338,7 +352,7 @@ pub fn execute(
 
                 sub_messages.push(SubMsg::reply_always(swap_msg, EXECUTE_REPLY_ID));
 
-                let execution_attempted_event = DomainEvent::TwapExecutionAttempted {
+                let execution_attempted_event = DomainEvent::ExecutionAttempted {
                     contract_address: env.contract.address.clone(),
                     swap_amount: swap_amount.clone(),
                     minimum_receive_amount: config.minimum_receive_amount.clone(),
@@ -349,7 +363,7 @@ pub fn execute(
 
                 stats.swapped.amount += swap_amount.amount;
             } else {
-                let execution_skipped_event = DomainEvent::TwapExecutionSkipped {
+                let execution_skipped_event = DomainEvent::ExecutionSkipped {
                     contract_address: env.contract.address.clone(),
                     reason: format!(
                         "Execution skipped due to the following reasons:\n* {}",
@@ -391,14 +405,14 @@ pub fn execute(
 
                 sub_messages.push(SubMsg::reply_always(set_triggers_msg, SCHEDULE_REPLY_ID));
 
-                let scheduling_attempted_event = DomainEvent::TwapSchedulingAttempted {
+                let scheduling_attempted_event = DomainEvent::SchedulingAttempted {
                     contract_address: env.contract.address.clone(),
                     conditions: trigger_conditions.clone(),
                 };
 
                 events.push(scheduling_attempted_event);
             } else {
-                let schedule_skipped_event = DomainEvent::TwapSchedulingSkipped {
+                let schedule_skipped_event = DomainEvent::SchedulingSkipped {
                     contract_address: env.contract.address.clone(),
                     reason: format!(
                         "Scheduling skipped due to the following reasons:\n* {}",
@@ -450,7 +464,7 @@ pub fn execute(
                 );
             }
 
-            let funds_withdrawn_event = DomainEvent::TwapFundsWithdrawn {
+            let funds_withdrawn_event = DomainEvent::FundsWithdrawn {
                 contract_address: env.contract.address.clone(),
                 to: config.owner.clone(),
                 funds: withdrawals.to_vec(),
@@ -519,7 +533,7 @@ pub fn reply(_deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
     match reply.id {
         EXECUTE_REPLY_ID => match reply.result {
             SubMsgResult::Ok(_) => {
-                let execution_succeeded_event = DomainEvent::TwapExecutionSucceeded {
+                let execution_succeeded_event = DomainEvent::ExecutionSucceeded {
                     contract_address: env.contract.address.clone(),
                     statistics: STATS.load(_deps.storage)?,
                 };
@@ -527,7 +541,7 @@ pub fn reply(_deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
                 events.push(execution_succeeded_event);
             }
             SubMsgResult::Err(err) => {
-                let execution_failed_event = DomainEvent::TwapExecutionFailed {
+                let execution_failed_event = DomainEvent::ExecutionFailed {
                     contract_address: env.contract.address.clone(),
                     reason: err.to_string(),
                 };
@@ -537,14 +551,14 @@ pub fn reply(_deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
         },
         SCHEDULE_REPLY_ID => match reply.result {
             SubMsgResult::Ok(_) => {
-                let scheduling_succeeded_event = DomainEvent::TwapSchedulingSucceeded {
+                let scheduling_succeeded_event = DomainEvent::SchedulingSucceeded {
                     contract_address: env.contract.address.clone(),
                 };
 
                 events.push(scheduling_succeeded_event);
             }
             SubMsgResult::Err(err) => {
-                let scheduling_failed_event = DomainEvent::TwapSchedulingFailed {
+                let scheduling_failed_event = DomainEvent::SchedulingFailed {
                     contract_address: env.contract.address.clone(),
                     reason: err.to_string(),
                 };
@@ -1090,7 +1104,7 @@ mod instantiate_tests {
 
         assert_eq!(
             response.events[0],
-            Event::from(DomainEvent::TwapStrategyCreated {
+            Event::from(DomainEvent::StrategyCreated {
                 contract_address: env.contract.address,
                 config
             })
@@ -1152,6 +1166,40 @@ mod update_tests {
             )
             .is_ok(),
             true
+        );
+    }
+
+    #[test]
+    fn cannot_update_owner() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let config = default_config();
+
+        CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &TwapStatistics {
+                    swapped: Coin::new(0u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        let new_config = StrategyExecuteMsg::Update(StrategyConfig::Twap(TwapConfig {
+            owner: Addr::unchecked("new-owner"),
+            ..config.clone()
+        }));
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&config.manager_contract, &[]),
+                new_config
+            )
+            .unwrap_err(),
+            ContractError::generic_err("Cannot change the owner")
         );
     }
 
@@ -1878,7 +1926,7 @@ mod execute_tests {
             )
             .unwrap()
             .events[0],
-            Event::from(DomainEvent::TwapExecutionSkipped {
+            Event::from(DomainEvent::ExecutionSkipped {
                 contract_address: env.contract.address.clone(),
                 reason: format!(
                     "Execution skipped due to the following reasons:\n* {}",
@@ -1951,7 +1999,7 @@ mod execute_tests {
             )
             .unwrap()
             .events[0],
-            Event::from(DomainEvent::TwapExecutionSkipped {
+            Event::from(DomainEvent::ExecutionSkipped {
                 contract_address: env.contract.address.clone(),
                 reason: format!(
                     "Execution skipped due to the following reasons:\n* {}",
@@ -2205,7 +2253,7 @@ mod execute_tests {
             )
             .unwrap()
             .events[1],
-            Event::from(DomainEvent::TwapSchedulingSkipped {
+            Event::from(DomainEvent::SchedulingSkipped {
                 contract_address: env.contract.address.clone(),
                 reason: format!(
                     "Scheduling skipped due to the following reasons:\n* {}",
@@ -2287,7 +2335,7 @@ mod execute_tests {
             )
             .unwrap()
             .events[1],
-            Event::from(DomainEvent::TwapSchedulingSkipped {
+            Event::from(DomainEvent::SchedulingSkipped {
                 contract_address: env.contract.address.clone(),
                 reason: format!(
                     "Scheduling skipped due to the following reasons:\n* {}",
@@ -2424,6 +2472,112 @@ mod withdraw_tests {
             )
             .is_ok(),
             true
+        );
+    }
+
+    #[test]
+    fn sends_bank_msg() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let config = default_config();
+
+        CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &TwapStatistics {
+                    swapped: Coin::new(0u128, "swap_denom"),
+                    withdrawn: vec![],
+                },
+            )
+            .unwrap();
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![
+                Coin::new(1000u128, "target_denom"),
+                Coin::new(122u128, "any_other_denom"),
+            ],
+        );
+
+        let response = execute(
+            deps.as_mut(),
+            env,
+            message_info(&config.owner, &[]),
+            StrategyExecuteMsg::Withdraw {
+                amounts: vec![
+                    Coin::new(1000u128, "target_denom"),
+                    Coin::new(1000u128, "any_other_denom"),
+                ],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            response.messages[0].msg,
+            CosmosMsg::Bank(BankMsg::Send {
+                to_address: config.owner.to_string(),
+                amount: vec![
+                    Coin::new(122u128, "any_other_denom"),
+                    Coin::new(1000u128, "target_denom"),
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn updates_statistics() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let config = default_config();
+
+        CONFIG.save(deps.as_mut().storage, &env, &config).unwrap();
+
+        STATS
+            .save(
+                deps.as_mut().storage,
+                &&TwapStatistics {
+                    swapped: Coin::new(1000u128, config.swap_amount.denom.clone()),
+                    withdrawn: vec![
+                        Coin::new(100u128, "target_denom"),
+                        Coin::new(100u128, "swap_denom"),
+                    ],
+                },
+            )
+            .unwrap();
+
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            vec![
+                Coin::new(1000u128, "target_denom"),
+                Coin::new(122u128, "any_other_denom"),
+            ],
+        );
+
+        execute(
+            deps.as_mut(),
+            env,
+            message_info(&config.owner, &[]),
+            StrategyExecuteMsg::Withdraw {
+                amounts: vec![
+                    Coin::new(1000u128, "target_denom"),
+                    Coin::new(1000u128, "any_other_denom"),
+                ],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            STATS.load(deps.as_ref().storage).unwrap(),
+            TwapStatistics {
+                swapped: Coin::new(1000u128, config.swap_amount.denom.clone()),
+                withdrawn: vec![
+                    Coin::new(122u128, "any_other_denom"),
+                    Coin::new(100u128, "swap_denom"),
+                    Coin::new(1100u128, "target_denom"),
+                ],
+            }
         );
     }
 }

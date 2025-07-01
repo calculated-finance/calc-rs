@@ -873,9 +873,39 @@ const run = async () => {
   }
 };
 
+const setOrders = async (pairAddress: string, orders: any[], funds: Coin[]) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWalletWithMnemonic());
+
+  const response = await cosmWasmClient.execute(
+    account,
+    pairAddress,
+    {
+      order: orders,
+    },
+    "auto",
+    "",
+    funds,
+  );
+
+  return response;
+};
+
+const getOrders = async (pairAddress: string) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWalletWithMnemonic());
+  const response = await cosmWasmClient.queryContractSmart(pairAddress, {
+    orders: {
+      limit: 10,
+      owner: account,
+    },
+  });
+
+  return response;
+};
 // uploadContractSuite();
 // fetchBalances("thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex").then(console.log);
-getMyBalances().then(console.log);
+// getMyBalances().then(console.log);
 // bankSend(
 //   {
 //     amount: "153236136",
@@ -952,22 +982,49 @@ const targetDenom = "rune";
 // queryContract(EXCHANGE_ADDRESS, {
 //   custom: {},
 // }).then(console.log);
-executeDeposit("=:THOR.RUNE:thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex:1", [
-  {
-    amount: "1935463600",
-    asset: {
-      chain: "ETH",
-      symbol: "USDT",
-      ticker: "USDT",
-      synth: false,
-      trade: false,
-      secured: true,
-    },
-  },
-]).then(console.log);
+// executeDeposit("=:THOR.RUNE:thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex:1", [
+//   {
+//     amount: "1935463600",
+//     asset: {
+//       chain: "ETH",
+//       symbol: "USDT",
+//       ticker: "USDT",
+//       synth: false,
+//       trade: false,
+//       secured: true,
+//     },
+//   },
+// ]).then(console.log);
 // uploadAndInstantiateExchangeContract();
 // executeTxn(EXCHANGE_ADDRESS, {
 //   withdraw: {
 //     denoms: ["eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7"],
 //   },
 // });
+// fetchFinBook(PAIR_ADDRESS).then((book) =>
+//   console.log(JSON.stringify(book, null, 2)),
+// );
+// getConfig(PAIR_ADDRESS).then((config) =>
+//   console.log(JSON.stringify(config, null, 2)),
+// );
+// getCodeDetails(DISTRIBUTOR_CODE_ID).then((details) => console.log(details));
+setOrders(
+  PAIR_ADDRESS,
+  [
+    [
+      ["quote", { fixed: "0.38" }, "5"],
+      // ["quote", { fixed: "0.37" }, "0"],
+      // ["quote", { fixed: "0.30" }, "1000"],
+    ],
+    null,
+  ],
+  [
+    {
+      denom: "rune",
+      amount: "5",
+    },
+  ],
+).then((response) => console.log(JSON.stringify(response, null, 2)));
+// getOrders(PAIR_ADDRESS).then((orders) =>
+//   console.log(JSON.stringify(orders, null, 2)),
+// );

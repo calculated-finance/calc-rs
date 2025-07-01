@@ -5,7 +5,7 @@ use cosmwasm_std::{Addr, Coin};
 #[cw_serde]
 pub enum Route {
     FinMarket { address: Addr },
-    FinLimit { address: Addr },
+    FinLimit { address: Addr, offset: u64 },
     Thorchain {},
 }
 

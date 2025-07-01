@@ -1,9 +1,13 @@
-use calc_rs::{core::Condition, twap::TwapConfig};
+use calc_rs::{
+    core::Condition,
+    stoploss::{StopLossConfig, StopLossStatistics},
+};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
+use rujira_rs::fin::{Price, Side};
 
 #[cw_serde]
-pub struct TwapStatistics {
+pub struct Statistics {
     pub swapped: Coin,
     pub withdrawn: Vec<Coin>,
 }
@@ -12,12 +16,12 @@ pub struct TwapStatistics {
 pub enum DomainEvent {
     StrategyCreated {
         contract_address: Addr,
-        config: TwapConfig,
+        config: StopLossConfig,
     },
     StrategyUpdated {
         contract_address: Addr,
-        old_config: TwapConfig,
-        new_config: TwapConfig,
+        old_config: StopLossConfig,
+        new_config: StopLossConfig,
     },
     FundsDeposited {
         contract_address: Addr,
@@ -31,13 +35,13 @@ pub enum DomainEvent {
     },
     ExecutionAttempted {
         contract_address: Addr,
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
-        maximum_slippage_bps: u128,
+        pair_address: Addr,
+        side: Side,
+        price: Price,
     },
     ExecutionSucceeded {
         contract_address: Addr,
-        statistics: TwapStatistics,
+        statistics: StopLossStatistics,
     },
     ExecutionFailed {
         contract_address: Addr,
@@ -70,7 +74,7 @@ impl From<DomainEvent> for Event {
             DomainEvent::StrategyCreated {
                 contract_address,
                 config,
-            } => Event::new("strategy_created")
+            } => Event::new("_strategy_created")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute(
                     "config",
@@ -80,7 +84,7 @@ impl From<DomainEvent> for Event {
                 contract_address,
                 old_config,
                 new_config,
-            } => Event::new("strategy_updated")
+            } => Event::new("_strategy_updated")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute(
                     "old_config",
@@ -114,14 +118,14 @@ impl From<DomainEvent> for Event {
                 ),
             DomainEvent::ExecutionAttempted {
                 contract_address,
-                swap_amount,
-                minimum_receive_amount,
-                maximum_slippage_bps,
+                pair_address,
+                side,
+                price,
             } => Event::new("execution_attempted")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("swap_amount", swap_amount.to_string())
-                .add_attribute("minimum_receive_amount", minimum_receive_amount.to_string())
-                .add_attribute("maximum_slippage_bps", maximum_slippage_bps.to_string()),
+                .add_attribute("pair_address", pair_address.as_str())
+                .add_attribute("side", side.to_string())
+                .add_attribute("price", price.to_string()),
             DomainEvent::ExecutionSucceeded {
                 contract_address,
                 statistics,

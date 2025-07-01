@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::twap::{InstantiateTwapCommand, TwapConfig};
+use crate::{
+    stoploss::{InstantiateStopLossCommand, StopLossConfig},
+    twap::{InstantiateTwapCommand, TwapConfig},
+};
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Event};
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
@@ -18,7 +21,7 @@ pub struct ManagerConfig {
 #[cw_serde]
 pub enum StrategyType {
     Twap,
-    Custom,
+    StopLoss,
 }
 
 impl<'a> Prefixer<'a> for StrategyType {
@@ -84,6 +87,7 @@ pub struct Strategy {
 #[cw_serde]
 pub enum StrategyConfig {
     Twap(TwapConfig),
+    StopLoss(StopLossConfig),
 }
 
 #[cw_serde]
@@ -100,6 +104,7 @@ pub enum StrategyStatistics {
 #[cw_serde]
 pub enum CreateStrategyConfig {
     Twap(InstantiateTwapCommand),
+    StopLoss(InstantiateStopLossCommand),
 }
 
 #[cw_serde]
@@ -112,6 +117,7 @@ impl CreateStrategyConfig {
     pub fn strategy_type(&self) -> StrategyType {
         match self {
             CreateStrategyConfig::Twap { .. } => StrategyType::Twap,
+            CreateStrategyConfig::StopLoss { .. } => StrategyType::StopLoss,
         }
     }
 }

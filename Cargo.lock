@@ -1440,6 +1440,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stoploss"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "calc-rs-test",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "rstest",
+ "rujira-rs",
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1588,7 +1605,6 @@ dependencies = [
  "cw-storage-plus",
  "cw-utils",
  "cw2",
- "prost",
  "rstest",
  "rujira-rs",
  "schemars",

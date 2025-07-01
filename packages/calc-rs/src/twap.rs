@@ -1,6 +1,6 @@
+use crate::core::{Condition, Schedule};
 use crate::distributor::Destination;
 use crate::exchanger::Route;
-use crate::core::{Condition, Schedule};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin};
 
@@ -29,12 +29,12 @@ pub struct InstantiateTwapCommand {
     pub maximum_slippage_bps: u128,
     pub route: Option<Route>,
     pub swap_cadence: Schedule,
-    pub minimum_distribute_amount: Option<Coin>,
     pub distributor_code_id: u64,
     pub exchanger_contract: Addr,
     pub scheduler_contract: Addr,
     pub execution_rebate: Option<Coin>,
     pub affiliate_code: Option<String>,
+    pub minimum_distribute_amount: Option<Coin>,
     pub mutable_destinations: Vec<Destination>,
     pub immutable_destinations: Vec<Destination>,
 }

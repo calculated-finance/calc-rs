@@ -507,7 +507,7 @@ mod instantiate_strategy_tests {
                     fee_collector: Addr::unchecked("fee_collector"),
                     affiliate_creation_fee: Coin::new(10u128, "rune"),
                     default_affiliate_bps: 2,
-                    code_ids: vec![(StrategyType::Custom, 3)],
+                    code_ids: vec![(StrategyType::StopLoss, 3)],
                 },
             )
             .unwrap();

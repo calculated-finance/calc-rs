@@ -104,15 +104,15 @@ fn spot_price(
 }
 
 #[cw_serde]
-pub struct FinMarketExchange {}
+pub struct FinExchange {}
 
-impl FinMarketExchange {
+impl FinExchange {
     pub fn new() -> Self {
-        FinMarketExchange {}
+        FinExchange {}
     }
 }
 
-impl Exchange for FinMarketExchange {
+impl Exchange for FinExchange {
     fn expected_receive_amount(
         &self,
         deps: Deps,
@@ -235,7 +235,7 @@ mod expected_receive_amount_tests {
         let target_denom = "usdc";
         let pair_address = Addr::unchecked("pair-address");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
                 &swap_amount,
@@ -304,7 +304,7 @@ mod expected_receive_amount_tests {
             }))
         });
 
-        let expected_amount = FinMarketExchange::new()
+        let expected_amount = FinExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
                 &swap_amount,
@@ -356,7 +356,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, "rune");
         let pair_address = Addr::unchecked("non-existing-pair-address");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -391,7 +391,7 @@ mod swap_tests {
         let swap_amount = Coin::new(100u128, "uruji");
         let minimum_receive_amount = Coin::new(50u128, "rune");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -423,7 +423,7 @@ mod swap_tests {
         let swap_amount = Coin::new(100u128, "uruji");
         let minimum_receive_amount = Coin::new(50u128, "rune");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -480,7 +480,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, pair.quote_denom.clone());
 
         assert_eq!(
-            FinMarketExchange::new()
+            FinExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -565,7 +565,7 @@ mod swap_tests {
         );
 
         assert_eq!(
-            FinMarketExchange::new()
+            FinExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -650,7 +650,7 @@ mod swap_tests {
         );
 
         assert_eq!(
-            FinMarketExchange::new()
+            FinExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -730,7 +730,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, quote_denom.clone());
         let recipient = Addr::unchecked("recipient-address");
 
-        let response = FinMarketExchange::new()
+        let response = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -820,7 +820,7 @@ mod swap_tests {
         let recipient = Addr::unchecked("recipient-address");
         let execution_rebate = vec![Coin::new(1u128, "rune")];
 
-        let response = FinMarketExchange::new()
+        let response = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -924,7 +924,7 @@ mod swap_tests {
             execution_rebate: vec![Coin::new(1u128, "rune")],
         };
 
-        let response = FinMarketExchange::new()
+        let response = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
