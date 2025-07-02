@@ -564,25 +564,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "distributor"
-version = "0.1.0"
-dependencies = [
- "calc-rs",
- "calc-rs-test",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "prost",
- "rstest",
- "rujira-rs",
- "schemars",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -654,25 +635,6 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
-
-[[package]]
-name = "exchanger"
-version = "0.1.0"
-dependencies = [
- "anybuf 1.0.0",
- "calc-rs",
- "calc-rs-test",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "prost",
- "rujira-rs",
- "schemars",
- "serde",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "ff"
@@ -904,22 +866,6 @@ checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
 dependencies = [
  "autocfg",
  "scopeguard",
-]
-
-[[package]]
-name = "manager"
-version = "0.1.0"
-dependencies = [
- "calc-rs",
- "calc-rs-test",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "rujira-rs",
- "schemars",
- "serde",
 ]
 
 [[package]]
@@ -1440,23 +1386,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "stoploss"
-version = "0.1.0"
-dependencies = [
- "calc-rs",
- "calc-rs-test",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "rstest",
- "rujira-rs",
- "schemars",
- "serde",
-]
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1592,24 +1521,6 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "winnow",
-]
-
-[[package]]
-name = "twap"
-version = "0.1.0"
-dependencies = [
- "calc-rs",
- "calc-rs-test",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "rstest",
- "rujira-rs",
- "schemars",
- "serde",
- "thiserror 1.0.69",
 ]
 
 [[package]]

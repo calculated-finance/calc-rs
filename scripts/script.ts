@@ -1008,23 +1008,27 @@ const targetDenom = "rune";
 //   console.log(JSON.stringify(config, null, 2)),
 // );
 // getCodeDetails(DISTRIBUTOR_CODE_ID).then((details) => console.log(details));
-setOrders(
-  PAIR_ADDRESS,
-  [
-    [
-      ["quote", { fixed: "0.38" }, "5"],
-      // ["quote", { fixed: "0.37" }, "0"],
-      // ["quote", { fixed: "0.30" }, "1000"],
-    ],
-    null,
-  ],
-  [
-    {
-      denom: "rune",
-      amount: "5",
-    },
-  ],
-).then((response) => console.log(JSON.stringify(response, null, 2)));
-// getOrders(PAIR_ADDRESS).then((orders) =>
-//   console.log(JSON.stringify(orders, null, 2)),
+// setOrders(
+//   PAIR_ADDRESS,
+//   [
+//     [
+//       ["quote", { fixed: "0.38" }, "0"],
+//       ["quote", { fixed: "0.38" }, "1000"],
+//     ],
+//     null,
+//   ],
+//   [
+//     {
+//       denom: "rune",
+//       amount: "1000",
+//     },
+//   ],
+// ).then((_) =>
+//   getOrders(PAIR_ADDRESS).then((orders) =>
+//     console.log(JSON.stringify(orders, null, 2)),
+//   ),
 // );
+
+fetchFinBook(PAIR_ADDRESS).then((book) =>
+  console.log(JSON.stringify(book, null, 2)),
+);

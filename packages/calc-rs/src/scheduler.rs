@@ -30,7 +30,7 @@ pub struct Trigger {
 impl Trigger {
     pub fn from_command(info: &MessageInfo, command: CreateTrigger, rebate: Vec<Coin>) -> Self {
         Self {
-            id: 0,
+            id: 0, // This will be set later when the trigger is stored
             owner: info.sender.clone(),
             conditions: command.conditions,
             threshold: command.threshold,
@@ -61,9 +61,6 @@ pub enum SchedulerExecuteMsg {
 
 #[cw_serde]
 pub enum ConditionFilter {
-    Owner {
-        address: Addr,
-    },
     Timestamp {
         start: Option<Timestamp>,
         end: Option<Timestamp>,
@@ -72,16 +69,24 @@ pub enum ConditionFilter {
         start: Option<u64>,
         end: Option<u64>,
     },
+    LimitOrder {
+        start_after: Option<u64>,
+    },
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum SchedulerQueryMsg {
     #[returns(Vec<Trigger>)]
-    Triggers {
+    Owned {
+        owner: Addr,
+        limit: Option<usize>,
+        start_after: Option<u64>,
+    },
+    #[returns(Vec<Trigger>)]
+    Filtered {
         filter: ConditionFilter,
         limit: Option<usize>,
-        can_execute: Option<bool>,
     },
     #[returns(bool)]
     CanExecute { id: u64 },

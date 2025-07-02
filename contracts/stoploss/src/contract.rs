@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::{cmp::min, collections::HashMap};
 
 use calc_rs::{
     core::{Condition, Contract, ContractError, ContractResult},
@@ -31,6 +31,7 @@ use crate::{
 };
 
 const BASE_FEE_BPS: u64 = 15;
+const MOVE_TRIGGER_ORDER_SIZE: u128 = 1000;
 
 #[entry_point]
 pub fn instantiate(
@@ -178,7 +179,8 @@ pub fn instantiate(
                     pair_address: config.pair_address,
                     swap_denom: config.swap_denom.clone(),
                     target_denom: config.target_denom.clone(),
-                    offset: config.offset,
+                    stop_offset: config.stop_offset,
+                    reset_offset: config.reset_offset,
                 },
             )?;
 
@@ -323,95 +325,126 @@ pub fn execute(
                 return Err(ContractError::Unauthorized {});
             }
 
-            let orders_response = deps.querier.query_wasm_smart::<OrdersResponse>(
-                config.pair_address.clone(),
-                &QueryMsg::Orders {
-                    owner: env.contract.address.to_string(),
-                    side: None,
-                    offset: None,
-                    limit: None,
-                },
-            )?;
+            // let mut remaining_amount = deps
+            //     .querier
+            //     .query_balance(env.contract.address.clone(), config.swap_denom.clone())?
+            //     .amount;
 
-            if orders_response.orders.len() > 0 {
-                let mut order_targets: Vec<(Side, Price, Option<Uint128>)> = vec![];
-                let mut claimed_amount = Uint128::zero();
-                let mut remaining_amount = Uint128::zero();
+            // let mut claimed_amount = deps
+            //     .querier
+            //     .query_balance(env.contract.address.clone(), config.target_denom.clone())?
+            //     .amount;
 
-                for order in orders_response.orders {
-                    let target = (order.side, order.price, Some(Uint128::zero()));
-                    order_targets.push(target);
+            // let orders_response = deps.querier.query_wasm_smart::<OrdersResponse>(
+            //     config.pair_address.clone(),
+            //     &QueryMsg::Orders {
+            //         owner: env.contract.address.to_string(),
+            //         side: None,
+            //         offset: None,
+            //         limit: None,
+            //     },
+            // )?;
 
-                    claimed_amount = claimed_amount + order.filled;
-                    remaining_amount = remaining_amount + order.remaining;
-                }
+            // let mut order_targets: Vec<(Side, Price, Option<Uint128>)> = vec![];
 
-                let claim_and_withdraw_orders_msg = Contract(config.pair_address.clone()).call(
-                    to_json_binary(&ExecuteMsg::Order((order_targets, None)))?,
-                    vec![Coin::new(0u128, config.swap_denom.clone())],
-                );
+            // for order in orders_response.orders {
+            //     claimed_amount = claimed_amount + order.filled;
+            //     remaining_amount = remaining_amount + order.remaining;
 
-                messages.push(claim_and_withdraw_orders_msg);
+            //     order_targets.push((order.side.clone(), order.price, Some(Uint128::zero())));
+            // }
 
-                let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
-                    config.pair_address.clone(),
-                    &QueryMsg::Config {},
-                )?;
+            // let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
+            //     config.pair_address.clone(),
+            //     &QueryMsg::Config {},
+            // )?;
 
-                let order_book = deps.querier.query_wasm_smart::<BookResponse>(
-                    config.pair_address.clone(),
-                    &QueryMsg::Book {
-                        offset: None,
-                        limit: None,
-                    },
-                )?;
+            // let order_book = deps.querier.query_wasm_smart::<BookResponse>(
+            //     config.pair_address.clone(),
+            //     &QueryMsg::Book {
+            //         offset: None,
+            //         limit: None,
+            //     },
+            // )?;
 
-                let mut target_amount = Uint128::new(1000);
-                let mut swap_amount = Uint128::zero();
+            // let ask_side = pair.ask_side(&Coin::new(1u128, config.swap_denom.clone()))?;
 
-                if pair
-                    .denoms
-                    .ask_side(&Coin::new(1u128, config.swap_denom.clone()))?
-                    == Side::Base
-                {
-                    for order in order_book.base {
-                        let order_to_fill = min(target_amount, order.total);
-                        let swap_amount_to_fill = order_to_fill.mul_ceil(order.price);
-                        swap_amount = swap_amount + swap_amount_to_fill;
-                        target_amount = target_amount.saturating_sub(order_to_fill);
+            // let mut target_amount =
+            //     Uint128::new(MOVE_TRIGGER_ORDER_SIZE).saturating_sub(claimed_amount);
 
-                        if target_amount.is_zero() {
-                            break;
-                        }
-                    }
-                } else {
-                    for order in order_book.quote {
-                        let order_to_fill = min(target_amount, order.total);
-                        let swap_amount_to_fill =
-                            order_to_fill.mul_ceil(Decimal::one() / order.price);
-                        swap_amount = swap_amount + swap_amount_to_fill;
-                        target_amount = target_amount.saturating_sub(order_to_fill);
+            // if target_amount.gt(&Uint128::zero()) {
+            //     let mut swap_amount = Uint128::zero();
 
-                        if target_amount.is_zero() {
-                            break;
-                        }
-                    }
-                };
+            //     if ask_side == Side::Base {
+            //         for order in order_book.base.iter() {
+            //             let order_to_fill = min(target_amount, order.total);
+            //             let swap_amount_to_fill = order_to_fill.mul_ceil(order.price);
+            //             swap_amount = swap_amount + swap_amount_to_fill;
+            //             target_amount = target_amount.saturating_sub(order_to_fill);
 
-                if remaining_amount > swap_amount && target_amount.eq(&Uint128::zero()) {
-                    let swap_msg = Contract(config.pair_address.clone()).call(
-                        to_json_binary(&ExecuteMsg::Swap(SwapRequest {
-                            min_return: Some(target_amount),
-                            to: None,
-                            callback: None,
-                        }))?,
-                        vec![Coin::new(swap_amount, config.swap_denom)],
-                    );
+            //             if target_amount.is_zero() {
+            //                 break;
+            //             }
+            //         }
+            //     } else {
+            //         for order in order_book.quote.iter() {
+            //             let order_to_fill = min(target_amount, order.total);
+            //             let swap_amount_to_fill =
+            //                 order_to_fill.mul_ceil(Decimal::one() / order.price);
+            //             swap_amount = swap_amount + swap_amount_to_fill;
+            //             target_amount = target_amount.saturating_sub(order_to_fill);
 
-                    messages.push(swap_msg);
-                }
-            } else {
-            }
+            //             if target_amount.is_zero() {
+            //                 break;
+            //             }
+            //         }
+            //     };
+
+            //     if target_amount.eq(&Uint128::zero()) {
+            //         let swap_msg = Contract(config.pair_address.clone()).call(
+            //             to_json_binary(&ExecuteMsg::Swap(SwapRequest {
+            //                 min_return: None,
+            //                 to: None,
+            //                 callback: None,
+            //             }))?,
+            //             vec![Coin::new(swap_amount, config.swap_denom.clone())],
+            //         );
+
+            //         messages.push(swap_msg);
+
+            //         claimed_amount = claimed_amount - swap_amount;
+            //     }
+            // }
+
+            // if ask_side == Side::Base {
+            //     order_targets.push((
+            //         Side::Quote,
+            //         Price::Fixed(order_book.quote[0].price.saturating_sub(config.stop_offset)),
+            //         Some(remaining_amount),
+            //     ));
+
+            //     order_targets.push((
+            //         Side::Base,
+            //         Price::Fixed(order_book.base[0].price.saturating_add(config.reset_offset)),
+            //         Some(MOVE_TRIGGER_ORDER_SIZE.into()),
+            //     ));
+            // } else {
+            //     order_targets.push((
+            //         Side::Base,
+            //         Price::Fixed(order_book.base[0].price.saturating_add(config.stop_offset)),
+            //         Some(remaining_amount),
+            //     ));
+
+            //     order_targets.push((
+            //         Side::Quote,
+            //         Price::Fixed(
+            //             order_book.quote[0]
+            //                 .price
+            //                 .saturating_sub(config.reset_offset),
+            //         ),
+            //         Some(MOVE_TRIGGER_ORDER_SIZE.into()),
+            //     ));
+            // };
         }
         StrategyExecuteMsg::Withdraw { amounts } => {
             if info.sender != config.owner {
@@ -598,7 +631,8 @@ mod instantiate_tests {
             pair_address: Addr::unchecked("pair_address"),
             swap_denom: "swap_denom".to_string(),
             target_denom: "target_denom".to_string(),
-            offset: Decimal::percent(10),
+            stop_offset: Decimal::percent(10),
+            reset_offset: Decimal::percent(15),
             execution_rebate: Some(Coin::new(100u128, "rune")),
             affiliate_code: None,
             minimum_distribute_amount: None,
@@ -837,7 +871,8 @@ mod instantiate_tests {
                 pair_address: config.pair_address,
                 swap_denom: config.swap_denom,
                 target_denom: config.target_denom,
-                offset: config.offset,
+                stop_offset: config.stop_offset,
+                reset_offset: config.reset_offset,
                 move_conditions: vec![],
                 distribute_conditions: vec![],
                 execution_rebate: config.execution_rebate
@@ -1189,7 +1224,8 @@ mod instantiate_tests {
                     pair_address: config.pair_address,
                     swap_denom: config.swap_denom,
                     target_denom: config.target_denom,
-                    offset: config.offset,
+                    stop_offset: config.stop_offset,
+                    reset_offset: config.reset_offset,
                     move_conditions: vec![],
                     distribute_conditions: vec![],
                     execution_rebate: config.execution_rebate,
@@ -1210,7 +1246,7 @@ fn default_config() -> StopLossConfig {
         pair_address: Addr::unchecked("pair_address"),
         swap_denom: "swap_denom".to_string(),
         target_denom: "target_denom".to_string(),
-        offset: Decimal::percent(10),
+        stop_offset: Decimal::percent(10),
         move_conditions: vec![],
         distribute_conditions: vec![],
         execution_rebate: Some(Coin::new(100u128, "rune")),
@@ -1526,7 +1562,7 @@ mod update_tests {
             .unwrap();
 
         let new_config = StopLossConfig {
-            offset: Decimal::percent(20),
+            stop_offset: Decimal::percent(20),
             execution_rebate: Some(Coin::new(2u128, "rune")),
             ..existing_config
         };
@@ -1566,7 +1602,7 @@ mod update_tests {
             .unwrap();
 
         let new_config = StopLossConfig {
-            offset: Decimal::percent(20),
+            stop_offset: Decimal::percent(20),
             execution_rebate: Some(Coin::new(2u128, "rune")),
             ..existing_config.clone()
         };

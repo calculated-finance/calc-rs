@@ -85,8 +85,8 @@ pub enum Condition {
         route: Option<Route>,
     },
     LimitOrderFilled {
-        owner: Addr,
         pair_address: Addr,
+        owner: Addr,
         side: Side,
         price: Price,
     },
@@ -125,8 +125,8 @@ impl Condition {
                 )))
             }
             Condition::LimitOrderFilled {
-                owner,
                 pair_address,
+                owner,
                 side,
                 price,
             } => {
@@ -236,13 +236,13 @@ impl Condition {
                 swap_amount, minimum_receive_amount, maximum_slippage_bps
             ),
             Condition::LimitOrderFilled {
-                owner,
                 pair_address,
+                owner,
                 side,
                 price,
             } => format!(
-                "limit order filled: owner={}, pair_address={}, side={:?}, price={}",
-                owner, pair_address, side, price
+                "limit order filled: pair_address={}, owner={}, side={:?}, price={}",
+                pair_address, owner, side, price
             ),
             Condition::BalanceAvailable { address, amount } => format!(
                 "balance available: address={}, amount={}",

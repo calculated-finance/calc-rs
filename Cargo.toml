@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "packages/*",
-  "contracts/*",
+  "contracts/scheduler",
 ]
 resolver = "1"
 

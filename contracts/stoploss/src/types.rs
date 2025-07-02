@@ -47,13 +47,13 @@ pub enum DomainEvent {
         contract_address: Addr,
         reason: String,
     },
-    SchedulingAttempted {
-        contract_address: Addr,
-        conditions: Vec<Condition>,
-    },
     ExecutionSkipped {
         contract_address: Addr,
         reason: String,
+    },
+    SchedulingAttempted {
+        contract_address: Addr,
+        conditions: Vec<Condition>,
     },
     SchedulingSucceeded {
         contract_address: Addr,
