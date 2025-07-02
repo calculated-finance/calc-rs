@@ -1,16 +1,23 @@
-use std::{time::Duration, u8};
+use std::{
+    cmp::{max, min},
+    time::Duration,
+    u8, vec,
+};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
-    Deps, Env, Instantiate2AddressError, OverflowError, Response, StdError, StdResult, Timestamp,
-    WasmMsg,
+    to_json_binary, Addr, BankMsg, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin,
+    CoinsError, CosmosMsg, Decimal, Deps, Env, Instantiate2AddressError, OverflowError, Response,
+    StdError, StdResult, Timestamp, Uint128, WasmMsg,
 };
-use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
+use rujira_rs::fin::{
+    BookResponse, ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side,
+};
 use thiserror::Error;
 
 use crate::{
-    exchanger::{ExchangeQueryMsg, ExpectedReceiveAmount, Route},
+    distributor::DistributorExecuteMsg,
+    exchanger::{ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReceiveAmount, Route},
     manager::{ManagerQueryMsg, Strategy, StrategyStatus},
 };
 
@@ -74,6 +81,12 @@ pub struct Callback {
 }
 
 #[cw_serde]
+pub enum LogicalOperator {
+    And,
+    Or,
+}
+
+#[cw_serde]
 pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
@@ -98,6 +111,10 @@ pub enum Condition {
         manager_contract: Addr,
         contract_address: Addr,
         status: StrategyStatus,
+    },
+    Compound {
+        conditions: Vec<Condition>,
+        operator: LogicalOperator,
     },
 }
 
@@ -219,6 +236,32 @@ impl Condition {
                     status, strategy.status
                 )))
             }
+            Condition::Compound {
+                conditions,
+                operator,
+            } => match operator {
+                LogicalOperator::And => {
+                    for condition in conditions {
+                        condition.check(deps, env)?;
+                    }
+                    Ok(())
+                }
+                LogicalOperator::Or => {
+                    for condition in conditions {
+                        if condition.check(deps, env).is_ok() {
+                            return Ok(());
+                        }
+                    }
+                    Err(StdError::generic_err(format!(
+                        "No compound conditions met in: {}",
+                        conditions
+                            .iter()
+                            .map(|c| c.description())
+                            .collect::<Vec<_>>()
+                            .join(",\n")
+                    )))
+                }
+            },
         }
     }
 
@@ -256,7 +299,525 @@ impl Condition {
                 "strategy ({}) is in status: {:?}",
                 contract_address, status
             ),
+            Condition::Compound { conditions, operator } => {
+                match operator {
+                    LogicalOperator::And => format!(
+                        "All the following conditions are met: [{:#?}]",
+                        conditions
+                            .iter()
+                            .map(|c| c.description())
+                            .collect::<Vec<_>>()
+                            .join(",\n")
+                    ),
+                    LogicalOperator::Or => format!(
+                        "Any of the following conditions are met: [{:#?}]",
+                        conditions
+                            .iter()
+                            .map(|c| c.description())
+                            .collect::<Vec<_>>()
+                            .join(",\n")
+                    ),
+                }
+            }
         }
+    }
+}
+
+#[cw_serde]
+pub enum Direction {
+    Up,
+    Down,
+}
+
+#[cw_serde]
+pub enum Offset {
+    Exact(Decimal),
+    Bps(u64),
+}
+
+#[cw_serde]
+pub enum Action {
+    FixedSwap {
+        exchange_contract: Addr,
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+        maximum_slippage_bps: u128,
+        route: Option<Route>,
+        schedule: Option<Schedule>,
+    },
+    LinearlyScaledSwap {
+        exchange_contract: Addr,
+        base_swap_amount: Coin,
+        base_receive_amount: Coin,
+        minimum_swap_amount: Coin,
+        minimum_receive_amount: Coin,
+        multiplier: Decimal,
+        maximum_slippage_bps: u128,
+        route: Option<Route>,
+        schedule: Option<Schedule>,
+    },
+    FixedLimitOrder {
+        pair_address: Addr,
+        bid_denom: String,
+        bid_amount: Option<Uint128>,
+        side: Side,
+        price: Price,
+        schedule: Option<Schedule>,
+    },
+    DynamicLimitOrder {
+        pair_address: Addr,
+        bid_denom: String,
+        bid_amount: Option<Uint128>,
+        side: Side,
+        direction: Direction,
+        offset: Offset,
+        current_price: Option<Price>,
+        schedule: Option<Schedule>,
+    },
+}
+
+impl Action {
+    pub fn perform(
+        &self,
+        deps: Deps,
+        env: &Env,
+        config: &StrategyConfig,
+    ) -> StdResult<(Action, Vec<Condition>, Vec<CosmosMsg>)> {
+        let mut action = self.clone();
+        let mut messages: Vec<CosmosMsg> = vec![];
+        let mut conditions: Vec<Condition> = vec![];
+
+        match self {
+            Action::FixedSwap {
+                exchange_contract,
+                swap_amount,
+                minimum_receive_amount,
+                maximum_slippage_bps,
+                route,
+                schedule,
+            } => {
+                let swap_balance = deps
+                    .querier
+                    .query_balance(env.contract.address.clone(), swap_amount.denom.clone())?;
+
+                let swap_amount = Coin::new(
+                    min(swap_balance.amount, swap_amount.amount),
+                    swap_amount.denom.clone(),
+                );
+
+                if swap_amount.amount.gt(&Uint128::zero()) {
+                    return Ok((action, conditions, messages));
+                }
+
+                let swap_msg = Contract(exchange_contract.clone()).call(
+                    to_json_binary(&ExchangeExecuteMsg::Swap {
+                        minimum_receive_amount: minimum_receive_amount.clone(),
+                        maximum_slippage_bps: *maximum_slippage_bps,
+                        route: route.clone(),
+                        recipient: Some(config.distributor.clone()),
+                        on_complete: Some(Callback {
+                            msg: to_json_binary(&DistributorExecuteMsg::Distribute {})?,
+                            contract: config.distributor.clone(),
+                            execution_rebate: config.execution_rebate.clone(),
+                        }),
+                    })?,
+                    vec![swap_amount.clone()],
+                );
+
+                messages.push(swap_msg);
+
+                let mut swap_conditions = vec![
+                    Condition::BalanceAvailable {
+                        address: env.contract.address.clone(),
+                        amount: Coin::new(1u128, swap_amount.denom.clone()),
+                    },
+                    Condition::ExchangeLiquidityProvided {
+                        exchanger_contract: exchange_contract.clone(),
+                        swap_amount: swap_amount.clone(),
+                        minimum_receive_amount: minimum_receive_amount.clone(),
+                        maximum_slippage_bps: *maximum_slippage_bps,
+                        route: route.clone(),
+                    },
+                ];
+
+                if let Some(schedule) = schedule {
+                    swap_conditions.push(schedule.into_condition(env));
+                };
+
+                conditions.push(Condition::Compound {
+                    conditions: swap_conditions,
+                    operator: LogicalOperator::And,
+                });
+            }
+            Action::LinearlyScaledSwap {
+                exchange_contract,
+                base_swap_amount,
+                base_receive_amount,
+                minimum_swap_amount,
+                minimum_receive_amount,
+                multiplier,
+                maximum_slippage_bps,
+                route,
+                schedule,
+            } => {
+                let expected_receive_amount =
+                    deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
+                        exchange_contract,
+                        &ExchangeQueryMsg::ExpectedReceiveAmount {
+                            swap_amount: base_swap_amount.clone(),
+                            target_denom: base_swap_amount.denom.clone(),
+                            route: None,
+                        },
+                    )?;
+
+                let base_price =
+                    Decimal::from_ratio(base_receive_amount.amount, base_swap_amount.amount);
+
+                let current_price = Decimal::from_ratio(
+                    base_swap_amount.amount,
+                    expected_receive_amount.receive_amount.amount,
+                );
+
+                let price_delta = base_price.abs_diff(current_price) / base_price;
+                let scaled_price_delta = price_delta * multiplier;
+
+                let scaled_swap_amount = if current_price < base_price {
+                    base_swap_amount
+                        .amount
+                        .mul_floor(Decimal::one() + scaled_price_delta)
+                } else {
+                    base_swap_amount
+                        .amount
+                        .mul_floor(Decimal::one() - scaled_price_delta)
+                };
+
+                if scaled_swap_amount.is_zero() {
+                    return Ok((action, conditions, messages));
+                }
+
+                let scaled_minimum_receive_amount = minimum_receive_amount.amount.mul_ceil(
+                    Decimal::from_ratio(scaled_swap_amount, base_swap_amount.amount),
+                );
+
+                let swap_amount = Coin::new(
+                    max(scaled_swap_amount, minimum_swap_amount.amount),
+                    base_swap_amount.denom.clone(),
+                );
+
+                if swap_amount.amount.is_zero() {
+                    return Ok((action, conditions, messages));
+                }
+
+                let minimum_receive_amount = Coin::new(
+                    scaled_minimum_receive_amount,
+                    minimum_receive_amount.denom.clone(),
+                );
+
+                let swap_msg = Contract(exchange_contract.clone()).call(
+                    to_json_binary(&ExchangeExecuteMsg::Swap {
+                        minimum_receive_amount: minimum_receive_amount.clone(),
+                        maximum_slippage_bps: *maximum_slippage_bps,
+                        route: route.clone(),
+                        recipient: Some(config.distributor.clone()),
+                        on_complete: Some(Callback {
+                            msg: to_json_binary(&DistributorExecuteMsg::Distribute {})?,
+                            contract: config.distributor.clone(),
+                            execution_rebate: config.execution_rebate.clone(),
+                        }),
+                    })?,
+                    vec![swap_amount],
+                );
+
+                messages.push(swap_msg);
+
+                let mut swap_conditions = vec![
+                    Condition::BalanceAvailable {
+                        address: env.contract.address.clone(),
+                        amount: Coin::new(1u128, base_swap_amount.denom.clone()),
+                    },
+                    Condition::ExchangeLiquidityProvided {
+                        exchanger_contract: exchange_contract.clone(),
+                        swap_amount: base_swap_amount.clone(),
+                        minimum_receive_amount,
+                        maximum_slippage_bps: *maximum_slippage_bps,
+                        route: route.clone(),
+                    },
+                ];
+
+                if let Some(schedule) = schedule {
+                    swap_conditions.push(schedule.into_condition(env));
+                };
+
+                conditions.push(Condition::Compound {
+                    conditions: swap_conditions,
+                    operator: LogicalOperator::And,
+                });
+            }
+            Action::FixedLimitOrder {
+                pair_address,
+                side,
+                price,
+                bid_denom,
+                bid_amount,
+                schedule,
+            } => {
+                let existing_order = deps
+                    .querier
+                    .query_wasm_smart::<OrderResponse>(
+                        pair_address,
+                        &QueryMsg::Order((
+                            env.contract.address.to_string(),
+                            side.clone(),
+                            price.clone(),
+                        )),
+                    )
+                    .ok();
+
+                let mut bid_denom_balance = deps
+                    .querier
+                    .query_balance(env.contract.address.clone(), bid_denom.clone())?;
+
+                let mut bank_msg: Option<BankMsg> = None;
+
+                if let Some(existing_order) = existing_order {
+                    bid_denom_balance.amount += existing_order.remaining;
+
+                    if existing_order.filled.gt(&Uint128::zero()) {
+                        let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
+                            pair_address,
+                            &QueryMsg::Config {},
+                        )?;
+
+                        bank_msg = Some(BankMsg::Send {
+                            to_address: config.distributor.to_string(),
+                            amount: vec![Coin::new(existing_order.filled, pair.denoms.ask(side))],
+                        });
+                    }
+                };
+
+                let bid_amount = min(
+                    bid_amount.unwrap_or(bid_denom_balance.amount),
+                    bid_denom_balance.amount,
+                );
+
+                if bid_amount.is_zero() {
+                    if let Some(bank_msg) = bank_msg {
+                        messages.push(bank_msg.into());
+                    }
+
+                    return Ok((action, conditions, messages));
+                }
+
+                let set_order_msg = Contract(pair_address.clone()).call(
+                    to_json_binary(&ExecuteMsg::Order((
+                        vec![
+                            (side.clone(), price.clone(), Some(Uint128::zero())),
+                            (side.clone(), price.clone(), Some(bid_amount)),
+                        ],
+                        None,
+                    )))?,
+                    vec![Coin::new(bid_amount, bid_denom.clone())],
+                );
+
+                messages.push(set_order_msg);
+
+                if let Some(bank_msg) = bank_msg {
+                    messages.push(bank_msg.into());
+                }
+
+                let order_filled_condition = Condition::LimitOrderFilled {
+                    pair_address: pair_address.clone(),
+                    owner: env.contract.address.clone(),
+                    side: side.clone(),
+                    price: price.clone(),
+                };
+
+                if let Some(schedule) = schedule {
+                    conditions.push(Condition::Compound {
+                        conditions: vec![
+                            order_filled_condition.clone(),
+                            schedule.into_condition(env),
+                        ],
+                        operator: LogicalOperator::Or,
+                    });
+                } else {
+                    conditions.push(order_filled_condition);
+                }
+            }
+            Action::DynamicLimitOrder {
+                pair_address,
+                bid_denom,
+                bid_amount,
+                side,
+                direction,
+                offset,
+                current_price,
+                schedule,
+            } => {
+                let mut existing_order: Option<OrderResponse> = None;
+
+                if let Some(previous_price) = current_price {
+                    existing_order = deps
+                        .querier
+                        .query_wasm_smart::<OrderResponse>(
+                            pair_address,
+                            &QueryMsg::Order((
+                                env.contract.address.to_string(),
+                                side.clone(),
+                                previous_price.clone(),
+                            )),
+                        )
+                        .ok();
+                }
+
+                let mut bid_denom_balance = deps
+                    .querier
+                    .query_balance(env.contract.address.clone(), bid_denom.clone())?;
+
+                let mut bank_msg: Option<BankMsg> = None;
+
+                if let Some(existing_order) = existing_order.clone() {
+                    bid_denom_balance.amount += existing_order.remaining;
+
+                    if existing_order.filled.gt(&Uint128::zero()) {
+                        let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
+                            pair_address,
+                            &QueryMsg::Config {},
+                        )?;
+
+                        bank_msg = Some(BankMsg::Send {
+                            to_address: config.distributor.to_string(),
+                            amount: vec![Coin::new(existing_order.filled, pair.denoms.ask(side))],
+                        });
+                    }
+                };
+
+                let book = deps.querier.query_wasm_smart::<BookResponse>(
+                    pair_address,
+                    &QueryMsg::Book {
+                        limit: Some(1),
+                        offset: None,
+                    },
+                )?;
+
+                let book_price = if *side == Side::Base {
+                    book.base
+                } else {
+                    book.quote
+                }[0]
+                .price;
+
+                let current_price = match offset {
+                    Offset::Exact(offset) => match direction {
+                        Direction::Up => book_price.saturating_add(*offset),
+                        Direction::Down => book_price.saturating_sub(*offset),
+                    },
+                    Offset::Bps(offset) => match direction {
+                        Direction::Up => book_price
+                            .saturating_mul(Decimal::one().saturating_add(Decimal::bps(*offset))),
+                        Direction::Down => book_price
+                            .saturating_mul(Decimal::one().saturating_sub(Decimal::bps(*offset))),
+                    },
+                };
+
+                let new_bid_amount = min(
+                    bid_amount.unwrap_or(bid_denom_balance.amount),
+                    bid_denom_balance.amount,
+                );
+
+                if new_bid_amount.is_zero() {
+                    if let Some(bank_msg) = bank_msg {
+                        messages.push(bank_msg.into());
+                    }
+
+                    return Ok((action, conditions, messages));
+                }
+
+                if current_price.gt(&Decimal::zero()) {
+                    let set_order_msg = Contract(pair_address.clone()).call(
+                        to_json_binary(&ExecuteMsg::Order((
+                            [
+                                existing_order.map_or_else(
+                                    || vec![],
+                                    |o| vec![(o.side, o.price, Some(Uint128::zero()))],
+                                ),
+                                vec![(
+                                    side.clone(),
+                                    Price::Fixed(current_price),
+                                    Some(new_bid_amount),
+                                )],
+                            ]
+                            .concat(),
+                            None,
+                        )))?,
+                        vec![Coin::new(new_bid_amount, bid_denom.clone())],
+                    );
+
+                    messages.push(set_order_msg);
+
+                    let order_filled_condition = Condition::LimitOrderFilled {
+                        pair_address: pair_address.clone(),
+                        owner: env.contract.address.clone(),
+                        side: side.clone(),
+                        price: Price::Fixed(current_price),
+                    };
+
+                    if let Some(schedule) = schedule {
+                        conditions.push(Condition::Compound {
+                            conditions: vec![order_filled_condition, schedule.into_condition(env)],
+                            operator: LogicalOperator::Or,
+                        });
+                    } else {
+                        conditions.push(order_filled_condition);
+                    }
+
+                    action = Action::DynamicLimitOrder {
+                        pair_address: pair_address.clone(),
+                        bid_denom: bid_denom.clone(),
+                        bid_amount: bid_amount.clone(),
+                        side: side.clone(),
+                        direction: direction.clone(),
+                        offset: offset.clone(),
+                        current_price: Some(Price::Fixed(current_price)),
+                        schedule: schedule.clone(),
+                    }
+                }
+            }
+        };
+
+        Ok((action, conditions, messages))
+    }
+}
+
+#[cw_serde]
+pub struct Behaviour {
+    pub actions: Vec<Action>,
+    pub conditions: Vec<Condition>,
+}
+
+impl Behaviour {
+    pub fn execute(
+        &mut self,
+        deps: Deps,
+        env: &Env,
+        config: &StrategyConfig,
+    ) -> StdResult<Vec<CosmosMsg>> {
+        let mut new_actions = vec![];
+        let mut new_conditions = vec![];
+        let mut all_messages = vec![];
+
+        for action in &self.actions {
+            let (action, conditions, messages) = action.perform(deps, env, config)?;
+
+            new_actions.push(action);
+            new_conditions.extend(conditions);
+            all_messages.extend(messages);
+        }
+
+        self.actions = new_actions;
+        self.conditions = new_conditions;
+
+        Ok(all_messages)
     }
 }
 
@@ -337,6 +898,16 @@ impl Schedule {
             },
         }
     }
+}
+
+#[cw_serde]
+pub struct StrategyConfig {
+    pub owner: Addr,
+    pub manager: Addr,
+    pub distributor: Addr,
+    pub scheduler: Addr,
+    pub behaviours: Vec<Behaviour>,
+    pub execution_rebate: Vec<Coin>,
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use calc_rs::{
     core::Condition,
-    stoploss::{StopLossConfig, StopLossStatistics},
+    ladder::{LadderConfig, LadderStatistics},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
@@ -16,12 +16,12 @@ pub struct Statistics {
 pub enum DomainEvent {
     StrategyCreated {
         contract_address: Addr,
-        config: StopLossConfig,
+        config: LadderConfig,
     },
     StrategyUpdated {
         contract_address: Addr,
-        old_config: StopLossConfig,
-        new_config: StopLossConfig,
+        old_config: LadderConfig,
+        new_config: LadderConfig,
     },
     FundsDeposited {
         contract_address: Addr,
@@ -41,7 +41,7 @@ pub enum DomainEvent {
     },
     ExecutionSucceeded {
         contract_address: Addr,
-        statistics: StopLossStatistics,
+        statistics: LadderStatistics,
     },
     ExecutionFailed {
         contract_address: Addr,

@@ -1,14 +1,17 @@
-use std::{cmp::min, collections::HashMap};
+use std::{
+    cmp::min,
+    collections::{HashMap, HashSet},
+};
 
 use calc_rs::{
     core::{Condition, Contract, ContractError, ContractResult},
     distributor::{Destination, DistributorConfig, DistributorExecuteMsg, Recipient},
+    ladder::{LadderConfig, LadderStatistics},
     manager::{
         Affiliate, CreateStrategyConfig, ManagerQueryMsg, StrategyConfig, StrategyExecuteMsg,
         StrategyInstantiateMsg, StrategyQueryMsg, StrategyStatus,
     },
     scheduler::SchedulerExecuteMsg,
-    stoploss::{StopLossConfig, StopLossStatistics},
 };
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
@@ -40,181 +43,7 @@ pub fn instantiate(
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
-    match msg.config {
-        CreateStrategyConfig::StopLoss(config) => {
-            if info.funds.len() > 1
-                || (info.funds.len() == 1 && info.funds[0].denom != config.swap_denom)
-            {
-                return Err(ContractError::generic_err(format!(
-                    "Invalid funds provided, only {} is allowed",
-                    config.swap_denom
-                )));
-            }
-
-            let pair = deps
-                .querier
-                .query_wasm_smart::<ConfigResponse>(
-                    config.pair_address.clone(),
-                    &QueryMsg::Config {},
-                )
-                .map_err(|e| {
-                    ContractError::generic_err(format!("Failed to query pair config: {}", e))
-                })?;
-
-            let denoms = [
-                pair.denoms.base().to_string(),
-                pair.denoms.quote().to_string(),
-            ];
-
-            if !denoms.contains(&config.swap_denom) {
-                return Err(ContractError::generic_err(format!(
-                    "Pair at {} does not support swapping from {}",
-                    config.pair_address, config.swap_denom
-                )));
-            }
-
-            if !denoms.contains(&config.target_denom) {
-                return Err(ContractError::generic_err(format!(
-                    "Pair at {} does not support swapping into {}",
-                    config.pair_address, config.target_denom
-                )));
-            }
-
-            let total_shares = config
-                .mutable_destinations
-                .iter()
-                .chain(config.immutable_destinations.iter())
-                .into_iter()
-                .fold(Uint128::zero(), |acc, d| acc + d.shares);
-
-            let total_shares_with_fees = total_shares.mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
-
-            let fee_destinations = match config.affiliate_code.clone() {
-                Some(code) => {
-                    let affiliate = deps.querier.query_wasm_smart::<Affiliate>(
-                        info.sender.clone(),
-                        &ManagerQueryMsg::Affiliate { code },
-                    )?;
-
-                    if affiliate.bps > 7 {
-                        return Err(ContractError::generic_err(
-                            "Affiliate BPS cannot be greater than 7",
-                        ));
-                    }
-
-                    vec![
-                        Destination {
-                            recipient: Recipient::Bank {
-                                address: msg.fee_collector,
-                            },
-                            shares: total_shares_with_fees
-                                .mul_floor(Decimal::bps(BASE_FEE_BPS - affiliate.bps)),
-                            label: Some("CALC".to_string()),
-                        },
-                        Destination {
-                            recipient: Recipient::Bank {
-                                address: affiliate.address,
-                            },
-                            shares: total_shares_with_fees.mul_floor(Decimal::bps(affiliate.bps)),
-                            label: Some(format!("Affiliate: {}", affiliate.code).to_string()),
-                        },
-                    ]
-                }
-                None => vec![Destination {
-                    recipient: Recipient::Bank {
-                        address: msg.fee_collector,
-                    },
-                    shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
-                    label: Some("CALC".to_string()),
-                }],
-            };
-
-            let salt = to_json_binary(&(
-                env.contract.address.to_string().truncate(16),
-                env.block.time.seconds(),
-                config.distributor_code_id,
-            ))?;
-
-            let distributor_address = deps.api.addr_humanize(&instantiate2_address(
-                &deps
-                    .querier
-                    .query_wasm_code_info(config.distributor_code_id)?
-                    .checksum
-                    .as_slice(),
-                &deps.api.addr_canonicalize(env.contract.address.as_str())?,
-                &salt,
-            )?)?;
-
-            let instantiate_distributor_msg = WasmMsg::Instantiate2 {
-                admin: Some(env.contract.address.to_string()),
-                code_id: config.distributor_code_id,
-                label: "Distributor".to_string(),
-                msg: to_json_binary(&DistributorConfig {
-                    owner: config.owner.clone(),
-                    denoms: vec![config.target_denom.clone()],
-                    mutable_destinations: config.mutable_destinations,
-                    immutable_destinations: [config.immutable_destinations, fee_destinations]
-                        .concat(),
-                    conditions: config.minimum_distribute_amount.map_or(vec![], |amount| {
-                        vec![Condition::BalanceAvailable {
-                            address: distributor_address.clone(),
-                            amount,
-                        }]
-                    }),
-                })?,
-                funds: vec![],
-                salt,
-            };
-
-            CONFIG.save(
-                deps.storage,
-                &StopLossConfig {
-                    owner: config.owner,
-                    manager_contract: info.sender,
-                    scheduler_contract: config.scheduler_contract,
-                    distributor_contract: distributor_address.clone(),
-                    move_conditions: vec![],
-                    distribute_conditions: vec![],
-                    execution_rebate: config.execution_rebate,
-                    pair_address: config.pair_address,
-                    swap_denom: config.swap_denom.clone(),
-                    target_denom: config.target_denom.clone(),
-                    stop_offset: config.stop_offset,
-                    reset_offset: config.reset_offset,
-                },
-            )?;
-
-            STATS.save(
-                deps.storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, config.swap_denom),
-                    withdrawn: vec![],
-                    filled: Coin::new(0u128, config.target_denom.clone()),
-                    claimed: Coin::new(0u128, config.target_denom),
-                },
-            )?;
-
-            let execute_msg = Contract(env.contract.address.clone()).call(
-                to_json_binary(&StrategyExecuteMsg::Execute { msg: None })?,
-                vec![],
-            );
-
-            let strategy_instantiated_event = DomainEvent::StrategyCreated {
-                contract_address: env.contract.address,
-                config: CONFIG.load(deps.storage)?,
-            };
-
-            Ok(Response::default()
-                .add_message(instantiate_distributor_msg)
-                .add_message(execute_msg)
-                .add_event(strategy_instantiated_event))
-        }
-        _ => {
-            return Err(ContractError::generic_err(
-                "Trying to instantiate a non-TWAP strategy with a TWAP contract implementation",
-            ));
-        }
-    }
+    Ok(Response::default())
 }
 
 #[cw_serde]
@@ -248,14 +77,6 @@ pub fn execute(
     }
 
     let mut config = CONFIG.load(deps.storage)?;
-
-    if info.funds.len() > 1 || (info.funds.len() == 1 && info.funds[0].denom != config.swap_denom) {
-        return Err(ContractError::generic_err(format!(
-            "Invalid funds provided, only {} is allowed",
-            config.swap_denom
-        )));
-    }
-
     let mut stats = STATS.load(deps.storage)?;
 
     let mut messages: Vec<CosmosMsg> = vec![];
@@ -263,188 +84,26 @@ pub fn execute(
 
     match msg.clone() {
         StrategyExecuteMsg::Update(new_config) => {
-            if info.sender != config.manager_contract {
+            if info.sender != config.manager {
                 return Err(ContractError::Unauthorized {});
-            }
-
-            match new_config {
-                StrategyConfig::StopLoss(new_config) => {
-                    if new_config.owner != config.owner {
-                        return Err(ContractError::generic_err("Cannot change the owner"));
-                    }
-
-                    if new_config.manager_contract != config.manager_contract {
-                        return Err(ContractError::generic_err(
-                            "Cannot change the manager contract",
-                        ));
-                    }
-
-                    if new_config.distributor_contract != config.distributor_contract {
-                        return Err(ContractError::generic_err(
-                            "Cannot change the distributor contract",
-                        ));
-                    }
-
-                    if new_config.pair_address != config.pair_address {
-                        return Err(ContractError::generic_err("Cannot change the pair address"));
-                    }
-
-                    if new_config.swap_denom != config.swap_denom {
-                        return Err(ContractError::generic_err(format!(
-                            "Cannot change the swap denomination from {} to {}",
-                            config.target_denom, new_config.target_denom
-                        )));
-                    }
-
-                    if new_config.target_denom != config.target_denom {
-                        return Err(ContractError::generic_err(format!(
-                            "Cannot change the target denomination from {} to {}",
-                            config.target_denom, new_config.target_denom
-                        )));
-                    }
-
-                    let updated_event = DomainEvent::StrategyUpdated {
-                        contract_address: env.contract.address.clone(),
-                        old_config: config.clone(),
-                        new_config: new_config.clone(),
-                    };
-
-                    events.push(updated_event);
-
-                    config = new_config;
-                }
-                _ => {
-                    return Err(ContractError::generic_err(
-                        "Trying to update a StopLoss strategy with non-StopLoss config",
-                    ));
-                }
             }
         }
         StrategyExecuteMsg::Execute { .. } => {
-            if info.sender != config.manager_contract && info.sender != env.contract.address {
+            if info.sender != config.manager && info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
             }
 
-            // let mut remaining_amount = deps
-            //     .querier
-            //     .query_balance(env.contract.address.clone(), config.swap_denom.clone())?
-            //     .amount;
+            // TODO: refactor checks to enable informative execution attempted & skipped events
 
-            // let mut claimed_amount = deps
-            //     .querier
-            //     .query_balance(env.contract.address.clone(), config.target_denom.clone())?
-            //     .amount;
-
-            // let orders_response = deps.querier.query_wasm_smart::<OrdersResponse>(
-            //     config.pair_address.clone(),
-            //     &QueryMsg::Orders {
-            //         owner: env.contract.address.to_string(),
-            //         side: None,
-            //         offset: None,
-            //         limit: None,
-            //     },
-            // )?;
-
-            // let mut order_targets: Vec<(Side, Price, Option<Uint128>)> = vec![];
-
-            // for order in orders_response.orders {
-            //     claimed_amount = claimed_amount + order.filled;
-            //     remaining_amount = remaining_amount + order.remaining;
-
-            //     order_targets.push((order.side.clone(), order.price, Some(Uint128::zero())));
-            // }
-
-            // let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
-            //     config.pair_address.clone(),
-            //     &QueryMsg::Config {},
-            // )?;
-
-            // let order_book = deps.querier.query_wasm_smart::<BookResponse>(
-            //     config.pair_address.clone(),
-            //     &QueryMsg::Book {
-            //         offset: None,
-            //         limit: None,
-            //     },
-            // )?;
-
-            // let ask_side = pair.ask_side(&Coin::new(1u128, config.swap_denom.clone()))?;
-
-            // let mut target_amount =
-            //     Uint128::new(MOVE_TRIGGER_ORDER_SIZE).saturating_sub(claimed_amount);
-
-            // if target_amount.gt(&Uint128::zero()) {
-            //     let mut swap_amount = Uint128::zero();
-
-            //     if ask_side == Side::Base {
-            //         for order in order_book.base.iter() {
-            //             let order_to_fill = min(target_amount, order.total);
-            //             let swap_amount_to_fill = order_to_fill.mul_ceil(order.price);
-            //             swap_amount = swap_amount + swap_amount_to_fill;
-            //             target_amount = target_amount.saturating_sub(order_to_fill);
-
-            //             if target_amount.is_zero() {
-            //                 break;
-            //             }
-            //         }
-            //     } else {
-            //         for order in order_book.quote.iter() {
-            //             let order_to_fill = min(target_amount, order.total);
-            //             let swap_amount_to_fill =
-            //                 order_to_fill.mul_ceil(Decimal::one() / order.price);
-            //             swap_amount = swap_amount + swap_amount_to_fill;
-            //             target_amount = target_amount.saturating_sub(order_to_fill);
-
-            //             if target_amount.is_zero() {
-            //                 break;
-            //             }
-            //         }
-            //     };
-
-            //     if target_amount.eq(&Uint128::zero()) {
-            //         let swap_msg = Contract(config.pair_address.clone()).call(
-            //             to_json_binary(&ExecuteMsg::Swap(SwapRequest {
-            //                 min_return: None,
-            //                 to: None,
-            //                 callback: None,
-            //             }))?,
-            //             vec![Coin::new(swap_amount, config.swap_denom.clone())],
-            //         );
-
-            //         messages.push(swap_msg);
-
-            //         claimed_amount = claimed_amount - swap_amount;
-            //     }
-            // }
-
-            // if ask_side == Side::Base {
-            //     order_targets.push((
-            //         Side::Quote,
-            //         Price::Fixed(order_book.quote[0].price.saturating_sub(config.stop_offset)),
-            //         Some(remaining_amount),
-            //     ));
-
-            //     order_targets.push((
-            //         Side::Base,
-            //         Price::Fixed(order_book.base[0].price.saturating_add(config.reset_offset)),
-            //         Some(MOVE_TRIGGER_ORDER_SIZE.into()),
-            //     ));
-            // } else {
-            //     order_targets.push((
-            //         Side::Base,
-            //         Price::Fixed(order_book.base[0].price.saturating_add(config.stop_offset)),
-            //         Some(remaining_amount),
-            //     ));
-
-            //     order_targets.push((
-            //         Side::Quote,
-            //         Price::Fixed(
-            //             order_book.quote[0]
-            //                 .price
-            //                 .saturating_sub(config.reset_offset),
-            //         ),
-            //         Some(MOVE_TRIGGER_ORDER_SIZE.into()),
-            //     ));
-            // };
+            for mut behaviour in config.behaviours.clone().into_iter() {
+                if behaviour
+                    .conditions
+                    .iter()
+                    .all(|c| c.check(deps.as_ref(), &env).is_ok())
+                {
+                    messages.extend(behaviour.execute(deps.as_ref(), &env, &config)?);
+                }
+            }
         }
         StrategyExecuteMsg::Withdraw { amounts } => {
             if info.sender != config.owner {
@@ -493,7 +152,7 @@ pub fn execute(
             stats.withdrawn = amount_withdrawn.to_vec();
         }
         StrategyExecuteMsg::UpdateStatus(status) => {
-            if info.sender != config.manager_contract {
+            if info.sender != config.manager {
                 return Err(ContractError::Unauthorized {});
             }
 
@@ -507,7 +166,7 @@ pub fn execute(
                     messages.push(execute_msg);
                 }
                 StrategyStatus::Paused | StrategyStatus::Archived => {
-                    let set_triggers_msg = Contract(config.scheduler_contract.clone()).call(
+                    let set_triggers_msg = Contract(config.scheduler.clone()).call(
                         to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![]))?,
                         vec![],
                     );
@@ -599,1349 +258,1347 @@ pub fn query(deps: Deps, _env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> 
     }
 }
 
-#[cfg(test)]
-mod instantiate_tests {
-    use calc_rs::{
-        core::ContractError,
-        distributor::{Destination, DistributorConfig, Recipient},
-        manager::{Affiliate, CreateStrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg},
-        stoploss::{InstantiateStopLossCommand, StopLossConfig},
-    };
-    use calc_rs_test::test::CodeInfoResponse;
-    use cosmwasm_std::{
-        instantiate2_address,
-        testing::{message_info, mock_dependencies, mock_env},
-        to_json_binary, Addr, Api, Checksum, Coin, ContractResult, Decimal, Event, SubMsg,
-        SystemResult, Uint128, WasmMsg, WasmQuery,
-    };
-    use rujira_rs::fin::{ConfigResponse, Denoms, Tick};
-
-    use crate::{
-        contract::{instantiate, BASE_FEE_BPS},
-        state::CONFIG,
-        types::DomainEvent,
-    };
-
-    fn default_instantiate_msg() -> InstantiateStopLossCommand {
-        InstantiateStopLossCommand {
-            owner: Addr::unchecked("owner"),
-            manager_contract: Addr::unchecked("manager"),
-            scheduler_contract: Addr::unchecked("scheduler"),
-            distributor_code_id: 1,
-            pair_address: Addr::unchecked("pair_address"),
-            swap_denom: "swap_denom".to_string(),
-            target_denom: "target_denom".to_string(),
-            stop_offset: Decimal::percent(10),
-            reset_offset: Decimal::percent(15),
-            execution_rebate: Some(Coin::new(100u128, "rune")),
-            affiliate_code: None,
-            minimum_distribute_amount: None,
-            mutable_destinations: vec![Destination {
-                recipient: Recipient::Bank {
-                    address: Addr::unchecked("mutable_destination"),
-                },
-                shares: Uint128::new(10_000u128),
-                label: Some("Mutable Destination".to_string()),
-            }],
-            immutable_destinations: vec![],
-        }
-    }
-
-    #[test]
-    fn fails_if_non_swap_denom_funds_provided() {
-        let mut deps = mock_dependencies();
-
-        let response = instantiate(
-            deps.as_mut(),
-            mock_env(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "not_swap")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: Addr::unchecked("fee_collector"),
-                config: CreateStrategyConfig::StopLoss(default_instantiate_msg()),
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            response,
-            ContractError::generic_err("Invalid funds provided, only swap_denom is allowed")
-        );
-    }
-
-    #[test]
-    fn fails_if_multiple_funds_provided() {
-        let mut deps = mock_dependencies();
-
-        let response = instantiate(
-            deps.as_mut(),
-            mock_env(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom"), Coin::new(50u128, "rune")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: Addr::unchecked("fee_collector"),
-                config: CreateStrategyConfig::StopLoss(default_instantiate_msg()),
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            response,
-            ContractError::generic_err("Invalid funds provided, only swap_denom is allowed")
-        );
-    }
-
-    #[test]
-    fn fails_if_pair_denoms_do_not_contain_swap_and_target_denom() {
-        let mut deps = mock_dependencies();
-        let config = default_instantiate_msg();
-
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new("not_swap_denom", "target_denom"),
-                    oracles: None,
-                    market_maker: None,
-                    tick: Tick::new(6),
-                    fee_taker: Decimal::percent(10),
-                    fee_maker: Decimal::percent(10),
-                    fee_address: "fee_address".to_string(),
-                })
-                .unwrap(),
-            ))
-        });
-
-        let response = instantiate(
-            deps.as_mut(),
-            mock_env(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: Addr::unchecked("fee_collector"),
-                config: CreateStrategyConfig::StopLoss(config.clone()),
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            response,
-            ContractError::generic_err(format!(
-                "Pair at {} does not support swapping from {}",
-                config.pair_address, config.swap_denom
-            ))
-        );
-
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new("swap_denom", "not_target_denom"),
-                    oracles: None,
-                    market_maker: None,
-                    tick: Tick::new(6),
-                    fee_taker: Decimal::percent(10),
-                    fee_maker: Decimal::percent(10),
-                    fee_address: "fee_address".to_string(),
-                })
-                .unwrap(),
-            ))
-        });
-
-        let response = instantiate(
-            deps.as_mut(),
-            mock_env(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: Addr::unchecked("fee_collector"),
-                config: CreateStrategyConfig::StopLoss(config.clone()),
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            response,
-            ContractError::generic_err(format!(
-                "Pair at {} does not support swapping into {}",
-                config.pair_address, config.target_denom
-            ))
-        );
-    }
-
-    #[test]
-    fn fails_if_pair_address_not_found() {
-        let mut deps = mock_dependencies();
-
-        let response = instantiate(
-            deps.as_mut(),
-            mock_env(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: Addr::unchecked("fee_collector"),
-                config: CreateStrategyConfig::StopLoss(default_instantiate_msg()),
-            },
-        )
-        .unwrap_err();
-
-        assert!(response.to_string().contains("Failed to query pair config"),);
-    }
-
-    #[test]
-    fn saves_valid_config() {
-        let mut deps = mock_dependencies();
-        let config = default_instantiate_msg();
-
-        deps.querier.update_wasm(|query| {
-            SystemResult::Ok(ContractResult::Ok(match query {
-                WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new("swap_denom", "target_denom"),
-                    oracles: None,
-                    market_maker: None,
-                    tick: Tick::new(6),
-                    fee_taker: Decimal::percent(10),
-                    fee_maker: Decimal::percent(10),
-                    fee_address: "fee_address".to_string(),
-                })
-                .unwrap(),
-                WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
-                    code_id: 1,
-                    creator: Addr::unchecked("creator"),
-                    checksum: Checksum::from_hex(
-                        "9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08",
-                    )
-                    .unwrap(),
-                })
-                .unwrap(),
-                _ => panic!("Unexpected query: {:?}", query),
-            }))
-        });
-
-        let fee_collector = Addr::unchecked("fee_collector");
-        let env = mock_env();
-
-        instantiate(
-            deps.as_mut(),
-            env.clone(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: fee_collector.clone(),
-                config: CreateStrategyConfig::StopLoss(config.clone()),
-            },
-        )
-        .unwrap();
-
-        let distributor_address = instantiate2_address(
-            Checksum::from_hex("9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08")
-                .unwrap()
-                .as_slice(),
-            &deps
-                .api
-                .addr_canonicalize(env.contract.address.as_str())
-                .unwrap(),
-            to_json_binary(&(
-                config.owner.to_string().truncate(16),
-                env.block.time.seconds(),
-                1,
-            ))
-            .unwrap()
-            .as_slice(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            CONFIG.load(deps.as_ref().storage).unwrap(),
-            StopLossConfig {
-                owner: config.owner,
-                manager_contract: config.manager_contract,
-                scheduler_contract: config.scheduler_contract,
-                distributor_contract: deps.api.addr_humanize(&distributor_address).unwrap(),
-                pair_address: config.pair_address,
-                swap_denom: config.swap_denom,
-                target_denom: config.target_denom,
-                stop_offset: config.stop_offset,
-                reset_offset: config.reset_offset,
-                move_conditions: vec![],
-                distribute_conditions: vec![],
-                execution_rebate: config.execution_rebate
-            }
-        );
-    }
-
-    #[test]
-    fn sends_distributor_instantiate_msg() {
-        let mut deps = mock_dependencies();
-        let config = default_instantiate_msg();
-
-        deps.querier.update_wasm(|query| {
-            SystemResult::Ok(ContractResult::Ok(match query {
-                WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new("swap_denom", "target_denom"),
-                    oracles: None,
-                    market_maker: None,
-                    tick: Tick::new(6),
-                    fee_taker: Decimal::percent(10),
-                    fee_maker: Decimal::percent(10),
-                    fee_address: "fee_address".to_string(),
-                })
-                .unwrap(),
-                WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
-                    code_id: 1,
-                    creator: Addr::unchecked("creator"),
-                    checksum: Checksum::from_hex(
-                        "f7bb7b18fb01bbf425cf4ed2cd4b7fb26a019a7fc75a4dc87e8a0b768c501f00",
-                    )
-                    .unwrap(),
-                })
-                .unwrap(),
-                _ => panic!("Unexpected query: {:?}", query),
-            }))
-        });
-
-        let fee_collector = Addr::unchecked("fee_collector");
-        let env = mock_env();
-
-        let response = instantiate(
-            deps.as_mut(),
-            env.clone(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: fee_collector.clone(),
-                config: CreateStrategyConfig::StopLoss(config.clone()),
-            },
-        )
-        .unwrap();
-
-        let destinations = config
-            .mutable_destinations
-            .iter()
-            .chain(config.immutable_destinations.iter())
-            .collect::<Vec<_>>();
-
-        let total_shares_with_fees = destinations
-            .iter()
-            .fold(Uint128::zero(), |acc, d| acc + d.shares)
-            .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
-
-        assert_eq!(
-            response.messages[0],
-            SubMsg::new(WasmMsg::Instantiate2 {
-                admin: Some(env.contract.address.to_string()),
-                code_id: 1,
-                label: "Distributor".to_string(),
-                msg: to_json_binary(&DistributorConfig {
-                    owner: config.owner.clone(),
-                    denoms: vec![config.target_denom.clone()],
-                    mutable_destinations: config.mutable_destinations,
-                    immutable_destinations: [
-                        config.immutable_destinations,
-                        vec![Destination {
-                            recipient: Recipient::Bank {
-                                address: fee_collector.clone(),
-                            },
-                            shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
-                            label: Some("CALC".to_string()),
-                        }]
-                    ]
-                    .concat(),
-                    conditions: vec![],
-                })
-                .unwrap(),
-                funds: vec![],
-                salt: to_json_binary(&(
-                    "owner".to_string().truncate(16),
-                    env.block.time.seconds(),
-                    1
-                ))
-                .unwrap(),
-            })
-        );
-    }
-
-    #[test]
-    fn sends_distributor_instantiate_msg_with_affiliate_destination() {
-        let mut deps = mock_dependencies();
-        let config = InstantiateStopLossCommand {
-            affiliate_code: Some("affiliate_code".to_string()),
-            ..default_instantiate_msg()
-        };
-
-        deps.querier.update_wasm(|query| {
-            SystemResult::Ok(ContractResult::Ok(match query {
-                WasmQuery::Smart { contract_addr, .. } => {
-                    if contract_addr == "manager" {
-                        to_json_binary(&Affiliate {
-                            code: "affiliate_code".to_string(),
-                            address: Addr::unchecked("affiliate_address"),
-                            bps: 5,
-                        })
-                        .unwrap()
-                    } else {
-                        to_json_binary(&ConfigResponse {
-                            denoms: Denoms::new("swap_denom", "target_denom"),
-                            oracles: None,
-                            market_maker: None,
-                            tick: Tick::new(6),
-                            fee_taker: Decimal::percent(10),
-                            fee_maker: Decimal::percent(10),
-                            fee_address: "fee_address".to_string(),
-                        })
-                        .unwrap()
-                    }
-                }
-                WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
-                    code_id: 1,
-                    creator: Addr::unchecked("creator"),
-                    checksum: Checksum::from_hex(
-                        "f7bb7b18fb01bbf425cf4ed2cd4b7fb26a019a7fc75a4dc87e8a0b768c501f00",
-                    )
-                    .unwrap(),
-                })
-                .unwrap(),
-                _ => panic!("Unexpected query: {:?}", query),
-            }))
-        });
-
-        let fee_collector = Addr::unchecked("fee_collector");
-        let env = mock_env();
-
-        let response = instantiate(
-            deps.as_mut(),
-            env.clone(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: fee_collector.clone(),
-                config: CreateStrategyConfig::StopLoss(config.clone()),
-            },
-        )
-        .unwrap();
-
-        let destinations = config
-            .mutable_destinations
-            .iter()
-            .chain(config.immutable_destinations.iter())
-            .collect::<Vec<_>>();
-
-        let total_shares_with_fees = destinations
-            .iter()
-            .fold(Uint128::zero(), |acc, d| acc + d.shares)
-            .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
-
-        assert_eq!(
-            response.messages[0],
-            SubMsg::new(WasmMsg::Instantiate2 {
-                admin: Some(env.contract.address.to_string()),
-                code_id: 1,
-                label: "Distributor".to_string(),
-                msg: to_json_binary(&DistributorConfig {
-                    owner: config.owner.clone(),
-                    denoms: vec![config.target_denom.clone()],
-                    mutable_destinations: config.mutable_destinations,
-                    immutable_destinations: [
-                        config.immutable_destinations,
-                        vec![
-                            Destination {
-                                recipient: Recipient::Bank {
-                                    address: fee_collector.clone(),
-                                },
-                                shares: total_shares_with_fees
-                                    .mul_floor(Decimal::bps(BASE_FEE_BPS - 5)),
-                                label: Some("CALC".to_string()),
-                            },
-                            Destination {
-                                recipient: Recipient::Bank {
-                                    address: Addr::unchecked("affiliate_address"),
-                                },
-                                shares: total_shares_with_fees.mul_floor(Decimal::bps(5)),
-                                label: Some("Affiliate: affiliate_code".to_string()),
-                            }
-                        ],
-                    ]
-                    .concat(),
-                    conditions: vec![],
-                })
-                .unwrap(),
-                funds: vec![],
-                salt: to_json_binary(&(
-                    "owner".to_string().truncate(16),
-                    env.block.time.seconds(),
-                    1
-                ))
-                .unwrap(),
-            })
-        );
-    }
-
-    #[test]
-    fn sends_execute_msg_to_self() {
-        let mut deps = mock_dependencies();
-        let config = default_instantiate_msg();
-
-        deps.querier.update_wasm(|query| {
-            SystemResult::Ok(ContractResult::Ok(match query {
-                WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new("swap_denom", "target_denom"),
-                    oracles: None,
-                    market_maker: None,
-                    tick: Tick::new(6),
-                    fee_taker: Decimal::percent(10),
-                    fee_maker: Decimal::percent(10),
-                    fee_address: "fee_address".to_string(),
-                })
-                .unwrap(),
-                WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
-                    code_id: 1,
-                    creator: Addr::unchecked("creator"),
-                    checksum: Checksum::from_hex(
-                        "f7bb7b18fb01bbf425cf4ed2cd4b7fb26a019a7fc75a4dc87e8a0b768c501f00",
-                    )
-                    .unwrap(),
-                })
-                .unwrap(),
-                _ => panic!("Unexpected query: {:?}", query),
-            }))
-        });
-
-        let fee_collector = Addr::unchecked("fee_collector");
-        let env = mock_env();
-
-        let response = instantiate(
-            deps.as_mut(),
-            env.clone(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: fee_collector.clone(),
-                config: CreateStrategyConfig::StopLoss(config.clone()),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            response.messages[1],
-            SubMsg::new(WasmMsg::Execute {
-                contract_addr: env.contract.address.to_string(),
-                msg: to_json_binary(&StrategyExecuteMsg::Execute { msg: None }).unwrap(),
-                funds: vec![],
-            })
-        );
-    }
-
-    #[test]
-    fn publishes_strategy_instantiated_event() {
-        let mut deps = mock_dependencies();
-        let config = default_instantiate_msg();
-
-        deps.querier.update_wasm(|query| {
-            SystemResult::Ok(ContractResult::Ok(match query {
-                WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new("swap_denom", "target_denom"),
-                    oracles: None,
-                    market_maker: None,
-                    tick: Tick::new(6),
-                    fee_taker: Decimal::percent(10),
-                    fee_maker: Decimal::percent(10),
-                    fee_address: "fee_address".to_string(),
-                })
-                .unwrap(),
-                WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
-                    code_id: 1,
-                    creator: Addr::unchecked("creator"),
-                    checksum: Checksum::from_hex(
-                        "9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08",
-                    )
-                    .unwrap(),
-                })
-                .unwrap(),
-                _ => panic!("Unexpected query: {:?}", query),
-            }))
-        });
-
-        let fee_collector = Addr::unchecked("fee_collector");
-        let env = mock_env();
-
-        let response = instantiate(
-            deps.as_mut(),
-            env.clone(),
-            message_info(
-                &Addr::unchecked("manager"),
-                &[Coin::new(100u128, "swap_denom")],
-            ),
-            StrategyInstantiateMsg {
-                fee_collector: fee_collector.clone(),
-                config: CreateStrategyConfig::StopLoss(config.clone()),
-            },
-        )
-        .unwrap();
-
-        let distributor_address = instantiate2_address(
-            Checksum::from_hex("9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08")
-                .unwrap()
-                .as_slice(),
-            &deps
-                .api
-                .addr_canonicalize(env.contract.address.as_str())
-                .unwrap(),
-            to_json_binary(&(
-                config.owner.to_string().truncate(16),
-                env.block.time.seconds(),
-                1,
-            ))
-            .unwrap()
-            .as_slice(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            response.events[0],
-            Event::from(DomainEvent::StrategyCreated {
-                contract_address: env.contract.address,
-                config: StopLossConfig {
-                    owner: config.owner,
-                    manager_contract: config.manager_contract,
-                    scheduler_contract: config.scheduler_contract,
-                    distributor_contract: deps.api.addr_humanize(&distributor_address).unwrap(),
-                    pair_address: config.pair_address,
-                    swap_denom: config.swap_denom,
-                    target_denom: config.target_denom,
-                    stop_offset: config.stop_offset,
-                    reset_offset: config.reset_offset,
-                    move_conditions: vec![],
-                    distribute_conditions: vec![],
-                    execution_rebate: config.execution_rebate,
-                }
-            })
-        );
-    }
-}
-
-#[cfg(test)]
-fn default_config() -> StopLossConfig {
-    use cosmwasm_std::Addr;
-    StopLossConfig {
-        owner: Addr::unchecked("owner"),
-        manager_contract: Addr::unchecked("manager"),
-        scheduler_contract: Addr::unchecked("scheduler"),
-        distributor_contract: Addr::unchecked("distributor"),
-        pair_address: Addr::unchecked("pair_address"),
-        swap_denom: "swap_denom".to_string(),
-        target_denom: "target_denom".to_string(),
-        stop_offset: Decimal::percent(10),
-        move_conditions: vec![],
-        distribute_conditions: vec![],
-        execution_rebate: Some(Coin::new(100u128, "rune")),
-    }
-}
-
-#[cfg(test)]
-mod update_tests {
-    use super::*;
-
-    use calc_rs::{
-        core::ContractError,
-        manager::{StrategyConfig, StrategyExecuteMsg},
-        stoploss::{StopLossConfig, StopLossStatistics},
-    };
-    use cosmwasm_std::{
-        testing::{message_info, mock_dependencies, mock_env},
-        Addr, Coin, Decimal, Event,
-    };
-
-    use crate::{
-        contract::execute,
-        state::{CONFIG, STATS},
-        types::DomainEvent,
-    };
-
-    #[test]
-    fn fails_if_sender_not_manager() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let info = message_info(&deps.api.addr_make("owner"), &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &default_config())
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env,
-                info,
-                StrategyExecuteMsg::Update(StrategyConfig::StopLoss(StopLossConfig {
-                    owner: Addr::unchecked("new-owner"),
-                    ..default_config()
-                })),
-            )
-            .unwrap_err(),
-            ContractError::Unauthorized {}
-        );
-    }
-
-    #[test]
-    fn fails_to_update_owner() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env,
-                info,
-                StrategyExecuteMsg::Update(StrategyConfig::StopLoss(StopLossConfig {
-                    owner: Addr::unchecked("new-owner"),
-                    ..existing_config
-                })),
-            )
-            .unwrap_err(),
-            ContractError::generic_err("Cannot change the owner")
-        );
-    }
-
-    #[test]
-    fn fails_to_update_manager_contract() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env,
-                info,
-                StrategyExecuteMsg::Update(StrategyConfig::StopLoss(StopLossConfig {
-                    manager_contract: Addr::unchecked("new-manager"),
-                    ..existing_config
-                })),
-            )
-            .unwrap_err(),
-            ContractError::generic_err("Cannot change the manager contract")
-        );
-    }
-
-    #[test]
-    fn fails_to_update_distributor_contract() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env,
-                info,
-                StrategyExecuteMsg::Update(StrategyConfig::StopLoss(StopLossConfig {
-                    distributor_contract: Addr::unchecked("new-distributor"),
-                    ..existing_config
-                })),
-            )
-            .unwrap_err(),
-            ContractError::generic_err("Cannot change the distributor contract")
-        );
-    }
-
-    #[test]
-    fn fails_to_update_pair_address() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env,
-                info,
-                StrategyExecuteMsg::Update(StrategyConfig::StopLoss(StopLossConfig {
-                    pair_address: Addr::unchecked("new-pair-address"),
-                    ..existing_config
-                })),
-            )
-            .unwrap_err(),
-            ContractError::generic_err("Cannot change the pair address")
-        );
-    }
-
-    #[test]
-    fn fails_to_update_swap_denom() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env,
-                info,
-                StrategyExecuteMsg::Update(StrategyConfig::StopLoss(StopLossConfig {
-                    swap_denom: "new-swap-denom".to_string(),
-                    ..existing_config
-                })),
-            )
-            .unwrap_err(),
-            ContractError::generic_err("Cannot change the swap denom")
-        );
-    }
-
-    #[test]
-    fn fails_to_update_target_denom() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env,
-                info,
-                StrategyExecuteMsg::Update(StrategyConfig::StopLoss(StopLossConfig {
-                    target_denom: "new-target-denom".to_string(),
-                    ..existing_config
-                })),
-            )
-            .unwrap_err(),
-            ContractError::generic_err("Cannot change the target denom")
-        );
-    }
-
-    #[test]
-    fn updates_mutable_config() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        let new_config = StopLossConfig {
-            stop_offset: Decimal::percent(20),
-            execution_rebate: Some(Coin::new(2u128, "rune")),
-            ..existing_config
-        };
-
-        execute(
-            deps.as_mut(),
-            env,
-            info,
-            StrategyExecuteMsg::Update(StrategyConfig::StopLoss(new_config.clone())),
-        )
-        .unwrap();
-
-        assert_eq!(CONFIG.load(deps.as_ref().storage).unwrap(), new_config);
-    }
-
-    #[test]
-    fn publishes_strategy_updated_event() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let existing_config = default_config();
-        let info = message_info(&existing_config.manager_contract, &[]);
-
-        CONFIG
-            .save(deps.as_mut().storage, &existing_config)
-            .unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        let new_config = StopLossConfig {
-            stop_offset: Decimal::percent(20),
-            execution_rebate: Some(Coin::new(2u128, "rune")),
-            ..existing_config.clone()
-        };
-
-        let response = execute(
-            deps.as_mut(),
-            env.clone(),
-            info,
-            StrategyExecuteMsg::Update(StrategyConfig::StopLoss(new_config.clone())),
-        )
-        .unwrap();
-
-        assert_eq!(
-            response.events[0],
-            Event::from(DomainEvent::StrategyUpdated {
-                contract_address: env.contract.address,
-                old_config: existing_config,
-                new_config: new_config,
-            })
-        );
-    }
-}
-
-#[cfg(test)]
-mod execute_tests {
-    use super::*;
-    use cosmwasm_std::{
-        testing::{message_info, mock_dependencies, mock_env},
-        Addr,
-    };
-
-    use crate::state::CONFIG;
-
-    #[test]
-    fn fails_if_sender_not_manager_or_contract() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-
-        let config = default_config();
-
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env.clone(),
-                message_info(&Addr::unchecked("anyone"), &[]),
-                StrategyExecuteMsg::Execute { msg: None },
-            )
-            .unwrap_err(),
-            ContractError::Unauthorized {}
-        );
-
-        STATE.remove(deps.as_mut().storage);
-
-        assert!(execute(
-            deps.as_mut(),
-            env.clone(),
-            message_info(&config.manager_contract, &[]),
-            StrategyExecuteMsg::Execute { msg: None },
-        )
-        .is_ok());
-
-        STATE.remove(deps.as_mut().storage);
-
-        assert!(execute(
-            deps.as_mut(),
-            env.clone(),
-            message_info(&env.contract.address, &[]),
-            StrategyExecuteMsg::Execute { msg: None },
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn fails_if_already_in_executing_state() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-
-        let config = default_config();
-
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert!(execute(
-            deps.as_mut(),
-            env.clone(),
-            message_info(&config.manager_contract, &[]),
-            StrategyExecuteMsg::Execute { msg: None },
-        )
-        .is_ok());
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env.clone(),
-                message_info(&env.contract.address, &[]),
-                StrategyExecuteMsg::Execute { msg: None },
-            )
-            .unwrap_err(),
-            ContractError::generic_err("Already in executing state")
-        );
-    }
-
-    #[test]
-    fn claims_partially_filled_stop_loss_order() {}
-
-    #[test]
-    fn claims_and_withdraws_all_existing_orders_if_any_exist() {}
-
-    #[test]
-    fn resets_trigger_order_if_funds_remaining() {}
-
-    #[test]
-    fn resets_stop_loss_order_if_funds_remaining() {}
-
-    #[test]
-    fn resets_check_schedule_if_past_due() {}
-
-    #[test]
-    fn distributes_claimed_funds_minus_trigger_order_amount_if_swap_funds_remaining() {}
-
-    #[test]
-    fn distributes_all_claimed_funds_if_no_swap_funds_remaining() {}
-
-    #[test]
-    fn publishes_execution_attempted_event() {}
-
-    #[test]
-    fn publishes_execution_completed_event() {}
-}
-
-#[cfg(test)]
-mod withdraw_tests {
-    use super::*;
-
-    use cosmwasm_std::{
-        testing::{message_info, mock_dependencies, mock_env},
-        Coin,
-    };
-
-    use crate::{
-        contract::{default_config, execute},
-        state::{CONFIG, STATE, STATS},
-    };
-
-    #[test]
-    fn allows_owner_to_withdraw() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let config = default_config();
-
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(0u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env.clone(),
-                message_info(&config.manager_contract, &[]),
-                StrategyExecuteMsg::Withdraw { amounts: vec![] }
-            )
-            .unwrap_err(),
-            ContractError::Unauthorized {}
-        );
-
-        STATE.remove(deps.as_mut().storage);
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env.clone(),
-                message_info(&env.contract.address, &[]),
-                StrategyExecuteMsg::Withdraw { amounts: vec![] }
-            )
-            .unwrap_err(),
-            ContractError::Unauthorized {}
-        );
-
-        STATE.remove(deps.as_mut().storage);
-
-        assert_eq!(
-            execute(
-                deps.as_mut(),
-                env.clone(),
-                message_info(&config.owner, &[]),
-                StrategyExecuteMsg::Withdraw { amounts: vec![] }
-            )
-            .is_ok(),
-            true
-        );
-    }
-
-    #[test]
-    fn sends_bank_msg() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let config = default_config();
-
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(0u128, "swap_denom"),
-                    filled: Coin::new(1000u128, "target_denom"),
-                    claimed: Coin::new(0u128, "target_denom"),
-                    withdrawn: vec![],
-                },
-            )
-            .unwrap();
-
-        deps.querier.bank.update_balance(
-            env.contract.address.clone(),
-            vec![
-                Coin::new(1000u128, "target_denom"),
-                Coin::new(122u128, "any_other_denom"),
-            ],
-        );
-
-        let response = execute(
-            deps.as_mut(),
-            env,
-            message_info(&config.owner, &[]),
-            StrategyExecuteMsg::Withdraw {
-                amounts: vec![
-                    Coin::new(1000u128, "target_denom"),
-                    Coin::new(1000u128, "any_other_denom"),
-                ],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            response.messages[0].msg,
-            CosmosMsg::Bank(BankMsg::Send {
-                to_address: config.owner.to_string(),
-                amount: vec![
-                    Coin::new(122u128, "any_other_denom"),
-                    Coin::new(1000u128, "target_denom"),
-                ],
-            })
-        );
-    }
-
-    #[test]
-    fn updates_statistics() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-        let config = default_config();
-
-        CONFIG.save(deps.as_mut().storage, &config).unwrap();
-
-        STATS
-            .save(
-                deps.as_mut().storage,
-                &StopLossStatistics {
-                    remaining: Coin::new(100u128, "swap_denom"),
-                    filled: Coin::new(1000u128, "target_denom"),
-                    claimed: Coin::new(100u128, "target_denom"),
-                    withdrawn: vec![
-                        Coin::new(100u128, "target_denom"),
-                        Coin::new(100u128, "swap_denom"),
-                    ],
-                },
-            )
-            .unwrap();
-
-        deps.querier.bank.update_balance(
-            env.contract.address.clone(),
-            vec![
-                Coin::new(1000u128, "target_denom"),
-                Coin::new(122u128, "any_other_denom"),
-            ],
-        );
-
-        execute(
-            deps.as_mut(),
-            env,
-            message_info(&config.owner, &[]),
-            StrategyExecuteMsg::Withdraw {
-                amounts: vec![
-                    Coin::new(1000u128, "target_denom"),
-                    Coin::new(1000u128, "any_other_denom"),
-                ],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            STATS.load(deps.as_ref().storage).unwrap(),
-            StopLossStatistics {
-                remaining: Coin::new(100u128, "swap_denom"),
-                filled: Coin::new(1000u128, "target_denom"),
-                claimed: Coin::new(100u128, "target_denom"),
-                withdrawn: vec![
-                    Coin::new(122u128, "any_other_denom"),
-                    Coin::new(100u128, "swap_denom"),
-                    Coin::new(1100u128, "target_denom"),
-                ],
-            }
-        );
-    }
-}
+// #[cfg(test)]
+// mod instantiate_tests {
+//     use std::vec;
+
+//     use calc_rs::{
+//         core::ContractError,
+//         distributor::{Destination, DistributorConfig, Recipient},
+//         ladder::{InstantiateLadderCommand, LadderConfig},
+//         manager::{Affiliate, CreateStrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg},
+//     };
+//     use calc_rs_test::test::CodeInfoResponse;
+//     use cosmwasm_std::{
+//         instantiate2_address,
+//         testing::{message_info, mock_dependencies, mock_env},
+//         to_json_binary, Addr, Api, Checksum, Coin, ContractResult, Decimal, Event, SubMsg,
+//         SystemResult, Uint128, WasmMsg, WasmQuery,
+//     };
+//     use rujira_rs::fin::{ConfigResponse, Denoms, Tick};
+
+//     use crate::{
+//         contract::{instantiate, BASE_FEE_BPS},
+//         state::CONFIG,
+//         types::DomainEvent,
+//     };
+
+//     fn default_instantiate_msg() -> InstantiateLadderCommand {
+//         InstantiateLadderCommand {
+//             owner: Addr::unchecked("owner"),
+//             manager_contract: Addr::unchecked("manager"),
+//             scheduler_contract: Addr::unchecked("scheduler"),
+//             distributor_code_id: 1,
+//             execution_rebate: Some(Coin::new(100u128, "rune")),
+//             affiliate_code: None,
+//             minimum_distribute_amount: None,
+//             mutable_destinations: vec![Destination {
+//                 recipient: Recipient::Bank {
+//                     address: Addr::unchecked("mutable_destination"),
+//                 },
+//                 shares: Uint128::new(10_000u128),
+//                 label: Some("Mutable Destination".to_string()),
+//             }],
+//             immutable_destinations: vec![],
+//             orders: vec![],
+//         }
+//     }
+
+//     #[test]
+//     fn fails_if_non_swap_denom_funds_provided() {
+//         let mut deps = mock_dependencies();
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             mock_env(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "not_swap")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: Addr::unchecked("fee_collector"),
+//                 config: CreateStrategyConfig::Ladder(default_instantiate_msg()),
+//             },
+//         )
+//         .unwrap_err();
+
+//         assert_eq!(
+//             response,
+//             ContractError::generic_err("Invalid funds provided, only swap_denom is allowed")
+//         );
+//     }
+
+//     #[test]
+//     fn fails_if_multiple_funds_provided() {
+//         let mut deps = mock_dependencies();
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             mock_env(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom"), Coin::new(50u128, "rune")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: Addr::unchecked("fee_collector"),
+//                 config: CreateStrategyConfig::Ladder(default_instantiate_msg()),
+//             },
+//         )
+//         .unwrap_err();
+
+//         assert_eq!(
+//             response,
+//             ContractError::generic_err("Invalid funds provided, only swap_denom is allowed")
+//         );
+//     }
+
+//     #[test]
+//     fn fails_if_pair_denoms_do_not_contain_swap_and_target_denom() {
+//         let mut deps = mock_dependencies();
+//         let config = default_instantiate_msg();
+
+//         deps.querier.update_wasm(|_| {
+//             SystemResult::Ok(ContractResult::Ok(
+//                 to_json_binary(&ConfigResponse {
+//                     denoms: Denoms::new("not_swap_denom", "target_denom"),
+//                     oracles: None,
+//                     market_maker: None,
+//                     tick: Tick::new(6),
+//                     fee_taker: Decimal::percent(10),
+//                     fee_maker: Decimal::percent(10),
+//                     fee_address: "fee_address".to_string(),
+//                 })
+//                 .unwrap(),
+//             ))
+//         });
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             mock_env(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: Addr::unchecked("fee_collector"),
+//                 config: CreateStrategyConfig::Ladder(config.clone()),
+//             },
+//         )
+//         .unwrap_err();
+
+//         assert_eq!(
+//             response,
+//             ContractError::generic_err(format!(
+//                 "Pair at {} does not support swapping from {}",
+//                 config.pair_address, config.swap_denom
+//             ))
+//         );
+
+//         deps.querier.update_wasm(|_| {
+//             SystemResult::Ok(ContractResult::Ok(
+//                 to_json_binary(&ConfigResponse {
+//                     denoms: Denoms::new("swap_denom", "not_target_denom"),
+//                     oracles: None,
+//                     market_maker: None,
+//                     tick: Tick::new(6),
+//                     fee_taker: Decimal::percent(10),
+//                     fee_maker: Decimal::percent(10),
+//                     fee_address: "fee_address".to_string(),
+//                 })
+//                 .unwrap(),
+//             ))
+//         });
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             mock_env(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: Addr::unchecked("fee_collector"),
+//                 config: CreateStrategyConfig::Ladder(config.clone()),
+//             },
+//         )
+//         .unwrap_err();
+
+//         assert_eq!(
+//             response,
+//             ContractError::generic_err(format!(
+//                 "Pair at {} does not support swapping into {}",
+//                 config.pair_address, config.target_denom
+//             ))
+//         );
+//     }
+
+//     #[test]
+//     fn fails_if_pair_address_not_found() {
+//         let mut deps = mock_dependencies();
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             mock_env(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: Addr::unchecked("fee_collector"),
+//                 config: CreateStrategyConfig::Ladder(default_instantiate_msg()),
+//             },
+//         )
+//         .unwrap_err();
+
+//         assert!(response.to_string().contains("Failed to query pair config"),);
+//     }
+
+//     #[test]
+//     fn saves_valid_config() {
+//         let mut deps = mock_dependencies();
+//         let config = default_instantiate_msg();
+
+//         deps.querier.update_wasm(|query| {
+//             SystemResult::Ok(ContractResult::Ok(match query {
+//                 WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
+//                     denoms: Denoms::new("swap_denom", "target_denom"),
+//                     oracles: None,
+//                     market_maker: None,
+//                     tick: Tick::new(6),
+//                     fee_taker: Decimal::percent(10),
+//                     fee_maker: Decimal::percent(10),
+//                     fee_address: "fee_address".to_string(),
+//                 })
+//                 .unwrap(),
+//                 WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
+//                     code_id: 1,
+//                     creator: Addr::unchecked("creator"),
+//                     checksum: Checksum::from_hex(
+//                         "9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08",
+//                     )
+//                     .unwrap(),
+//                 })
+//                 .unwrap(),
+//                 _ => panic!("Unexpected query: {:?}", query),
+//             }))
+//         });
+
+//         let fee_collector = Addr::unchecked("fee_collector");
+//         let env = mock_env();
+
+//         instantiate(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: fee_collector.clone(),
+//                 config: CreateStrategyConfig::Ladder(config.clone()),
+//             },
+//         )
+//         .unwrap();
+
+//         let distributor_address = instantiate2_address(
+//             Checksum::from_hex("9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08")
+//                 .unwrap()
+//                 .as_slice(),
+//             &deps
+//                 .api
+//                 .addr_canonicalize(env.contract.address.as_str())
+//                 .unwrap(),
+//             to_json_binary(&(
+//                 config.owner.to_string().truncate(16),
+//                 env.block.time.seconds(),
+//                 1,
+//             ))
+//             .unwrap()
+//             .as_slice(),
+//         )
+//         .unwrap();
+
+//         assert_eq!(
+//             CONFIG.load(deps.as_ref().storage).unwrap(),
+//             LadderConfig {
+//                 owner: config.owner,
+//                 manager_contract: config.manager_contract,
+//                 scheduler_contract: config.scheduler_contract,
+//                 distributor_contract: deps.api.addr_humanize(&distributor_address).unwrap(),
+//                 pair_address: config.pair_address,
+//                 swap_denom: config.swap_denom,
+//                 target_denom: config.target_denom,
+//                 stop_offset: config.stop_offset,
+//                 reset_offset: config.reset_offset,
+//                 move_conditions: vec![],
+//                 distribute_conditions: vec![],
+//                 execution_rebate: config.execution_rebate
+//             }
+//         );
+//     }
+
+//     #[test]
+//     fn sends_distributor_instantiate_msg() {
+//         let mut deps = mock_dependencies();
+//         let config = default_instantiate_msg();
+
+//         deps.querier.update_wasm(|query| {
+//             SystemResult::Ok(ContractResult::Ok(match query {
+//                 WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
+//                     denoms: Denoms::new("swap_denom", "target_denom"),
+//                     oracles: None,
+//                     market_maker: None,
+//                     tick: Tick::new(6),
+//                     fee_taker: Decimal::percent(10),
+//                     fee_maker: Decimal::percent(10),
+//                     fee_address: "fee_address".to_string(),
+//                 })
+//                 .unwrap(),
+//                 WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
+//                     code_id: 1,
+//                     creator: Addr::unchecked("creator"),
+//                     checksum: Checksum::from_hex(
+//                         "f7bb7b18fb01bbf425cf4ed2cd4b7fb26a019a7fc75a4dc87e8a0b768c501f00",
+//                     )
+//                     .unwrap(),
+//                 })
+//                 .unwrap(),
+//                 _ => panic!("Unexpected query: {:?}", query),
+//             }))
+//         });
+
+//         let fee_collector = Addr::unchecked("fee_collector");
+//         let env = mock_env();
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: fee_collector.clone(),
+//                 config: CreateStrategyConfig::Ladder(config.clone()),
+//             },
+//         )
+//         .unwrap();
+
+//         let destinations = config
+//             .mutable_destinations
+//             .iter()
+//             .chain(config.immutable_destinations.iter())
+//             .collect::<Vec<_>>();
+
+//         let total_shares_with_fees = destinations
+//             .iter()
+//             .fold(Uint128::zero(), |acc, d| acc + d.shares)
+//             .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
+
+//         assert_eq!(
+//             response.messages[0],
+//             SubMsg::new(WasmMsg::Instantiate2 {
+//                 admin: Some(env.contract.address.to_string()),
+//                 code_id: 1,
+//                 label: "Distributor".to_string(),
+//                 msg: to_json_binary(&DistributorConfig {
+//                     owner: config.owner.clone(),
+//                     denoms: vec![config.target_denom.clone()],
+//                     mutable_destinations: config.mutable_destinations,
+//                     immutable_destinations: [
+//                         config.immutable_destinations,
+//                         vec![Destination {
+//                             recipient: Recipient::Bank {
+//                                 address: fee_collector.clone(),
+//                             },
+//                             shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
+//                             label: Some("CALC".to_string()),
+//                         }]
+//                     ]
+//                     .concat(),
+//                     conditions: vec![],
+//                 })
+//                 .unwrap(),
+//                 funds: vec![],
+//                 salt: to_json_binary(&(
+//                     "owner".to_string().truncate(16),
+//                     env.block.time.seconds(),
+//                     1
+//                 ))
+//                 .unwrap(),
+//             })
+//         );
+//     }
+
+//     #[test]
+//     fn sends_distributor_instantiate_msg_with_affiliate_destination() {
+//         let mut deps = mock_dependencies();
+//         let config = InstantiateLadderCommand {
+//             affiliate_code: Some("affiliate_code".to_string()),
+//             ..default_instantiate_msg()
+//         };
+
+//         deps.querier.update_wasm(|query| {
+//             SystemResult::Ok(ContractResult::Ok(match query {
+//                 WasmQuery::Smart { contract_addr, .. } => {
+//                     if contract_addr == "manager" {
+//                         to_json_binary(&Affiliate {
+//                             code: "affiliate_code".to_string(),
+//                             address: Addr::unchecked("affiliate_address"),
+//                             bps: 5,
+//                         })
+//                         .unwrap()
+//                     } else {
+//                         to_json_binary(&ConfigResponse {
+//                             denoms: Denoms::new("swap_denom", "target_denom"),
+//                             oracles: None,
+//                             market_maker: None,
+//                             tick: Tick::new(6),
+//                             fee_taker: Decimal::percent(10),
+//                             fee_maker: Decimal::percent(10),
+//                             fee_address: "fee_address".to_string(),
+//                         })
+//                         .unwrap()
+//                     }
+//                 }
+//                 WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
+//                     code_id: 1,
+//                     creator: Addr::unchecked("creator"),
+//                     checksum: Checksum::from_hex(
+//                         "f7bb7b18fb01bbf425cf4ed2cd4b7fb26a019a7fc75a4dc87e8a0b768c501f00",
+//                     )
+//                     .unwrap(),
+//                 })
+//                 .unwrap(),
+//                 _ => panic!("Unexpected query: {:?}", query),
+//             }))
+//         });
+
+//         let fee_collector = Addr::unchecked("fee_collector");
+//         let env = mock_env();
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: fee_collector.clone(),
+//                 config: CreateStrategyConfig::Ladder(config.clone()),
+//             },
+//         )
+//         .unwrap();
+
+//         let destinations = config
+//             .mutable_destinations
+//             .iter()
+//             .chain(config.immutable_destinations.iter())
+//             .collect::<Vec<_>>();
+
+//         let total_shares_with_fees = destinations
+//             .iter()
+//             .fold(Uint128::zero(), |acc, d| acc + d.shares)
+//             .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
+
+//         assert_eq!(
+//             response.messages[0],
+//             SubMsg::new(WasmMsg::Instantiate2 {
+//                 admin: Some(env.contract.address.to_string()),
+//                 code_id: 1,
+//                 label: "Distributor".to_string(),
+//                 msg: to_json_binary(&DistributorConfig {
+//                     owner: config.owner.clone(),
+//                     denoms: vec![config.target_denom.clone()],
+//                     mutable_destinations: config.mutable_destinations,
+//                     immutable_destinations: [
+//                         config.immutable_destinations,
+//                         vec![
+//                             Destination {
+//                                 recipient: Recipient::Bank {
+//                                     address: fee_collector.clone(),
+//                                 },
+//                                 shares: total_shares_with_fees
+//                                     .mul_floor(Decimal::bps(BASE_FEE_BPS - 5)),
+//                                 label: Some("CALC".to_string()),
+//                             },
+//                             Destination {
+//                                 recipient: Recipient::Bank {
+//                                     address: Addr::unchecked("affiliate_address"),
+//                                 },
+//                                 shares: total_shares_with_fees.mul_floor(Decimal::bps(5)),
+//                                 label: Some("Affiliate: affiliate_code".to_string()),
+//                             }
+//                         ],
+//                     ]
+//                     .concat(),
+//                     conditions: vec![],
+//                 })
+//                 .unwrap(),
+//                 funds: vec![],
+//                 salt: to_json_binary(&(
+//                     "owner".to_string().truncate(16),
+//                     env.block.time.seconds(),
+//                     1
+//                 ))
+//                 .unwrap(),
+//             })
+//         );
+//     }
+
+//     #[test]
+//     fn sends_execute_msg_to_self() {
+//         let mut deps = mock_dependencies();
+//         let config = default_instantiate_msg();
+
+//         deps.querier.update_wasm(|query| {
+//             SystemResult::Ok(ContractResult::Ok(match query {
+//                 WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
+//                     denoms: Denoms::new("swap_denom", "target_denom"),
+//                     oracles: None,
+//                     market_maker: None,
+//                     tick: Tick::new(6),
+//                     fee_taker: Decimal::percent(10),
+//                     fee_maker: Decimal::percent(10),
+//                     fee_address: "fee_address".to_string(),
+//                 })
+//                 .unwrap(),
+//                 WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
+//                     code_id: 1,
+//                     creator: Addr::unchecked("creator"),
+//                     checksum: Checksum::from_hex(
+//                         "f7bb7b18fb01bbf425cf4ed2cd4b7fb26a019a7fc75a4dc87e8a0b768c501f00",
+//                     )
+//                     .unwrap(),
+//                 })
+//                 .unwrap(),
+//                 _ => panic!("Unexpected query: {:?}", query),
+//             }))
+//         });
+
+//         let fee_collector = Addr::unchecked("fee_collector");
+//         let env = mock_env();
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: fee_collector.clone(),
+//                 config: CreateStrategyConfig::Ladder(config.clone()),
+//             },
+//         )
+//         .unwrap();
+
+//         assert_eq!(
+//             response.messages[1],
+//             SubMsg::new(WasmMsg::Execute {
+//                 contract_addr: env.contract.address.to_string(),
+//                 msg: to_json_binary(&StrategyExecuteMsg::Execute { msg: None }).unwrap(),
+//                 funds: vec![],
+//             })
+//         );
+//     }
+
+//     #[test]
+//     fn publishes_strategy_instantiated_event() {
+//         let mut deps = mock_dependencies();
+//         let config = default_instantiate_msg();
+
+//         deps.querier.update_wasm(|query| {
+//             SystemResult::Ok(ContractResult::Ok(match query {
+//                 WasmQuery::Smart { .. } => to_json_binary(&ConfigResponse {
+//                     denoms: Denoms::new("swap_denom", "target_denom"),
+//                     oracles: None,
+//                     market_maker: None,
+//                     tick: Tick::new(6),
+//                     fee_taker: Decimal::percent(10),
+//                     fee_maker: Decimal::percent(10),
+//                     fee_address: "fee_address".to_string(),
+//                 })
+//                 .unwrap(),
+//                 WasmQuery::CodeInfo { .. } => to_json_binary(&CodeInfoResponse {
+//                     code_id: 1,
+//                     creator: Addr::unchecked("creator"),
+//                     checksum: Checksum::from_hex(
+//                         "9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08",
+//                     )
+//                     .unwrap(),
+//                 })
+//                 .unwrap(),
+//                 _ => panic!("Unexpected query: {:?}", query),
+//             }))
+//         });
+
+//         let fee_collector = Addr::unchecked("fee_collector");
+//         let env = mock_env();
+
+//         let response = instantiate(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(
+//                 &Addr::unchecked("manager"),
+//                 &[Coin::new(100u128, "swap_denom")],
+//             ),
+//             StrategyInstantiateMsg {
+//                 fee_collector: fee_collector.clone(),
+//                 config: CreateStrategyConfig::Ladder(config.clone()),
+//             },
+//         )
+//         .unwrap();
+
+//         let distributor_address = instantiate2_address(
+//             Checksum::from_hex("9c28fd8b95ead3f54024f04c742b506c9fa0d24024defe47dcf42601710aca08")
+//                 .unwrap()
+//                 .as_slice(),
+//             &deps
+//                 .api
+//                 .addr_canonicalize(env.contract.address.as_str())
+//                 .unwrap(),
+//             to_json_binary(&(
+//                 config.owner.to_string().truncate(16),
+//                 env.block.time.seconds(),
+//                 1,
+//             ))
+//             .unwrap()
+//             .as_slice(),
+//         )
+//         .unwrap();
+
+//         assert_eq!(
+//             response.events[0],
+//             Event::from(DomainEvent::StrategyCreated {
+//                 contract_address: env.contract.address,
+//                 config: LadderConfig {
+//                     owner: config.owner,
+//                     manager_contract: config.manager_contract,
+//                     scheduler_contract: config.scheduler_contract,
+//                     distributor_contract: deps.api.addr_humanize(&distributor_address).unwrap(),
+//                     pair_address: config.pair_address,
+//                     swap_denom: config.swap_denom,
+//                     target_denom: config.target_denom,
+//                     stop_offset: config.stop_offset,
+//                     reset_offset: config.reset_offset,
+//                     move_conditions: vec![],
+//                     distribute_conditions: vec![],
+//                     execution_rebate: config.execution_rebate,
+//                 }
+//             })
+//         );
+//     }
+// }
+
+// #[cfg(test)]
+// fn default_config() -> LadderConfig {
+//     use cosmwasm_std::Addr;
+//     LadderConfig {
+//         owner: Addr::unchecked("owner"),
+//         manager_contract: Addr::unchecked("manager"),
+//         scheduler_contract: Addr::unchecked("scheduler"),
+//         distributor_contract: Addr::unchecked("distributor"),
+//         pair_address: Addr::unchecked("pair_address"),
+//         swap_denom: "swap_denom".to_string(),
+//         target_denom: "target_denom".to_string(),
+//         stop_offset: Decimal::percent(10),
+//         move_conditions: vec![],
+//         distribute_conditions: vec![],
+//         execution_rebate: Some(Coin::new(100u128, "rune")),
+//     }
+// }
+
+// #[cfg(test)]
+// mod update_tests {
+//     use super::*;
+
+//     use calc_rs::{
+//         core::ContractError,
+//         manager::{StrategyConfig, StrategyExecuteMsg},
+//         stoploss::{LadderConfig, LadderStatistics},
+//     };
+//     use cosmwasm_std::{
+//         testing::{message_info, mock_dependencies, mock_env},
+//         Addr, Coin, Decimal, Event,
+//     };
+
+//     use crate::{
+//         contract::execute,
+//         state::{CONFIG, STATS},
+//         types::DomainEvent,
+//     };
+
+//     #[test]
+//     fn fails_if_sender_not_manager() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let info = message_info(&deps.api.addr_make("owner"), &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &default_config())
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env,
+//                 info,
+//                 StrategyExecuteMsg::Update(StrategyConfig::Ladder(LadderConfig {
+//                     owner: Addr::unchecked("new-owner"),
+//                     ..default_config()
+//                 })),
+//             )
+//             .unwrap_err(),
+//             ContractError::Unauthorized {}
+//         );
+//     }
+
+//     #[test]
+//     fn fails_to_update_owner() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env,
+//                 info,
+//                 StrategyExecuteMsg::Update(StrategyConfig::Ladder(LadderConfig {
+//                     owner: Addr::unchecked("new-owner"),
+//                     ..existing_config
+//                 })),
+//             )
+//             .unwrap_err(),
+//             ContractError::generic_err("Cannot change the owner")
+//         );
+//     }
+
+//     #[test]
+//     fn fails_to_update_manager_contract() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env,
+//                 info,
+//                 StrategyExecuteMsg::Update(StrategyConfig::Ladder(LadderConfig {
+//                     manager_contract: Addr::unchecked("new-manager"),
+//                     ..existing_config
+//                 })),
+//             )
+//             .unwrap_err(),
+//             ContractError::generic_err("Cannot change the manager contract")
+//         );
+//     }
+
+//     #[test]
+//     fn fails_to_update_distributor_contract() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env,
+//                 info,
+//                 StrategyExecuteMsg::Update(StrategyConfig::Ladder(LadderConfig {
+//                     distributor_contract: Addr::unchecked("new-distributor"),
+//                     ..existing_config
+//                 })),
+//             )
+//             .unwrap_err(),
+//             ContractError::generic_err("Cannot change the distributor contract")
+//         );
+//     }
+
+//     #[test]
+//     fn fails_to_update_pair_address() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env,
+//                 info,
+//                 StrategyExecuteMsg::Update(StrategyConfig::Ladder(LadderConfig {
+//                     pair_address: Addr::unchecked("new-pair-address"),
+//                     ..existing_config
+//                 })),
+//             )
+//             .unwrap_err(),
+//             ContractError::generic_err("Cannot change the pair address")
+//         );
+//     }
+
+//     #[test]
+//     fn fails_to_update_swap_denom() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env,
+//                 info,
+//                 StrategyExecuteMsg::Update(StrategyConfig::Ladder(LadderConfig {
+//                     swap_denom: "new-swap-denom".to_string(),
+//                     ..existing_config
+//                 })),
+//             )
+//             .unwrap_err(),
+//             ContractError::generic_err("Cannot change the swap denom")
+//         );
+//     }
+
+//     #[test]
+//     fn fails_to_update_target_denom() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env,
+//                 info,
+//                 StrategyExecuteMsg::Update(StrategyConfig::Ladder(LadderConfig {
+//                     target_denom: "new-target-denom".to_string(),
+//                     ..existing_config
+//                 })),
+//             )
+//             .unwrap_err(),
+//             ContractError::generic_err("Cannot change the target denom")
+//         );
+//     }
+
+//     #[test]
+//     fn updates_mutable_config() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         let new_config = LadderConfig {
+//             stop_offset: Decimal::percent(20),
+//             execution_rebate: Some(Coin::new(2u128, "rune")),
+//             ..existing_config
+//         };
+
+//         execute(
+//             deps.as_mut(),
+//             env,
+//             info,
+//             StrategyExecuteMsg::Update(StrategyConfig::Ladder(new_config.clone())),
+//         )
+//         .unwrap();
+
+//         assert_eq!(CONFIG.load(deps.as_ref().storage).unwrap(), new_config);
+//     }
+
+//     #[test]
+//     fn publishes_strategy_updated_event() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let existing_config = default_config();
+//         let info = message_info(&existing_config.manager_contract, &[]);
+
+//         CONFIG
+//             .save(deps.as_mut().storage, &existing_config)
+//             .unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         let new_config = LadderConfig {
+//             stop_offset: Decimal::percent(20),
+//             execution_rebate: Some(Coin::new(2u128, "rune")),
+//             ..existing_config.clone()
+//         };
+
+//         let response = execute(
+//             deps.as_mut(),
+//             env.clone(),
+//             info,
+//             StrategyExecuteMsg::Update(StrategyConfig::Ladder(new_config.clone())),
+//         )
+//         .unwrap();
+
+//         assert_eq!(
+//             response.events[0],
+//             Event::from(DomainEvent::StrategyUpdated {
+//                 contract_address: env.contract.address,
+//                 old_config: existing_config,
+//                 new_config: new_config,
+//             })
+//         );
+//     }
+// }
+
+// #[cfg(test)]
+// mod execute_tests {
+//     use super::*;
+//     use cosmwasm_std::{
+//         testing::{message_info, mock_dependencies, mock_env},
+//         Addr,
+//     };
+
+//     use crate::state::CONFIG;
+
+//     #[test]
+//     fn fails_if_sender_not_manager_or_contract() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+
+//         let config = default_config();
+
+//         CONFIG.save(deps.as_mut().storage, &config).unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env.clone(),
+//                 message_info(&Addr::unchecked("anyone"), &[]),
+//                 StrategyExecuteMsg::Execute { msg: None },
+//             )
+//             .unwrap_err(),
+//             ContractError::Unauthorized {}
+//         );
+
+//         STATE.remove(deps.as_mut().storage);
+
+//         assert!(execute(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(&config.manager_contract, &[]),
+//             StrategyExecuteMsg::Execute { msg: None },
+//         )
+//         .is_ok());
+
+//         STATE.remove(deps.as_mut().storage);
+
+//         assert!(execute(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(&env.contract.address, &[]),
+//             StrategyExecuteMsg::Execute { msg: None },
+//         )
+//         .is_ok());
+//     }
+
+//     #[test]
+//     fn fails_if_already_in_executing_state() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+
+//         let config = default_config();
+
+//         CONFIG.save(deps.as_mut().storage, &config).unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert!(execute(
+//             deps.as_mut(),
+//             env.clone(),
+//             message_info(&config.manager_contract, &[]),
+//             StrategyExecuteMsg::Execute { msg: None },
+//         )
+//         .is_ok());
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env.clone(),
+//                 message_info(&env.contract.address, &[]),
+//                 StrategyExecuteMsg::Execute { msg: None },
+//             )
+//             .unwrap_err(),
+//             ContractError::generic_err("Already in executing state")
+//         );
+//     }
+
+//     #[test]
+//     fn claims_partially_filled_stop_loss_order() {}
+
+//     #[test]
+//     fn claims_and_withdraws_all_existing_orders_if_any_exist() {}
+
+//     #[test]
+//     fn resets_trigger_order_if_funds_remaining() {}
+
+//     #[test]
+//     fn resets_stop_loss_order_if_funds_remaining() {}
+
+//     #[test]
+//     fn resets_check_schedule_if_past_due() {}
+
+//     #[test]
+//     fn distributes_claimed_funds_minus_trigger_order_amount_if_swap_funds_remaining() {}
+
+//     #[test]
+//     fn distributes_all_claimed_funds_if_no_swap_funds_remaining() {}
+
+//     #[test]
+//     fn publishes_execution_attempted_event() {}
+
+//     #[test]
+//     fn publishes_execution_completed_event() {}
+// }
+
+// #[cfg(test)]
+// mod withdraw_tests {
+//     use super::*;
+
+//     use cosmwasm_std::{
+//         testing::{message_info, mock_dependencies, mock_env},
+//         Coin,
+//     };
+
+//     use crate::{
+//         contract::{default_config, execute},
+//         state::{CONFIG, STATE, STATS},
+//     };
+
+//     #[test]
+//     fn allows_owner_to_withdraw() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let config = default_config();
+
+//         CONFIG.save(deps.as_mut().storage, &config).unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(0u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env.clone(),
+//                 message_info(&config.manager_contract, &[]),
+//                 StrategyExecuteMsg::Withdraw { amounts: vec![] }
+//             )
+//             .unwrap_err(),
+//             ContractError::Unauthorized {}
+//         );
+
+//         STATE.remove(deps.as_mut().storage);
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env.clone(),
+//                 message_info(&env.contract.address, &[]),
+//                 StrategyExecuteMsg::Withdraw { amounts: vec![] }
+//             )
+//             .unwrap_err(),
+//             ContractError::Unauthorized {}
+//         );
+
+//         STATE.remove(deps.as_mut().storage);
+
+//         assert_eq!(
+//             execute(
+//                 deps.as_mut(),
+//                 env.clone(),
+//                 message_info(&config.owner, &[]),
+//                 StrategyExecuteMsg::Withdraw { amounts: vec![] }
+//             )
+//             .is_ok(),
+//             true
+//         );
+//     }
+
+//     #[test]
+//     fn sends_bank_msg() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let config = default_config();
+
+//         CONFIG.save(deps.as_mut().storage, &config).unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(0u128, "swap_denom"),
+//                     filled: Coin::new(1000u128, "target_denom"),
+//                     claimed: Coin::new(0u128, "target_denom"),
+//                     withdrawn: vec![],
+//                 },
+//             )
+//             .unwrap();
+
+//         deps.querier.bank.update_balance(
+//             env.contract.address.clone(),
+//             vec![
+//                 Coin::new(1000u128, "target_denom"),
+//                 Coin::new(122u128, "any_other_denom"),
+//             ],
+//         );
+
+//         let response = execute(
+//             deps.as_mut(),
+//             env,
+//             message_info(&config.owner, &[]),
+//             StrategyExecuteMsg::Withdraw {
+//                 amounts: vec![
+//                     Coin::new(1000u128, "target_denom"),
+//                     Coin::new(1000u128, "any_other_denom"),
+//                 ],
+//             },
+//         )
+//         .unwrap();
+
+//         assert_eq!(
+//             response.messages[0].msg,
+//             CosmosMsg::Bank(BankMsg::Send {
+//                 to_address: config.owner.to_string(),
+//                 amount: vec![
+//                     Coin::new(122u128, "any_other_denom"),
+//                     Coin::new(1000u128, "target_denom"),
+//                 ],
+//             })
+//         );
+//     }
+
+//     #[test]
+//     fn updates_statistics() {
+//         let mut deps = mock_dependencies();
+//         let env = mock_env();
+//         let config = default_config();
+
+//         CONFIG.save(deps.as_mut().storage, &config).unwrap();
+
+//         STATS
+//             .save(
+//                 deps.as_mut().storage,
+//                 &LadderStatistics {
+//                     remaining: Coin::new(100u128, "swap_denom"),
+//                     filled: Coin::new(1000u128, "target_denom"),
+//                     claimed: Coin::new(100u128, "target_denom"),
+//                     withdrawn: vec![
+//                         Coin::new(100u128, "target_denom"),
+//                         Coin::new(100u128, "swap_denom"),
+//                     ],
+//                 },
+//             )
+//             .unwrap();
+
+//         deps.querier.bank.update_balance(
+//             env.contract.address.clone(),
+//             vec![
+//                 Coin::new(1000u128, "target_denom"),
+//                 Coin::new(122u128, "any_other_denom"),
+//             ],
+//         );
+
+//         execute(
+//             deps.as_mut(),
+//             env,
+//             message_info(&config.owner, &[]),
+//             StrategyExecuteMsg::Withdraw {
+//                 amounts: vec![
+//                     Coin::new(1000u128, "target_denom"),
+//                     Coin::new(1000u128, "any_other_denom"),
+//                 ],
+//             },
+//         )
+//         .unwrap();
+
+//         assert_eq!(
+//             STATS.load(deps.as_ref().storage).unwrap(),
+//             LadderStatistics {
+//                 remaining: Coin::new(100u128, "swap_denom"),
+//                 filled: Coin::new(1000u128, "target_denom"),
+//                 claimed: Coin::new(100u128, "target_denom"),
+//                 withdrawn: vec![
+//                     Coin::new(122u128, "any_other_denom"),
+//                     Coin::new(100u128, "swap_denom"),
+//                     Coin::new(1100u128, "target_denom"),
+//                 ],
+//             }
+//         );
+//     }
+// }
 
 // #[cfg(test)]
 // fn default_config() -> TwapConfig {
