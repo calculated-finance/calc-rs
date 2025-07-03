@@ -2,9 +2,9 @@
 members = [
   "packages/*",
   "contracts/strategy",
-  # "contracts/twap",
 ]
 resolver = "1"
+exclude = ["contracts/twap"]
 
 [profile.release]
 opt-level = 3
@@ -34,3 +34,4 @@ serde = { version = "1.0.197", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.58" }
 calc-rs = { path = "packages/calc-rs" }
 calc-rs-test = { path = "packages/calc-rs-test" }
+cw-multi-test = { version = "2", features = ["cosmwasm_2_2"] }

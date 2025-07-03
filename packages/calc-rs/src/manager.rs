@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    core::StrategyConfig,
     ladder::{InstantiateLadderCommand, LadderConfig},
     twap::{InstantiateTwapCommand, TwapConfig},
 };
@@ -85,12 +86,6 @@ pub struct Strategy {
 }
 
 #[cw_serde]
-pub enum StrategyConfig {
-    Twap(TwapConfig),
-    Ladder(LadderConfig),
-}
-
-#[cw_serde]
 pub enum StrategyStatistics {
     Twap {
         remaining: Coin,
@@ -109,8 +104,7 @@ pub enum CreateStrategyConfig {
 
 #[cw_serde]
 pub struct StrategyInstantiateMsg {
-    pub fee_collector: Addr,
-    pub distributor_code_id: Addr,
+    pub affiliate_code: Option<String>,
     pub config: StrategyConfig,
 }
 
@@ -125,8 +119,8 @@ impl CreateStrategyConfig {
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
-    Execute { msg: Option<Binary> },
-    Withdraw { amounts: Vec<Coin> },
+    Execute {},
+    Withdraw(Vec<Coin>),
     Update(StrategyConfig),
     UpdateStatus(StrategyStatus),
     Clear {},
@@ -139,6 +133,8 @@ pub enum StrategyQueryMsg {
     Config {},
     #[returns(StrategyStatistics)]
     Statistics {},
+    #[returns(Vec<Coin>)]
+    Balances { include: Vec<String> },
 }
 
 #[cw_serde]
@@ -198,7 +194,7 @@ pub enum ManagerQueryMsg {
         start_after: Option<u64>,
         limit: Option<u16>,
     },
-    #[returns(Affiliate)]
+    #[returns(Option<Affiliate>)]
     Affiliate { code: String },
     #[returns(Vec<Affiliate>)]
     Affiliates {

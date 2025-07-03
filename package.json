@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "types": "bun scripts/generate-types.ts"
+    "types": "./scripts/schema.sh && bun scripts/generate-types.ts",
+    "compile": "./scripts/compile.sh"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -1,25 +1,29 @@
-use calc_rs::{core::StrategyConfig, ladder::LadderStatistics, manager::StrategyExecuteMsg};
+use calc_rs::{
+    core::{Statistics, StrategyConfig},
+    ladder::LadderStatistics,
+    manager::StrategyExecuteMsg,
+};
 use cosmwasm_std::{StdResult, Storage};
 use cw_storage_plus::Item;
 
-pub struct ConfigStore {
-    item: Item<StrategyConfig>,
+pub struct StrategyStore {
+    config: Item<StrategyConfig>,
 }
 
-impl ConfigStore {
+impl StrategyStore {
     pub fn save(&self, storage: &mut dyn Storage, update: &StrategyConfig) -> StdResult<()> {
-        self.item.save(storage, &update)
+        self.config.save(storage, &update)
     }
 
     pub fn load(&self, storage: &dyn Storage) -> StdResult<StrategyConfig> {
-        self.item.load(storage)
+        self.config.load(storage)
     }
 }
 
 pub const STATE: Item<StrategyExecuteMsg> = Item::new("state");
 
-pub const CONFIG: ConfigStore = ConfigStore {
-    item: Item::new("config"),
+pub const STRATEGY: StrategyStore = StrategyStore {
+    config: Item::new("config"),
 };
 
-pub const STATS: Item<LadderStatistics> = Item::new("stats");
+pub const STATS: Item<Statistics> = Item::new("stats");

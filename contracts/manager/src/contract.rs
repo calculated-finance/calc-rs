@@ -333,9 +333,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
             to_json_binary(&strategies)
         }
         ManagerQueryMsg::Affiliate { code } => {
-            to_json_binary(&AFFILIATES.load(deps.storage, code.clone()).map_err(|_| {
-                StdError::generic_err(format!("Affiliate not found with code: {}", code))
-            })?)
+            to_json_binary(&AFFILIATES.may_load(deps.storage, code.clone())?)
         }
         ManagerQueryMsg::Affiliates { start_after, limit } => to_json_binary(
             &AFFILIATES
