@@ -46,11 +46,9 @@ impl<C: DeserializeOwned> CustomMockQuerier<C> {
 impl Querier for CustomMockQuerier {
     fn raw_query(&self, bin_request: &[u8]) -> QuerierResult {
         let parsed: Result<QueryRequest<Empty>, _> = cosmwasm_std::from_json(bin_request);
-        if let Ok(request) = &parsed {
-            if let QueryRequest::Grpc(query) = request {
-                if let Some(handler) = &self.grpc_handler {
-                    return handler(query);
-                }
+        if let Ok(QueryRequest::Grpc(query)) = &parsed {
+            if let Some(handler) = &self.grpc_handler {
+                return handler(query);
             }
         }
 

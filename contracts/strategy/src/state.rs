@@ -1,21 +1,20 @@
 use calc_rs::{
-    core::{Statistics, StrategyConfig},
-    ladder::LadderStatistics,
-    manager::StrategyExecuteMsg,
+    statistics::Statistics,
+    strategy::{Strategy2, StrategyExecuteMsg},
 };
 use cosmwasm_std::{StdResult, Storage};
 use cw_storage_plus::Item;
 
 pub struct StrategyStore {
-    config: Item<StrategyConfig>,
+    config: Item<Strategy2>,
 }
 
 impl StrategyStore {
-    pub fn save(&self, storage: &mut dyn Storage, update: &StrategyConfig) -> StdResult<()> {
-        self.config.save(storage, &update)
+    pub fn save(&self, storage: &mut dyn Storage, update: &Strategy2) -> StdResult<()> {
+        self.config.save(storage, update)
     }
 
-    pub fn load(&self, storage: &dyn Storage) -> StdResult<StrategyConfig> {
+    pub fn load(&self, storage: &dyn Storage) -> StdResult<Strategy2> {
         self.config.load(storage)
     }
 }

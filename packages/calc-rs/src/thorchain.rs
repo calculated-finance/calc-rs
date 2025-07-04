@@ -33,9 +33,7 @@ impl MsgDeposit {
                 let (chain, symbol) = if c.denom.to_ascii_lowercase().contains("rune") {
                     ("THOR", "RUNE")
                 } else {
-                    c.denom.split_once("-").expect(
-                        format!("Cannot use native denom {} in deposit msg", c.denom).as_str(),
-                    )
+                    c.denom.split_once("-").unwrap_or_else(|| panic!("Cannot use native denom {} in deposit msg", c.denom))
                 };
 
                 Anybuf::new()

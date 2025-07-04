@@ -1,90 +1,19 @@
-use std::collections::HashMap;
-
-use calc_rs::{
-    core::{Condition, StrategyConfig},
-    distributor::Recipient,
-};
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_string, Addr, Coin, Coins, Event, StdResult};
+use cosmwasm_std::{to_json_string, Addr, Coin, Event};
 use rujira_rs::fin::{Price, Side};
 
-#[cw_serde]
-pub struct Statistics {
-    pub swapped: Vec<Coin>,
-    pub filled: Vec<Coin>,
-    pub distributed: Vec<(Recipient, Vec<Coin>)>,
-    pub withdrawn: Vec<Coin>,
-}
-
-impl Statistics {
-    pub fn combine(self, other: Statistics) -> StdResult<Statistics> {
-        let mut swapped = Coins::try_from(self.swapped)?;
-        let mut filled = Coins::try_from(self.filled)?;
-        let mut withdrawn = Coins::try_from(self.withdrawn)?;
-
-        for coin in other.swapped {
-            swapped.add(coin)?;
-        }
-
-        for coin in other.filled {
-            filled.add(coin)?;
-        }
-
-        for coin in other.withdrawn {
-            withdrawn.add(coin)?;
-        }
-
-        let mut recipients_map: HashMap<String, Recipient> = HashMap::new();
-        let mut distributed_map: HashMap<String, Coins> = HashMap::new();
-
-        for (recipient, amounts) in self
-            .distributed
-            .iter()
-            .chain(other.distributed.clone().iter())
-            .into_iter()
-        {
-            recipients_map
-                .entry(recipient.key())
-                .or_insert_with(|| recipient.clone());
-
-            distributed_map
-                .entry(recipient.key())
-                .and_modify(|coins| {
-                    for amount in amounts {
-                        coins.add(amount.clone()).unwrap(); // If adding coins fails we are in unresolvable trouble
-                    }
-                })
-                .or_insert(Coins::try_from(amounts.clone())?);
-        }
-
-        let mut distributed: Vec<(Recipient, Vec<Coin>)> = Vec::new();
-
-        for (key, coins) in distributed_map.into_iter() {
-            let recipient = recipients_map
-                .get(&key)
-                .expect("Recipient should exist in map"); // If this fails, we are also in unresolvable trouble
-            distributed.push((recipient.clone(), coins.into_vec()));
-        }
-
-        Ok(Statistics {
-            swapped: swapped.to_vec(),
-            filled: filled.to_vec(),
-            distributed,
-            withdrawn: withdrawn.to_vec(),
-        })
-    }
-}
+use crate::{conditions::Condition, statistics::Statistics, strategy::Strategy2};
 
 #[cw_serde]
 pub enum DomainEvent {
     StrategyCreated {
         contract_address: Addr,
-        config: StrategyConfig,
+        config: Strategy2,
     },
     StrategyUpdated {
         contract_address: Addr,
-        old_config: StrategyConfig,
-        new_config: StrategyConfig,
+        old_config: Strategy2,
+        new_config: Strategy2,
     },
     FundsWithdrawn {
         contract_address: Addr,
