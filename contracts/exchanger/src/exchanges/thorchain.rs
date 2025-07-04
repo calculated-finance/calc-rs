@@ -1,13 +1,13 @@
 use calc_rs::{
-    core::{Callback, Condition, Contract, ContractError, ContractResult},
+    conditions::Condition,
+    core::{Callback, Contract, ContractError, ContractResult},
     exchanger::{ExpectedReceiveAmount, Route},
     scheduler::{CreateTrigger, SchedulerExecuteMsg, TriggerConditionsThreshold},
     thorchain::{MsgDeposit, SwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, CosmosMsg, Deps, Env, MessageInfo, Response, StdError, StdResult,
-    Uint128,
+    to_json_binary, Addr, Coin, Deps, Env, MessageInfo, Response, StdError, StdResult, Uint128,
 };
 
 use crate::types::{Exchange, ExchangeConfig};
@@ -48,12 +48,14 @@ impl Exchange for ThorchainExchange {
             affiliate: self
                 .affiliate_code
                 .clone()
-                .map_or_else(|| vec![], |c| vec![c]),
-            affiliate_bps: self.affiliate_bps.map_or_else(|| vec![], |b| vec![b]),
+                .map_or_else(std::vec::Vec::new, |c| vec![c]),
+            affiliate_bps: self
+                .affiliate_bps
+                .map_or_else(std::vec::Vec::new, |b| vec![b]),
         };
 
         let quote = SwapQuote::get(deps.querier, &quote_request)
-            .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {}", e)))?;
+            .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {e}")))?;
 
         Ok(ExpectedReceiveAmount {
             receive_amount: Coin::new(quote.expected_amount_out, target_denom),
@@ -84,12 +86,14 @@ impl Exchange for ThorchainExchange {
             affiliate: self
                 .affiliate_code
                 .clone()
-                .map_or_else(|| vec![], |c| vec![c]),
-            affiliate_bps: self.affiliate_bps.map_or_else(|| vec![], |b| vec![b]),
+                .map_or_else(std::vec::Vec::new, |c| vec![c]),
+            affiliate_bps: self
+                .affiliate_bps
+                .map_or_else(std::vec::Vec::new, |b| vec![b]),
         };
 
         let quote = SwapQuote::get(deps.querier, &quote_request)
-            .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {}", e)))?;
+            .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {e}")))?;
 
         if quote.expected_amount_out < minimum_receive_amount.amount {
             return Err(ContractError::generic_err(format!(
@@ -107,14 +111,12 @@ impl Exchange for ThorchainExchange {
             }
         }
 
-        let swap_msg = CosmosMsg::from(
-            MsgDeposit {
-                memo: quote.memo,
-                coins: vec![swap_amount.clone()],
-                signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
-            }
-            .into_cosmos_msg()?,
-        );
+        let swap_msg = MsgDeposit {
+            memo: quote.memo,
+            coins: vec![swap_amount.clone()],
+            signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
+        }
+        .into_cosmos_msg()?;
 
         let mut messages = vec![swap_msg];
 
@@ -169,7 +171,7 @@ mod expected_receive_amount_tests {
                     outbound: "0".to_string(),
                     liquidity: "0".to_string(),
                     total: "0".to_string(),
-                    slippage_bps: expected_slippage_bps.clone(),
+                    slippage_bps: expected_slippage_bps,
                     total_bps: 145,
                 }),
                 router: "0".to_string(),
@@ -201,7 +203,7 @@ mod expected_receive_amount_tests {
                 affiliate_code: None,
                 affiliate_bps: None
             })
-            .expected_receive_amount(deps.as_ref(), &swap_amount, &target_denom, &None)
+            .expected_receive_amount(deps.as_ref(), &swap_amount, target_denom, &None)
             .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount: Coin::new(expected_receive_amount, target_denom),
@@ -245,7 +247,7 @@ mod swap_tests {
                     outbound: "0".to_string(),
                     liquidity: "0".to_string(),
                     total: "0".to_string(),
-                    slippage_bps: expected_slippage_bps.clone(),
+                    slippage_bps: expected_slippage_bps,
                     total_bps: 145,
                 }),
                 router: "0".to_string(),
@@ -317,7 +319,7 @@ mod swap_tests {
                     outbound: "0".to_string(),
                     liquidity: "0".to_string(),
                     total: "0".to_string(),
-                    slippage_bps: expected_slippage_bps.clone(),
+                    slippage_bps: expected_slippage_bps,
                     total_bps: 145,
                 }),
                 router: "0".to_string(),
@@ -390,7 +392,7 @@ mod swap_tests {
                     outbound: "0".to_string(),
                     liquidity: "0".to_string(),
                     total: "0".to_string(),
-                    slippage_bps: expected_slippage_bps.clone(),
+                    slippage_bps: expected_slippage_bps,
                     total_bps: 145,
                 }),
                 router: "0".to_string(),
@@ -436,18 +438,18 @@ mod swap_tests {
             )
             .unwrap()
             .messages[0],
-            SubMsg::new(CosmosMsg::from(
+            SubMsg::new(
                 MsgDeposit {
                     memo: "=:rune:my-address:237463".to_string(),
                     coins: vec![swap_amount],
                     signer: deps
                         .api
-                        .addr_canonicalize(&env.contract.address.to_string())
+                        .addr_canonicalize(env.contract.address.as_ref())
                         .unwrap()
                 }
                 .into_cosmos_msg()
                 .unwrap()
-            ))
+            )
         );
     }
 
@@ -472,7 +474,7 @@ mod swap_tests {
                     outbound: "0".to_string(),
                     liquidity: "0".to_string(),
                     total: "0".to_string(),
-                    slippage_bps: expected_slippage_bps.clone(),
+                    slippage_bps: expected_slippage_bps,
                     total_bps: 145,
                 }),
                 router: "0".to_string(),
@@ -554,7 +556,7 @@ mod swap_tests {
         let config = ExchangeConfig {
             scheduler_address: Addr::unchecked("scheduler"),
             affiliate_code: affiliate_code.clone(),
-            affiliate_bps: affiliate_bps.clone(),
+            affiliate_bps,
         };
 
         deps.querier.with_grpc_handler(move |query| {
@@ -569,7 +571,7 @@ mod swap_tests {
                 destination: "recipient".to_string(),
                 refund_address: "recipient".to_string(),
                 affiliate: vec![affiliate_code.clone().unwrap()],
-                affiliate_bps: vec![affiliate_bps.clone().unwrap().to_string()],
+                affiliate_bps: vec![affiliate_bps.unwrap().to_string()],
                 height: "".to_string(),
                 tolerance_bps: "".to_string(),
                 liquidity_tolerance_bps: "".to_string(),

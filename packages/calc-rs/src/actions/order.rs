@@ -9,7 +9,10 @@ use rujira_rs::fin::{
 };
 
 use crate::{
-    actions::operation::Operation, conditions::Condition, core::Contract, events::DomainEvent,
+    actions::{action::Action, operation::Operation},
+    conditions::Condition,
+    core::Contract,
+    events::DomainEvent,
     statistics::Statistics,
 };
 
@@ -97,8 +100,8 @@ impl OrderAction {
     }
 }
 
-impl Operation<OrderAction> for OrderAction {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<Self> {
+impl Operation for OrderAction {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
         if let Some(amount) = self.bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
                 return Err(StdError::generic_err(
@@ -118,16 +121,16 @@ impl Operation<OrderAction> for OrderAction {
             }
         }
 
-        Ok(OrderAction {
+        Ok(Action::Order(OrderAction {
             current_price: match self.strategy {
                 OrderPriceStrategy::Fixed { price } => Some(Price::Fixed(price)),
                 OrderPriceStrategy::Offset { .. } => None,
             },
             ..self
-        })
+        }))
     }
 
-    fn condition(self, env: &Env) -> Option<Condition> {
+    fn condition(&self, env: &Env) -> Option<Condition> {
         self.current_price
             .clone()
             .map(|price| Condition::LimitOrderFilled {
@@ -138,7 +141,7 @@ impl Operation<OrderAction> for OrderAction {
             })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Self, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         let mut messages: Vec<SubMsg> = vec![];
         let events: Vec<DomainEvent> = vec![];
 
@@ -234,10 +237,10 @@ impl Operation<OrderAction> for OrderAction {
         messages.push(set_order_msg);
 
         Ok((
-            OrderAction {
+            Action::Order(OrderAction {
                 current_price: Some(new_price),
                 ..self
-            },
+            }),
             messages,
             events,
         ))
@@ -247,10 +250,17 @@ impl Operation<OrderAction> for OrderAction {
         self,
         deps: Deps,
         env: &Env,
-        update: OrderAction,
-    ) -> StdResult<(Self, Vec<SubMsg>, Vec<DomainEvent>)> {
-        let (action, messages, events) = update.init(deps, env)?.execute(deps, env)?;
-        Ok((action, messages, events))
+        update: Action,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+        match update {
+            Action::Order(update) => {
+                let (action, messages, events) = update.init(deps, env)?.execute(deps, env)?;
+                Ok((action, messages, events))
+            }
+            _ => Err(StdError::generic_err(
+                "Cannot update order action with non-order action",
+            )),
+        }
     }
 
     fn escrowed(&self, deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -291,14 +301,14 @@ impl Operation<OrderAction> for OrderAction {
         deps: Deps,
         env: &Env,
         desired: &Coins,
-    ) -> StdResult<(OrderAction, Vec<SubMsg>, Coins)> {
+    ) -> StdResult<(Action, Vec<SubMsg>, Coins)> {
         let mut withdrawn = Coins::default();
         let mut messages: Vec<SubMsg> = vec![];
 
         let desired_bid_denom_amount = desired.amount_of(&self.bid_denom);
 
         if desired_bid_denom_amount.is_zero() {
-            return Ok((self, messages, withdrawn));
+            return Ok((Action::Order(self), messages, withdrawn));
         }
 
         let existing_order = self.strategy.existing_order(
@@ -344,14 +354,10 @@ impl Operation<OrderAction> for OrderAction {
             withdrawn.add(Coin::new(withdrawal_amount, self.bid_denom.clone()))?;
         }
 
-        Ok((self, messages, withdrawn))
+        Ok((Action::Order(self), messages, withdrawn))
     }
 
-    fn cancel(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(OrderAction, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         let order = self.strategy.existing_order(
             deps,
             env,
@@ -377,6 +383,6 @@ impl Operation<OrderAction> for OrderAction {
             messages.push(withdraw_order_msg);
         }
 
-        Ok((self, messages, vec![]))
+        Ok((Action::Order(self), messages, vec![]))
     }
 }

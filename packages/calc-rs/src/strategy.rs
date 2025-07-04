@@ -17,8 +17,8 @@ pub struct Strategy2 {
     pub owner: Addr,
     pub actions: Vec<Action>,
 }
-impl Operation<Strategy2> for Strategy2 {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<Strategy2> {
+impl Strategy2 {
+    pub fn init(self, deps: Deps, env: &Env) -> StdResult<Strategy2> {
         Ok(Strategy2 {
             actions: self
                 .actions
@@ -29,7 +29,7 @@ impl Operation<Strategy2> for Strategy2 {
         })
     }
 
-    fn condition(self, env: &Env) -> Option<Condition> {
+    pub fn condition(self, env: &Env) -> Option<Condition> {
         Some(Condition::Compound {
             conditions: self
                 .actions
@@ -40,7 +40,7 @@ impl Operation<Strategy2> for Strategy2 {
         })
     }
 
-    fn execute(
+    pub fn execute(
         self,
         deps: Deps,
         env: &Env,
@@ -67,7 +67,7 @@ impl Operation<Strategy2> for Strategy2 {
         ))
     }
 
-    fn update(
+    pub fn update(
         self,
         deps: Deps,
         env: &Env,
@@ -104,7 +104,7 @@ impl Operation<Strategy2> for Strategy2 {
         ))
     }
 
-    fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+    pub fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         let mut escrowed = HashSet::new();
 
         for action in self.actions.iter() {
@@ -115,7 +115,7 @@ impl Operation<Strategy2> for Strategy2 {
         Ok(escrowed)
     }
 
-    fn balances(&self, deps: Deps, env: &Env, denoms: &[String]) -> StdResult<Coins> {
+    pub fn balances(&self, deps: Deps, env: &Env, denoms: &[String]) -> StdResult<Coins> {
         let mut balances = Coins::default();
 
         for denom in denoms {
@@ -137,7 +137,7 @@ impl Operation<Strategy2> for Strategy2 {
         Ok(balances)
     }
 
-    fn withdraw(
+    pub fn withdraw(
         self,
         deps: Deps,
         env: &Env,
@@ -174,7 +174,7 @@ impl Operation<Strategy2> for Strategy2 {
         Ok((Strategy2 { actions, ..self }, messages, withdrawals))
     }
 
-    fn cancel(
+    pub fn cancel(
         self,
         deps: Deps,
         env: &Env,

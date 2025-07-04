@@ -19,7 +19,7 @@ const EXECUTE_REPLY_ID: u64 = 1;
 #[cw_serde]
 pub struct InstantiateMsg {}
 
-#[entry_point]
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     _deps: DepsMut,
     _env: Env,
@@ -34,12 +34,12 @@ pub fn instantiate(
 #[cw_serde]
 pub struct MigrateMsg {}
 
-#[entry_point]
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
     Ok(Response::default().add_attribute("migrated", "true"))
 }
 
-#[entry_point]
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
     env: Env,
@@ -103,13 +103,13 @@ pub fn execute(
 
             Ok(Response::default().add_message(BankMsg::Send {
                 to_address: info.sender.to_string(),
-                amount: rebates_to_refund.into(),
+                amount: rebates_to_refund,
             }))
         }
         SchedulerExecuteMsg::ExecuteTrigger(id) => {
-            let trigger = TRIGGERS.load(deps.storage, id).map_err(|e| {
-                ContractError::generic_err(format!("Failed to load trigger: {}", e))
-            })?;
+            let trigger = TRIGGERS
+                .load(deps.storage, id)
+                .map_err(|e| ContractError::generic_err(format!("Failed to load trigger: {e}")))?;
 
             if !trigger.can_execute(deps.as_ref(), &env)? {
                 return Err(ContractError::generic_err(format!(
@@ -139,7 +139,7 @@ pub fn execute(
     }
 }
 
-#[entry_point]
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
         SchedulerQueryMsg::Owned {
@@ -166,7 +166,7 @@ pub fn reply(_deps: DepsMut, _env: Env, _reply: Reply) -> ContractResult {
 #[cfg(test)]
 fn default_create_trigger_command() -> calc_rs::scheduler::CreateTrigger {
     calc_rs::scheduler::CreateTrigger {
-        conditions: vec![calc_rs::core::Condition::BlocksCompleted(
+        conditions: vec![calc_rs::conditions::Condition::BlocksCompleted(
             cosmwasm_std::testing::mock_env().block.height + 10,
         )],
         threshold: calc_rs::scheduler::TriggerConditionsThreshold::All,
@@ -193,7 +193,7 @@ mod create_trigger_tests {
         TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
         CONDITION_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
-        (0..5).into_iter().for_each(|_| {
+        (0..5).for_each(|_| {
             execute(
                 deps.as_mut(),
                 env.clone(),
@@ -266,7 +266,7 @@ mod set_triggers_tests {
 
     use super::*;
     use calc_rs::{
-        core::Condition,
+        conditions::Condition,
         scheduler::{ConditionFilter, CreateTrigger},
     };
     use cosmwasm_std::{
@@ -507,7 +507,7 @@ mod set_triggers_tests {
             triggers,
             vec![Trigger {
                 id: 3,
-                owner: owner,
+                owner,
                 conditions: create_command.conditions,
                 threshold: create_command.threshold,
                 to: create_command.to,
@@ -566,7 +566,7 @@ mod set_triggers_tests {
 #[cfg(test)]
 mod execute_trigger_tests {
     use super::*;
-    use calc_rs::core::Condition;
+    use calc_rs::conditions::Condition;
     use calc_rs::scheduler::CreateTrigger;
     use cosmwasm_std::testing::message_info;
     use cosmwasm_std::WasmMsg;
@@ -812,7 +812,7 @@ mod owned_triggers_tests {
                     deps.as_mut().storage,
                     &Trigger {
                         id: i,
-                        owner: Addr::unchecked(format!("other-owner-{}", i)),
+                        owner: Addr::unchecked(format!("other-owner-{i}")),
                         conditions: vec![],
                         threshold: TriggerConditionsThreshold::All,
                         to: Addr::unchecked("recipient"),
@@ -840,7 +840,6 @@ mod owned_triggers_tests {
         assert_eq!(
             response,
             (0..5)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i * 2 + 1, // odd ids for the owner
                     owner: Addr::unchecked("owner"),
@@ -896,7 +895,6 @@ mod owned_triggers_tests {
         assert_eq!(
             response,
             (3..=5)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
@@ -952,7 +950,6 @@ mod owned_triggers_tests {
         assert_eq!(
             response,
             (1..=3)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
@@ -1008,7 +1005,6 @@ mod owned_triggers_tests {
         assert_eq!(
             response,
             (2..=4)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
@@ -1030,7 +1026,7 @@ mod filtered_triggers_tests {
     use super::*;
 
     use calc_rs::{
-        core::Condition,
+        conditions::Condition,
         scheduler::{ConditionFilter, TriggerConditionsThreshold},
     };
     use cosmwasm_std::{
@@ -1056,7 +1052,7 @@ mod filtered_triggers_tests {
                         id: i,
                         owner: Addr::unchecked("owner"),
                         conditions: vec![Condition::TimestampElapsed(
-                            env.block.time.plus_seconds(i as u64 * 10),
+                            env.block.time.plus_seconds(i * 10),
                         )],
                         threshold: TriggerConditionsThreshold::All,
                         to: Addr::unchecked("recipient"),
@@ -1086,12 +1082,11 @@ mod filtered_triggers_tests {
         assert_eq!(
             response,
             (3..=5)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
                     conditions: vec![Condition::TimestampElapsed(
-                        env.block.time.plus_seconds(i as u64 * 10),
+                        env.block.time.plus_seconds(i * 10),
                     )],
                     threshold: TriggerConditionsThreshold::All,
                     to: Addr::unchecked("recipient"),
@@ -1118,7 +1113,7 @@ mod filtered_triggers_tests {
                         id: i,
                         owner: Addr::unchecked("owner"),
                         conditions: vec![Condition::TimestampElapsed(
-                            env.block.time.plus_seconds(i as u64 * 10),
+                            env.block.time.plus_seconds(i * 10),
                         )],
                         threshold: TriggerConditionsThreshold::All,
                         to: Addr::unchecked("recipient"),
@@ -1148,12 +1143,11 @@ mod filtered_triggers_tests {
         assert_eq!(
             response,
             (1..=3)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
                     conditions: vec![Condition::TimestampElapsed(
-                        env.block.time.plus_seconds(i as u64 * 10),
+                        env.block.time.plus_seconds(i * 10),
                     )],
                     threshold: TriggerConditionsThreshold::All,
                     to: Addr::unchecked("recipient"),
@@ -1179,9 +1173,7 @@ mod filtered_triggers_tests {
                     &Trigger {
                         id: i,
                         owner: Addr::unchecked("owner"),
-                        conditions: vec![Condition::BlocksCompleted(
-                            env.block.height + i as u64 * 10,
-                        )],
+                        conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10)],
                         threshold: TriggerConditionsThreshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1210,11 +1202,10 @@ mod filtered_triggers_tests {
         assert_eq!(
             response,
             (3..=5)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![Condition::BlocksCompleted(env.block.height + i as u64 * 10,)],
+                    conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10,)],
                     threshold: TriggerConditionsThreshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -1239,9 +1230,7 @@ mod filtered_triggers_tests {
                     &Trigger {
                         id: i,
                         owner: Addr::unchecked("owner"),
-                        conditions: vec![Condition::BlocksCompleted(
-                            env.block.height + i as u64 * 10,
-                        )],
+                        conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10)],
                         threshold: TriggerConditionsThreshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1270,11 +1259,10 @@ mod filtered_triggers_tests {
         assert_eq!(
             response,
             (2..=4)
-                .into_iter()
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![Condition::BlocksCompleted(env.block.height + i as u64 * 10,)],
+                    conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10,)],
                     threshold: TriggerConditionsThreshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -1332,7 +1320,6 @@ mod filtered_triggers_tests {
         assert_eq!(
             response,
             (3..=5)
-                .into_iter()
                 .map(|i| {
                     Trigger {
                         id: i,
@@ -1401,7 +1388,6 @@ mod filtered_triggers_tests {
         assert_eq!(
             response,
             (3..=7)
-                .into_iter()
                 .map(|i| {
                     Trigger {
                         id: i,

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use calc_rs::{
-    core::Condition,
+    conditions::Condition,
     scheduler::{ConditionFilter, Trigger},
 };
 use cosmwasm_schema::cw_serde;

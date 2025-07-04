@@ -15,6 +15,9 @@ pub enum DomainEvent {
         old_config: Strategy2,
         new_config: Strategy2,
     },
+    StrategyExecuted {
+        contract_address: Addr,
+    },
     FundsWithdrawn {
         contract_address: Addr,
         to: Addr,
@@ -81,6 +84,8 @@ impl From<DomainEvent> for Event {
                     "new_config",
                     to_json_string(&new_config).expect("Failed to serialize new config"),
                 ),
+            DomainEvent::StrategyExecuted { contract_address } => Event::new("strategy_executed")
+                .add_attribute("contract_address", contract_address.as_str()),
             DomainEvent::FundsWithdrawn {
                 contract_address,
                 to,

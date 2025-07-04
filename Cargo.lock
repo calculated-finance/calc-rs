@@ -657,6 +657,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "exchanger"
+version = "0.1.0"
+dependencies = [
+ "anybuf 1.0.0",
+ "calc-rs",
+ "calc-rs-test",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "prost",
+ "rujira-rs",
+ "schemars",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -886,6 +905,22 @@ checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
 dependencies = [
  "autocfg",
  "scopeguard",
+]
+
+[[package]]
+name = "manager"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "calc-rs-test",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "rujira-rs",
+ "schemars",
+ "serde",
 ]
 
 [[package]]
@@ -1230,6 +1265,22 @@ name = "ryu"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
+
+[[package]]
+name = "scheduler"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "rstest",
+ "rujira-rs",
+ "schemars",
+ "serde",
+]
 
 [[package]]
 name = "schemars"

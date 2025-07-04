@@ -32,15 +32,13 @@ pub fn get_pair(
 
                 if !denoms.contains(&swap_denom) {
                     return Err(StdError::generic_err(format!(
-                        "Pair at {} does not support swapping {}",
-                        address, swap_denom
+                        "Pair at {address} does not support swapping {swap_denom}"
                     )));
                 }
 
                 if !denoms.contains(&target_denom) {
                     return Err(StdError::generic_err(format!(
-                        "Pair at {} does not support swapping {}",
-                        address, target_denom
+                        "Pair at {address} does not support swapping {target_denom}"
                     )));
                 }
 
@@ -51,15 +49,15 @@ pub fn get_pair(
                 })
             }
             _ => {
-                return Err(StdError::generic_err(
+                Err(StdError::generic_err(
                     "Route not supported for Fin market exchange",
-                ));
+                ))
             }
         },
         None => {
-            return Err(StdError::generic_err(
+            Err(StdError::generic_err(
                 "Must provide a Fin market route to get a pair",
-            ));
+            ))
         }
     }
 }
@@ -106,6 +104,12 @@ fn spot_price(
 #[cw_serde]
 pub struct FinExchange {}
 
+impl Default for FinExchange {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FinExchange {
     pub fn new() -> Self {
         FinExchange {}
@@ -120,7 +124,7 @@ impl Exchange for FinExchange {
         target_denom: &str,
         route: &Option<Route>,
     ) -> StdResult<ExpectedReceiveAmount> {
-        let pair = get_pair(deps, &swap_amount.denom, &target_denom, route)?;
+        let pair = get_pair(deps, &swap_amount.denom, target_denom, route)?;
 
         let simulation = deps
             .querier
@@ -129,7 +133,7 @@ impl Exchange for FinExchange {
                 msg: to_json_binary(&QueryMsg::Simulate(swap_amount.clone()))?,
             }))?;
 
-        let spot_price = spot_price(deps, &swap_amount.denom, &target_denom, route)?;
+        let spot_price = spot_price(deps, &swap_amount.denom, target_denom, route)?;
 
         let optimal_return_amount = max(
             simulation.returned,
@@ -249,8 +253,7 @@ mod expected_receive_amount_tests {
         assert_eq!(
             result,
             StdError::generic_err(format!(
-                "Querier system error: No such contract: {}",
-                pair_address
+                "Querier system error: No such contract: {pair_address}"
             ))
         );
     }
@@ -378,8 +381,7 @@ mod swap_tests {
         assert_eq!(
             result,
             ContractError::Std(StdError::generic_err(format!(
-                "Querier system error: No such contract: {}",
-                pair_address
+                "Querier system error: No such contract: {pair_address}"
             )))
         );
     }
@@ -464,7 +466,7 @@ mod swap_tests {
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new(&"not-uruji", &quote_denom.clone()),
+                    denoms: Denoms::new("not-uruji", &quote_denom.clone()),
                     oracles: None,
                     market_maker: None,
                     tick: Tick::new(10),
@@ -554,7 +556,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -639,7 +641,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -722,7 +724,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -811,7 +813,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -905,7 +907,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 

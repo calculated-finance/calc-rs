@@ -6,6 +6,7 @@ use cosmwasm_std::{Coin, Coins, StdResult};
 use crate::actions::distribute::Recipient;
 
 #[cw_serde]
+#[derive(Default)]
 pub struct Statistics {
     pub swapped: Vec<Coin>,
     pub filled: Vec<Coin>,
@@ -13,16 +14,6 @@ pub struct Statistics {
     pub withdrawn: Vec<Coin>,
 }
 
-impl Default for Statistics {
-    fn default() -> Self {
-        Statistics {
-            swapped: Vec::new(),
-            filled: Vec::new(),
-            distributed: Vec::new(),
-            withdrawn: Vec::new(),
-        }
-    }
-}
 
 impl Statistics {
     pub fn add(self, other: Statistics) -> StdResult<Statistics> {

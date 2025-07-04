@@ -15,19 +15,19 @@ pub struct CompositeAction {
     pub actions: Vec<Action>,
 }
 
-impl Operation<CompositeAction> for CompositeAction {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<CompositeAction> {
-        Ok(CompositeAction {
+impl Operation for CompositeAction {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<Action> {
+        Ok(Action::Composite(CompositeAction {
             actions: self
                 .actions
                 .into_iter()
                 .flat_map(|action| action.init(deps, env))
                 .collect(),
             conditions: self.conditions.clone(),
-        })
+        }))
     }
 
-    fn condition(self, env: &Env) -> Option<Condition> {
+    fn condition(&self, env: &Env) -> Option<Condition> {
         // A behaviour can only be executed if it's own conditions are met,
         // and all of it's actions' conditions are satisfied.
         Some(Condition::Compound {
@@ -35,7 +35,7 @@ impl Operation<CompositeAction> for CompositeAction {
                 vec![Condition::Compound {
                     conditions: self
                         .actions
-                        .into_iter()
+                        .iter()
                         .flat_map(|action| action.condition(env))
                         .collect(),
                     // If actions are in the same list,
@@ -49,13 +49,9 @@ impl Operation<CompositeAction> for CompositeAction {
         })
     }
 
-    fn execute(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(CompositeAction, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         if self.conditions.iter().any(|c| c.check(deps, env).is_err()) {
-            return Ok((self, vec![], vec![]));
+            return Ok((Action::Composite(self), vec![], vec![]));
         }
 
         let mut all_messages = vec![];
@@ -77,10 +73,10 @@ impl Operation<CompositeAction> for CompositeAction {
             .collect::<Vec<_>>();
 
         Ok((
-            CompositeAction {
+            Action::Composite(CompositeAction {
                 actions: new_actions,
                 conditions: new_conditions,
-            },
+            }),
             all_messages,
             all_events,
         ))
@@ -90,37 +86,42 @@ impl Operation<CompositeAction> for CompositeAction {
         self,
         deps: Deps,
         env: &Env,
-        update: CompositeAction,
-    ) -> StdResult<(CompositeAction, Vec<SubMsg>, Vec<DomainEvent>)> {
-        if self.actions.len() > update.actions.len() {
-            return Err(StdError::generic_err("Cannot remove actions"));
+        update: Action,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+        match update {
+            Action::Composite(update) => {
+                if self.actions.len() > update.actions.len() {
+                    return Err(StdError::generic_err("Cannot remove actions"));
+                }
+
+                let mut all_messages = vec![];
+                let mut all_events = vec![];
+                let mut new_actions = vec![];
+
+                for (i, action) in update.actions.into_iter().enumerate() {
+                    let (action, messages, events) = if i >= self.actions.len() {
+                        let action = action.init(deps, env)?;
+                        (action, vec![], vec![])
+                    } else {
+                        self.actions[i].clone().update(deps, env, action.clone())?
+                    };
+
+                    new_actions.push(action);
+                    all_messages.extend(messages);
+                    all_events.extend(events);
+                }
+
+                Ok((
+                    Action::Composite(CompositeAction {
+                        actions: new_actions,
+                        conditions: update.conditions,
+                    }),
+                    all_messages,
+                    all_events,
+                ))
+            }
+            _ => Err(StdError::generic_err("Invalid action type for update")),
         }
-
-        let mut all_messages = vec![];
-        let mut all_events = vec![];
-        let mut new_actions = vec![];
-
-        for (i, action) in update.actions.into_iter().enumerate() {
-            let (action, messages, events) = if i >= self.actions.len() {
-                let action = action.init(deps, env)?;
-                (action, vec![], vec![])
-            } else {
-                self.actions[i].clone().update(deps, env, action.clone())?
-            };
-
-            new_actions.push(action);
-            all_messages.extend(messages);
-            all_events.extend(events);
-        }
-
-        Ok((
-            CompositeAction {
-                actions: new_actions,
-                conditions: update.conditions,
-            },
-            all_messages,
-            all_events,
-        ))
     }
 
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
@@ -153,7 +154,7 @@ impl Operation<CompositeAction> for CompositeAction {
         deps: Deps,
         env: &Env,
         desired: &Coins,
-    ) -> StdResult<(CompositeAction, Vec<SubMsg>, Coins)> {
+    ) -> StdResult<(Action, Vec<SubMsg>, Coins)> {
         let mut remaining_desired = desired.clone();
         let mut withdrawals = Coins::default();
         let mut actions = vec![];
@@ -172,14 +173,14 @@ impl Operation<CompositeAction> for CompositeAction {
             messages.extend(action_messages);
         }
 
-        Ok((CompositeAction { actions, ..self }, messages, withdrawals))
+        Ok((
+            Action::Composite(CompositeAction { actions, ..self }),
+            messages,
+            withdrawals,
+        ))
     }
 
-    fn cancel(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(CompositeAction, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         let mut all_messages = vec![];
         let mut all_events = vec![];
         let mut new_actions = vec![];
@@ -193,10 +194,10 @@ impl Operation<CompositeAction> for CompositeAction {
         }
 
         Ok((
-            CompositeAction {
+            Action::Composite(CompositeAction {
                 actions: new_actions,
                 conditions: self.conditions,
-            },
+            }),
             all_messages,
             all_events,
         ))

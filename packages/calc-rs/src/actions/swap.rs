@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    actions::operation::Operation,
+    actions::{action::Action, operation::Operation},
     core::Contract,
     exchanger::{ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReceiveAmount, Route},
 };
@@ -27,8 +27,8 @@ pub struct SwapAction {
     pub route: Option<Route>,
 }
 
-impl Operation<SwapAction> for SwapAction {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<Self> {
+impl Operation for SwapAction {
+    fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
@@ -67,17 +67,17 @@ impl Operation<SwapAction> for SwapAction {
             }
         }
 
-        Ok(self)
+        Ok(Action::Swap(self))
     }
 
-    fn condition(self, env: &Env) -> Option<Condition> {
+    fn condition(&self, env: &Env) -> Option<Condition> {
         Some(Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(1_000u128, self.swap_amount.denom.clone()),
         })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Self, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         let mut messages: Vec<SubMsg> = vec![];
         let events: Vec<DomainEvent> = vec![];
 
@@ -141,7 +141,7 @@ impl Operation<SwapAction> for SwapAction {
                 };
 
                 if scaled_swap_amount.is_zero() {
-                    return Ok((self, messages, events));
+                    return Ok((Action::Swap(self), messages, events));
                 }
 
                 let new_swap_amount = Coin::new(
@@ -170,7 +170,7 @@ impl Operation<SwapAction> for SwapAction {
         };
 
         if new_swap_amount.amount.is_zero() {
-            return Ok((self.clone(), messages, events));
+            return Ok((Action::Swap(self), messages, events));
         }
 
         let swap_msg = SubMsg::reply_always(
@@ -189,15 +189,15 @@ impl Operation<SwapAction> for SwapAction {
 
         messages.push(swap_msg);
 
-        Ok((self, messages, events))
+        Ok((Action::Swap(self), messages, events))
     }
 
     fn update(
         self,
         _deps: Deps,
         _env: &Env,
-        update: SwapAction,
-    ) -> StdResult<(Self, Vec<SubMsg>, Vec<DomainEvent>)> {
+        update: Action,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         Ok((update.init(_deps, _env)?, vec![], vec![]))
     }
 
@@ -214,15 +214,11 @@ impl Operation<SwapAction> for SwapAction {
         _deps: Deps,
         _env: &Env,
         _desired: &Coins,
-    ) -> StdResult<(SwapAction, Vec<SubMsg>, Coins)> {
-        Ok((self, vec![], Coins::default()))
+    ) -> StdResult<(Action, Vec<SubMsg>, Coins)> {
+        Ok((Action::Swap(self), vec![], Coins::default()))
     }
 
-    fn cancel(
-        self,
-        _deps: Deps,
-        _env: &Env,
-    ) -> StdResult<(SwapAction, Vec<SubMsg>, Vec<DomainEvent>)> {
-        Ok((self, vec![], vec![]))
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+        Ok((Action::Swap(self), vec![], vec![]))
     }
 }

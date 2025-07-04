@@ -1,7 +1,7 @@
 use std::{collections::HashSet, u8, vec};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coins, Decimal, Deps, Env, StdError, StdResult, SubMsg, Uint128};
+use cosmwasm_std::{Coins, Decimal, Deps, Env, StdResult, SubMsg, Uint128};
 
 use crate::{
     actions::{
@@ -79,39 +79,31 @@ impl Action {
     }
 }
 
-impl Operation<Action> for Action {
+impl Operation for Action {
     fn init(self, deps: Deps, env: &Env) -> StdResult<Action> {
         match self {
-            Action::Swap(action) => action.init(deps, env).map(Action::Swap),
-            Action::Order(action) => action.init(deps, env).map(Action::Order),
-            Action::Distribute(action) => action.init(deps, env).map(Action::Distribute),
-            Action::Composite(action) => action.init(deps, env).map(Action::Composite),
+            Action::Swap(action) => action.init(deps, env),
+            Action::Order(action) => action.init(deps, env),
+            Action::Distribute(action) => action.init(deps, env),
+            Action::Composite(action) => action.init(deps, env),
         }
     }
 
-    fn condition(self, env: &Env) -> Option<Condition> {
+    fn condition(&self, env: &Env) -> Option<Condition> {
         match self {
             Action::Swap(action) => action.condition(env),
             Action::Order(action) => action.condition(env),
             Action::Distribute(action) => action.condition(env),
-            Action::Composite(behaviour) => behaviour.condition(env),
+            Action::Composite(action) => action.condition(env),
         }
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         match self {
-            Action::Swap(action) => action
-                .execute(deps, env)
-                .map(|(a, msgs, events)| (Action::Swap(a), msgs, events)),
-            Action::Order(action) => action
-                .execute(deps, env)
-                .map(|(a, msgs, events)| (Action::Order(a), msgs, events)),
-            Action::Distribute(action) => action
-                .execute(deps, env)
-                .map(|(a, msgs, events)| (Action::Distribute(a), msgs, events)),
-            Action::Composite(behaviour) => behaviour
-                .execute(deps, env)
-                .map(|(a, msgs, events)| (Action::Composite(a), msgs, events)),
+            Action::Swap(action) => action.execute(deps, env),
+            Action::Order(action) => action.execute(deps, env),
+            Action::Distribute(action) => action.execute(deps, env),
+            Action::Composite(action) => action.execute(deps, env),
         }
     }
 
@@ -121,20 +113,11 @@ impl Operation<Action> for Action {
         env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
-        match (self, update) {
-            (Action::Swap(action), Action::Swap(update)) => action
-                .update(deps, env, update)
-                .map(|(a, msgs, events)| (Action::Swap(a), msgs, events)),
-            (Action::Order(action), Action::Order(update)) => action
-                .update(deps, env, update)
-                .map(|(a, msgs, events)| (Action::Order(a), msgs, events)),
-            (Action::Distribute(action), Action::Distribute(update)) => action
-                .update(deps, env, update)
-                .map(|(a, msgs, events)| (Action::Distribute(a), msgs, events)),
-            (Action::Composite(behaviour), Action::Composite(update)) => behaviour
-                .update(deps, env, update)
-                .map(|(a, msgs, events)| (Action::Composite(a), msgs, events)),
-            _ => Err(StdError::generic_err("Cannot update an action's type")),
+        match self {
+            Action::Swap(action) => action.update(deps, env, update),
+            Action::Order(action) => action.update(deps, env, update),
+            Action::Distribute(action) => action.update(deps, env, update),
+            Action::Composite(action) => action.update(deps, env, update),
         }
     }
 
@@ -143,7 +126,7 @@ impl Operation<Action> for Action {
             Action::Swap(action) => action.escrowed(deps, env),
             Action::Order(action) => action.escrowed(deps, env),
             Action::Distribute(action) => action.escrowed(deps, env),
-            Action::Composite(behaviour) => behaviour.escrowed(deps, env),
+            Action::Composite(action) => action.escrowed(deps, env),
         }
     }
 
@@ -152,7 +135,7 @@ impl Operation<Action> for Action {
             Action::Swap(action) => action.balances(deps, env, denoms),
             Action::Order(action) => action.balances(deps, env, denoms),
             Action::Distribute(action) => action.balances(deps, env, denoms),
-            Action::Composite(behaviour) => behaviour.balances(deps, env, denoms),
+            Action::Composite(action) => action.balances(deps, env, denoms),
         }
     }
 
@@ -163,35 +146,19 @@ impl Operation<Action> for Action {
         desired: &Coins,
     ) -> StdResult<(Action, Vec<SubMsg>, Coins)> {
         match self {
-            Action::Swap(action) => action
-                .withdraw(deps, env, desired)
-                .map(|(a, msgs, withdrawals)| (Action::Swap(a), msgs, withdrawals)),
-            Action::Order(action) => action
-                .withdraw(deps, env, desired)
-                .map(|(a, msgs, withdrawals)| (Action::Order(a), msgs, withdrawals)),
-            Action::Distribute(action) => action
-                .withdraw(deps, env, desired)
-                .map(|(a, msgs, withdrawals)| (Action::Distribute(a), msgs, withdrawals)),
-            Action::Composite(behaviour) => behaviour
-                .withdraw(deps, env, desired)
-                .map(|(a, msgs, withdrawals)| (Action::Composite(a), msgs, withdrawals)),
+            Action::Swap(action) => action.withdraw(deps, env, desired),
+            Action::Order(action) => action.withdraw(deps, env, desired),
+            Action::Distribute(action) => action.withdraw(deps, env, desired),
+            Action::Composite(action) => action.withdraw(deps, env, desired),
         }
     }
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         match self {
-            Action::Swap(action) => action
-                .cancel(deps, env)
-                .map(|(a, msgs, events)| (Action::Swap(a), msgs, events)),
-            Action::Order(action) => action
-                .cancel(deps, env)
-                .map(|(a, msgs, events)| (Action::Order(a), msgs, events)),
-            Action::Distribute(action) => action
-                .cancel(deps, env)
-                .map(|(a, msgs, events)| (Action::Distribute(a), msgs, events)),
-            Action::Composite(behaviour) => behaviour
-                .cancel(deps, env)
-                .map(|(a, msgs, events)| (Action::Composite(a), msgs, events)),
+            Action::Swap(action) => action.cancel(deps, env),
+            Action::Order(action) => action.cancel(deps, env),
+            Action::Distribute(action) => action.cancel(deps, env),
+            Action::Composite(action) => action.cancel(deps, env),
         }
     }
 }

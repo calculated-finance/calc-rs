@@ -6,6 +6,7 @@ use cosmwasm_std::{
     StdResult, SubMsg, Uint128, WasmMsg,
 };
 
+use crate::actions::action::Action;
 use crate::actions::operation::Operation;
 use crate::statistics::Statistics;
 use crate::thorchain::MsgDeposit;
@@ -45,8 +46,8 @@ pub struct DistributeAction {
     pub immutable_destinations: Vec<Destination>,
 }
 
-impl Operation<DistributeAction> for DistributeAction {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<Self> {
+impl Operation for DistributeAction {
+    fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
         }
@@ -89,10 +90,10 @@ impl Operation<DistributeAction> for DistributeAction {
             ));
         }
 
-        Ok(self)
+        Ok(Action::Distribute(self))
     }
 
-    fn condition(self, env: &Env) -> Option<Condition> {
+    fn condition(&self, env: &Env) -> Option<Condition> {
         Some(Condition::Compound {
             conditions: self
                 .denoms
@@ -106,7 +107,7 @@ impl Operation<DistributeAction> for DistributeAction {
         })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Self, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
         let mut messages: Vec<SubMsg> = vec![];
         let events: Vec<DomainEvent> = vec![];
 
@@ -161,50 +162,56 @@ impl Operation<DistributeAction> for DistributeAction {
             }
         }
 
-        Ok((self, messages, events))
+        Ok((Action::Distribute(self), messages, events))
     }
 
     fn update(
         self,
         _deps: Deps,
         _env: &Env,
-        update: DistributeAction,
-    ) -> StdResult<(Self, Vec<SubMsg>, Vec<DomainEvent>)> {
-        let existing_total_shares = self
-            .mutable_destinations
-            .iter()
-            .chain(self.immutable_destinations.iter())
-            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+        update: Action,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+        match update {
+            Action::Distribute(update) => {
+                let existing_total_shares = self
+                    .mutable_destinations
+                    .iter()
+                    .chain(self.immutable_destinations.iter())
+                    .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
-        let new_total_shares = update
-            .mutable_destinations
-            .iter()
-            .chain(update.immutable_destinations.iter())
-            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+                let new_total_shares = update
+                    .mutable_destinations
+                    .iter()
+                    .chain(update.immutable_destinations.iter())
+                    .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
-        if new_total_shares != existing_total_shares {
-            return Err(StdError::generic_err(
-                "Cannot update distribute action with different total shares",
-            ));
-        }
+                if new_total_shares != existing_total_shares {
+                    return Err(StdError::generic_err(
+                        "Cannot update distribute action with different total shares",
+                    ));
+                }
 
-        for denom in self.denoms.iter() {
-            if !update.denoms.contains(denom) {
-                return Err(StdError::generic_err(format!(
-                    "Cannot remove denom {} from distribute action",
-                    denom
-                )));
+                for denom in self.denoms.iter() {
+                    if !update.denoms.contains(denom) {
+                        return Err(StdError::generic_err(format!(
+                            "Cannot remove denom {denom} from distribute action"
+                        )));
+                    }
+                }
+
+                Ok((
+                    Action::Distribute(DistributeAction {
+                        immutable_destinations: self.immutable_destinations,
+                        ..update
+                    }),
+                    vec![],
+                    vec![],
+                ))
             }
+            _ => Err(StdError::generic_err(
+                "Cannot update distribute action with non-distribute action",
+            )),
         }
-
-        Ok((
-            DistributeAction {
-                immutable_destinations: self.immutable_destinations,
-                ..update
-            },
-            vec![],
-            vec![],
-        ))
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -220,15 +227,11 @@ impl Operation<DistributeAction> for DistributeAction {
         _deps: Deps,
         _env: &Env,
         _desired: &Coins,
-    ) -> StdResult<(DistributeAction, Vec<SubMsg>, Coins)> {
-        Ok((self, vec![], Coins::default()))
+    ) -> StdResult<(Action, Vec<SubMsg>, Coins)> {
+        Ok((Action::Distribute(self), vec![], Coins::default()))
     }
 
-    fn cancel(
-        self,
-        _deps: Deps,
-        _env: &Env,
-    ) -> StdResult<(DistributeAction, Vec<SubMsg>, Vec<DomainEvent>)> {
-        Ok((self, vec![], vec![]))
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+        Ok((Action::Distribute(self), vec![], vec![]))
     }
 }

@@ -1,7 +1,6 @@
 use std::cmp::max;
 
 use calc_rs::{
-    actions::operation::Operation,
     core::{Contract, ContractError, ContractResult},
     events::DomainEvent,
     manager::{Affiliate, StrategyStatus},
@@ -181,7 +180,7 @@ pub fn execute(
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     if matches!(reply.result, SubMsgResult::Ok(_)) {
         STATS.update(_deps.storage, |s| {
-            s.add(from_json::<Statistics>(reply.payload).unwrap_or(Statistics::default()))
+            s.add(from_json::<Statistics>(reply.payload).unwrap_or_default())
         })?;
     }
 

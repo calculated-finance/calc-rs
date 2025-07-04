@@ -1,16 +1,13 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin};
+use cosmwasm_std::{Addr, Coin};
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 
-use crate::strategy::Strategy2;
+use crate::{actions::action::Action, strategy::Strategy2};
 
 #[cw_serde]
 pub struct ManagerConfig {
-    pub admin: Addr,
     pub fee_collector: Addr,
-    pub affiliate_creation_fee: Coin,
-    pub default_affiliate_bps: u64,
-    pub code_ids: Vec<(StrategyType, u64)>,
+    pub strategy_code_id: u64,
 }
 
 #[derive(Hash, Eq)]
@@ -128,11 +125,11 @@ pub enum ManagerExecuteMsg {
     InstantiateStrategy {
         owner: Addr,
         label: String,
-        strategy: Strategy2,
+        affiliates: Vec<Affiliate>,
+        actions: Vec<Action>,
     },
     ExecuteStrategy {
         contract_address: Addr,
-        msg: Option<Binary>,
     },
     UpdateStrategyStatus {
         contract_address: Addr,
@@ -141,11 +138,6 @@ pub enum ManagerExecuteMsg {
     UpdateStrategy {
         contract_address: Addr,
         update: Strategy2,
-    },
-    AddAffiliate {
-        code: String,
-        address: Addr,
-        bps: u64,
     },
 }
 
@@ -161,13 +153,6 @@ pub enum ManagerQueryMsg {
         owner: Option<Addr>,
         status: Option<StrategyStatus>,
         start_after: Option<u64>,
-        limit: Option<u16>,
-    },
-    #[returns(Option<Affiliate>)]
-    Affiliate { code: String },
-    #[returns(Vec<Affiliate>)]
-    Affiliates {
-        start_after: Option<Addr>,
         limit: Option<u16>,
     },
 }

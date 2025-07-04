@@ -20,7 +20,7 @@ pub struct InstantiateMsg {
     affiliate_bps: Option<u64>,
 }
 
-#[entry_point]
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
@@ -46,7 +46,7 @@ pub struct MigrateMsg {
     affiliate_bps: Option<u64>,
 }
 
-#[entry_point]
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, StdError> {
     CONFIG.save(
         deps,
@@ -120,7 +120,7 @@ pub fn execute(
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     Ok(Response::default()
         .add_attribute("action", "reply")
-        .add_attribute("payload", format!("{:?}", reply)))
+        .add_attribute("payload", format!("{reply:?}")))
 }
 
 fn expected_receive_amount(
@@ -133,7 +133,7 @@ fn expected_receive_amount(
     exchanges
         .iter()
         .flat_map(|e| {
-            e.expected_receive_amount(deps, &swap_amount, &target_denom, route)
+            e.expected_receive_amount(deps, swap_amount, &target_denom, route)
                 .ok()
         })
         .max_by(|a, b| a.receive_amount.amount.cmp(&b.receive_amount.amount))
@@ -144,7 +144,7 @@ fn expected_receive_amount(
                     swap_amount.denom, target_denom
                 )))
             },
-            |amount| Ok(amount),
+            Ok,
         )
 }
 
@@ -165,8 +165,7 @@ fn swap(
         for rebate in on_complete.execution_rebate.into_iter() {
             funds.sub(rebate.clone()).map_err(|_| {
                 StdError::generic_err(format!(
-                    "Execution rebate amount not included in provided funds: {:#?}",
-                    rebate
+                    "Execution rebate amount not included in provided funds: {rebate:#?}"
                 ))
             })?;
         }
@@ -206,7 +205,7 @@ fn swap(
             &env,
             &info,
             &swap_amount,
-            &minimum_receive_amount,
+            minimum_receive_amount,
             maximum_slippage_bps,
             route,
             recipient.unwrap_or(info.sender.clone()),
@@ -265,7 +264,7 @@ mod expected_receive_amount_tests {
             expected_receive_amount(
                 vec![mock],
                 mock_dependencies().as_ref(),
-                &swap_amount,
+                swap_amount,
                 target_denom,
                 &None,
             )
@@ -297,7 +296,7 @@ mod expected_receive_amount_tests {
             expected_receive_amount(
                 vec![mock, Box::new(MockExchange::default())],
                 mock_dependencies().as_ref(),
-                &swap_amount,
+                swap_amount,
                 target_denom.clone(),
                 &None,
             )
@@ -331,9 +330,9 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(100u128, "uruji");
 
         mock.swap_fn = Box::new(move |_, _, _, _, _, _, _, _, _| {
-            Err(ContractError::generic_err(format!(
-                "Unable to find a path for swapping rune to uruji",
-            )))
+            Err(ContractError::generic_err(
+                "Unable to find a path for swapping rune to uruji".to_string(),
+            ))
         });
 
         assert_eq!(
@@ -388,8 +387,7 @@ mod swap_tests {
             .unwrap_err()
             .to_string(),
             format!(
-                "Generic error: Execution rebate amount not included in provided funds: {:#?}",
-                execution_rebate
+                "Generic error: Execution rebate amount not included in provided funds: {execution_rebate:#?}"
             )
         );
     }

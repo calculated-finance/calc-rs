@@ -45,7 +45,7 @@ impl Schedule {
                 previous.map_or(env.block.height, |previous| previous + interval),
             ),
             Schedule::Time { duration, previous } => {
-                Condition::TimeElapsed(previous.map_or(env.block.time, |previous| {
+                Condition::TimestampElapsed(previous.map_or(env.block.time, |previous| {
                     previous.plus_seconds(duration.as_secs())
                 }))
             }
@@ -85,7 +85,7 @@ impl Schedule {
 
 #[cw_serde]
 pub enum Condition {
-    TimeElapsed(Timestamp),
+    TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
     ScheduleIsDue(Schedule),
     CanSwap {
@@ -119,7 +119,7 @@ pub enum Condition {
 impl Condition {
     pub fn check(&self, deps: Deps, env: &Env) -> StdResult<()> {
         match self {
-            Condition::TimeElapsed(timestamp) => {
+            Condition::TimestampElapsed(timestamp) => {
                 if env.block.time >= *timestamp {
                     return Ok(());
                 }
@@ -273,7 +273,7 @@ impl Condition {
 
     pub fn description(&self, env: &Env) -> String {
         match self {
-            Condition::TimeElapsed(timestamp) => format!("timestamp elapsed: {timestamp}"),
+            Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {timestamp}"),
             Condition::BlocksCompleted(height) => format!("blocks completed: {height}"),
             Condition::ScheduleIsDue(schedule) => format!(
                 "schedule is due: {}",
@@ -492,7 +492,7 @@ mod schedule_tests {
                 previous: None
             }
             .into_condition(&env),
-            Condition::TimeElapsed(env.block.time)
+            Condition::TimestampElapsed(env.block.time)
         );
 
         assert_eq!(
@@ -501,7 +501,7 @@ mod schedule_tests {
                 previous: Some(env.block.time)
             }
             .into_condition(&env),
-            Condition::TimeElapsed(env.block.time.plus_seconds(10))
+            Condition::TimestampElapsed(env.block.time.plus_seconds(10))
         );
 
         assert_eq!(
@@ -510,7 +510,7 @@ mod schedule_tests {
                 previous: Some(env.block.time.minus_seconds(5))
             }
             .into_condition(&env),
-            Condition::TimeElapsed(env.block.time.plus_seconds(10 - 5))
+            Condition::TimestampElapsed(env.block.time.plus_seconds(10 - 5))
         );
 
         assert_eq!(
@@ -519,7 +519,7 @@ mod schedule_tests {
                 previous: Some(env.block.time.minus_seconds(155))
             }
             .into_condition(&env),
-            Condition::TimeElapsed(env.block.time.minus_seconds(155 - 10))
+            Condition::TimestampElapsed(env.block.time.minus_seconds(155 - 10))
         );
     }
 
@@ -527,74 +527,58 @@ mod schedule_tests {
     fn block_schedule_is_due() {
         let env = mock_env();
 
-        assert!(
-            Schedule::Blocks {
-                interval: 10,
-                previous: None
-            }
-            .is_due(&env)
-        );
+        assert!(Schedule::Blocks {
+            interval: 10,
+            previous: None
+        }
+        .is_due(&env));
 
-        assert!(
-            !Schedule::Blocks {
-                interval: 10,
-                previous: Some(env.block.height - 5)
-            }
-            .is_due(&env)
-        );
+        assert!(!Schedule::Blocks {
+            interval: 10,
+            previous: Some(env.block.height - 5)
+        }
+        .is_due(&env));
 
-        assert!(
-            Schedule::Blocks {
-                interval: 5,
-                previous: Some(env.block.height - 6)
-            }
-            .is_due(&env)
-        );
+        assert!(Schedule::Blocks {
+            interval: 5,
+            previous: Some(env.block.height - 6)
+        }
+        .is_due(&env));
 
-        assert!(
-            !Schedule::Blocks {
-                interval: 5,
-                previous: Some(env.block.height - 5)
-            }
-            .is_due(&env)
-        );
+        assert!(!Schedule::Blocks {
+            interval: 5,
+            previous: Some(env.block.height - 5)
+        }
+        .is_due(&env));
     }
 
     #[test]
     fn time_schedule_is_due() {
         let env = mock_env();
 
-        assert!(
-            Schedule::Time {
-                duration: Duration::from_secs(10),
-                previous: None
-            }
-            .is_due(&env)
-        );
+        assert!(Schedule::Time {
+            duration: Duration::from_secs(10),
+            previous: None
+        }
+        .is_due(&env));
 
-        assert!(
-            !Schedule::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.minus_seconds(5))
-            }
-            .is_due(&env)
-        );
+        assert!(!Schedule::Time {
+            duration: Duration::from_secs(10),
+            previous: Some(env.block.time.minus_seconds(5))
+        }
+        .is_due(&env));
 
-        assert!(
-            Schedule::Time {
-                duration: Duration::from_secs(5),
-                previous: Some(env.block.time.minus_seconds(6))
-            }
-            .is_due(&env)
-        );
+        assert!(Schedule::Time {
+            duration: Duration::from_secs(5),
+            previous: Some(env.block.time.minus_seconds(6))
+        }
+        .is_due(&env));
 
-        assert!(
-            !Schedule::Time {
-                duration: Duration::from_secs(5),
-                previous: Some(env.block.time.minus_seconds(5))
-            }
-            .is_due(&env)
-        );
+        assert!(!Schedule::Time {
+            duration: Duration::from_secs(5),
+            previous: Some(env.block.time.minus_seconds(5))
+        }
+        .is_due(&env));
     }
 }
 
@@ -617,15 +601,15 @@ mod conditions_tests {
         let deps = mock_dependencies();
         let env = mock_env();
 
-        assert!(Condition::TimeElapsed(Timestamp::from_seconds(0))
+        assert!(Condition::TimestampElapsed(Timestamp::from_seconds(0))
             .check(deps.as_ref(), &env)
             .is_ok());
 
-        assert!(Condition::TimeElapsed(env.block.time)
+        assert!(Condition::TimestampElapsed(env.block.time)
             .check(deps.as_ref(), &env)
             .is_ok());
 
-        assert!(Condition::TimeElapsed(env.block.time.plus_seconds(1))
+        assert!(Condition::TimestampElapsed(env.block.time.plus_seconds(1))
             .check(deps.as_ref(), &env)
             .is_err());
     }
