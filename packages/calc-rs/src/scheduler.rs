@@ -1,18 +1,12 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Deps, Env, MessageInfo, StdResult, Timestamp};
 
-use crate::conditions::Condition;
-
-#[cw_serde]
-pub enum TriggerConditionsThreshold {
-    Any,
-    All,
-}
+use crate::conditions::{Condition, Threshold};
 
 #[cw_serde]
 pub struct CreateTrigger {
     pub conditions: Vec<Condition>,
-    pub threshold: TriggerConditionsThreshold,
+    pub threshold: Threshold,
     pub to: Addr,
     pub msg: Binary,
 }
@@ -22,7 +16,7 @@ pub struct Trigger {
     pub id: u64,
     pub owner: Addr,
     pub conditions: Vec<Condition>,
-    pub threshold: TriggerConditionsThreshold,
+    pub threshold: Threshold,
     pub msg: Binary,
     pub to: Addr,
     pub execution_rebate: Vec<Coin>,
@@ -43,15 +37,14 @@ impl Trigger {
 
     pub fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<bool> {
         Ok(match self.threshold {
-            TriggerConditionsThreshold::All => {
-                self.conditions.iter().all(|c| c.check(deps, env).is_ok())
-            }
-            TriggerConditionsThreshold::Any => {
-                self.conditions.iter().any(|c| c.check(deps, env).is_ok())
-            }
+            Threshold::All => self.conditions.iter().all(|c| c.check(deps, env).is_ok()),
+            Threshold::Any => self.conditions.iter().any(|c| c.check(deps, env).is_ok()),
         })
     }
 }
+
+#[cw_serde]
+pub struct SchedulerInstantiateMsg {}
 
 #[cw_serde]
 pub enum SchedulerExecuteMsg {

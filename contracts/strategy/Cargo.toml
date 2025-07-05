@@ -35,4 +35,7 @@ serde = { workspace = true }
 [dev-dependencies]
 calc-rs-test = { workspace = true }
 cw-multi-test = { workspace = true }
+exchanger = { workspace = true }
+manager = { workspace = true }
 rstest = { workspace = true }
+scheduler = { workspace = true }

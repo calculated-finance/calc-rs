@@ -1,80 +1,31 @@
 use std::{collections::HashSet, u8, vec};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coins, Decimal, Deps, Env, StdResult, SubMsg, Uint128};
+use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
 
 use crate::{
     actions::{
-        composite::CompositeAction,
-        distribute::{Destination, DistributeAction, Recipient},
-        operation::Operation,
-        order::OrderAction,
-        swap::SwapAction,
+        behaviour::Behaviour, crank::Schedule, operation::Operation, order::Order,
+        recipients::Recipients, swap::Swap,
     },
     conditions::Condition,
-    events::DomainEvent,
-    manager::Affiliate,
 };
 
 #[cw_serde]
 pub enum Action {
-    Swap(SwapAction),
-    Order(OrderAction),
-    Distribute(DistributeAction),
-    Composite(CompositeAction),
+    Check(Condition),
+    Crank(Schedule),
+    Perform(Swap),
+    Set(Order),
+    DistributeTo(Recipients),
+    Exhibit(Behaviour),
 }
 
 impl Action {
-    pub fn with_affiliates(&self, affiliates: &Vec<Affiliate>) -> Self {
+    pub fn size(&self) -> usize {
         match self {
-            Action::Distribute(DistributeAction {
-                denoms,
-                mutable_destinations,
-                immutable_destinations,
-            }) => {
-                let total_affiliate_bps = affiliates
-                    .iter()
-                    .fold(0, |acc, affiliate| acc + affiliate.bps);
-
-                let total_shares = mutable_destinations
-                    .iter()
-                    .chain(immutable_destinations.iter())
-                    .fold(Uint128::zero(), |acc, d| acc + d.shares);
-
-                let total_shares_with_fees =
-                    total_shares.mul_ceil(Decimal::bps(10_000 + total_affiliate_bps));
-
-                Action::Distribute(DistributeAction {
-                    denoms: denoms.clone(),
-                    mutable_destinations: mutable_destinations.clone(),
-                    immutable_destinations: [
-                        immutable_destinations.clone(),
-                        affiliates
-                            .iter()
-                            .map(|affiliate| Destination {
-                                recipient: Recipient::Bank {
-                                    address: affiliate.address.clone(),
-                                },
-                                shares: total_shares_with_fees
-                                    .mul_floor(Decimal::bps(affiliate.bps)),
-                                label: Some(affiliate.code.clone()),
-                            })
-                            .collect::<Vec<_>>(),
-                    ]
-                    .concat(),
-                })
-            }
-            Action::Composite(CompositeAction {
-                actions,
-                conditions,
-            }) => Action::Composite(CompositeAction {
-                actions: actions
-                    .iter()
-                    .map(|action| action.with_affiliates(affiliates))
-                    .collect(),
-                conditions: conditions.clone(),
-            }),
-            _ => self.clone(),
+            Action::Exhibit(action) => action.size(),
+            _ => 1,
         }
     }
 }
@@ -82,28 +33,34 @@ impl Action {
 impl Operation for Action {
     fn init(self, deps: Deps, env: &Env) -> StdResult<Action> {
         match self {
-            Action::Swap(action) => action.init(deps, env),
-            Action::Order(action) => action.init(deps, env),
-            Action::Distribute(action) => action.init(deps, env),
-            Action::Composite(action) => action.init(deps, env),
+            Action::Check(condition) => condition.init(deps, env),
+            Action::Crank(action) => action.init(deps, env),
+            Action::Perform(action) => action.init(deps, env),
+            Action::Set(action) => action.init(deps, env),
+            Action::DistributeTo(action) => action.init(deps, env),
+            Action::Exhibit(action) => action.init(deps, env),
         }
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {
         match self {
-            Action::Swap(action) => action.condition(env),
-            Action::Order(action) => action.condition(env),
-            Action::Distribute(action) => action.condition(env),
-            Action::Composite(action) => action.condition(env),
+            Action::Check(condition) => condition.condition(env),
+            Action::Crank(action) => action.condition(env),
+            Action::Perform(action) => action.condition(env),
+            Action::Set(action) => action.condition(env),
+            Action::DistributeTo(action) => action.condition(env),
+            Action::Exhibit(action) => action.condition(env),
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         match self {
-            Action::Swap(action) => action.execute(deps, env),
-            Action::Order(action) => action.execute(deps, env),
-            Action::Distribute(action) => action.execute(deps, env),
-            Action::Composite(action) => action.execute(deps, env),
+            Action::Check(condition) => condition.execute(deps, env),
+            Action::Crank(action) => action.execute(deps, env),
+            Action::Perform(action) => action.execute(deps, env),
+            Action::Set(action) => action.execute(deps, env),
+            Action::DistributeTo(action) => action.execute(deps, env),
+            Action::Exhibit(action) => action.execute(deps, env),
         }
     }
 
@@ -112,53 +69,58 @@ impl Operation for Action {
         deps: Deps,
         env: &Env,
         update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         match self {
-            Action::Swap(action) => action.update(deps, env, update),
-            Action::Order(action) => action.update(deps, env, update),
-            Action::Distribute(action) => action.update(deps, env, update),
-            Action::Composite(action) => action.update(deps, env, update),
+            Action::Check(condition) => condition.update(deps, env, update),
+            Action::Crank(action) => action.update(deps, env, update),
+            Action::Perform(action) => action.update(deps, env, update),
+            Action::Set(action) => action.update(deps, env, update),
+            Action::DistributeTo(action) => action.update(deps, env, update),
+            Action::Exhibit(action) => action.update(deps, env, update),
         }
     }
 
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         match self {
-            Action::Swap(action) => action.escrowed(deps, env),
-            Action::Order(action) => action.escrowed(deps, env),
-            Action::Distribute(action) => action.escrowed(deps, env),
-            Action::Composite(action) => action.escrowed(deps, env),
+            Action::Check(condition) => condition.escrowed(deps, env),
+            Action::Crank(action) => action.escrowed(deps, env),
+            Action::Perform(action) => action.escrowed(deps, env),
+            Action::Set(action) => action.escrowed(deps, env),
+            Action::DistributeTo(action) => action.escrowed(deps, env),
+            Action::Exhibit(action) => action.escrowed(deps, env),
         }
     }
 
     fn balances(&self, deps: Deps, env: &Env, denoms: &[String]) -> StdResult<Coins> {
         match self {
-            Action::Swap(action) => action.balances(deps, env, denoms),
-            Action::Order(action) => action.balances(deps, env, denoms),
-            Action::Distribute(action) => action.balances(deps, env, denoms),
-            Action::Composite(action) => action.balances(deps, env, denoms),
+            Action::Check(condition) => condition.balances(deps, env, denoms),
+            Action::Crank(action) => action.balances(deps, env, denoms),
+            Action::Perform(action) => action.balances(deps, env, denoms),
+            Action::Set(action) => action.balances(deps, env, denoms),
+            Action::DistributeTo(action) => action.balances(deps, env, denoms),
+            Action::Exhibit(action) => action.balances(deps, env, denoms),
         }
     }
 
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &Coins,
-    ) -> StdResult<(Action, Vec<SubMsg>, Coins)> {
+    fn withdraw(&self, deps: Deps, env: &Env, desired: &Coins) -> StdResult<(Vec<SubMsg>, Coins)> {
         match self {
-            Action::Swap(action) => action.withdraw(deps, env, desired),
-            Action::Order(action) => action.withdraw(deps, env, desired),
-            Action::Distribute(action) => action.withdraw(deps, env, desired),
-            Action::Composite(action) => action.withdraw(deps, env, desired),
+            Action::Check(condition) => condition.withdraw(deps, env, desired),
+            Action::Crank(action) => action.withdraw(deps, env, desired),
+            Action::Perform(action) => action.withdraw(deps, env, desired),
+            Action::Set(action) => action.withdraw(deps, env, desired),
+            Action::DistributeTo(action) => action.withdraw(deps, env, desired),
+            Action::Exhibit(action) => action.withdraw(deps, env, desired),
         }
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         match self {
-            Action::Swap(action) => action.cancel(deps, env),
-            Action::Order(action) => action.cancel(deps, env),
-            Action::Distribute(action) => action.cancel(deps, env),
-            Action::Composite(action) => action.cancel(deps, env),
+            Action::Check(condition) => condition.cancel(deps, env),
+            Action::Crank(action) => action.cancel(deps, env),
+            Action::Perform(action) => action.cancel(deps, env),
+            Action::Set(action) => action.cancel(deps, env),
+            Action::DistributeTo(action) => action.cancel(deps, env),
+            Action::Exhibit(action) => action.cancel(deps, env),
         }
     }
 }

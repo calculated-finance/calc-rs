@@ -1,5 +1,7 @@
 use calc_rs::core::{Callback, ContractResult};
-use calc_rs::exchanger::{ExchangeExecuteMsg, ExchangeQueryMsg, ExpectedReceiveAmount, Route};
+use calc_rs::exchanger::{
+    ExchangerExecuteMsg, ExchangerInstantiateMsg, ExchangerQueryMsg, ExpectedReceiveAmount, Route,
+};
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -13,19 +15,12 @@ use crate::exchanges::{fin::FinExchange, thorchain::ThorchainExchange};
 use crate::state::CONFIG;
 use crate::types::{Exchange, ExchangeConfig};
 
-#[cw_serde]
-pub struct InstantiateMsg {
-    scheduler_address: Addr,
-    affiliate_code: Option<String>,
-    affiliate_bps: Option<u64>,
-}
-
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
-    msg: InstantiateMsg,
+    msg: ExchangerInstantiateMsg,
 ) -> ContractResult {
     CONFIG.save(
         deps,
@@ -70,10 +65,10 @@ pub fn get_exchanges(deps: Deps) -> StdResult<Vec<Box<dyn Exchange>>> {
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, _env: Env, msg: ExchangeQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, _env: Env, msg: ExchangerQueryMsg) -> StdResult<Binary> {
     let exchanges = get_exchanges(deps)?;
     match msg {
-        ExchangeQueryMsg::ExpectedReceiveAmount {
+        ExchangerQueryMsg::ExpectedReceiveAmount {
             swap_amount,
             target_denom,
             route,
@@ -92,11 +87,11 @@ pub fn execute(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: ExchangeExecuteMsg,
+    msg: ExchangerExecuteMsg,
 ) -> ContractResult {
     let exchanges = get_exchanges(deps.as_ref())?;
     match msg {
-        ExchangeExecuteMsg::Swap {
+        ExchangerExecuteMsg::Swap {
             minimum_receive_amount,
             maximum_slippage_bps,
             route,

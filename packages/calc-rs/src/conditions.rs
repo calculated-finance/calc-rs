@@ -1,22 +1,25 @@
-use std::{time::Duration, u8, vec};
+use std::{str::FromStr, time::Duration, u8, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin, Deps, Env, StdError, StdResult, Timestamp};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
-    exchanger::{ExchangeQueryMsg, ExpectedReceiveAmount, Route},
+    exchanger::{ExchangerQueryMsg, ExpectedReceiveAmount, Route},
     manager::{ManagerQueryMsg, Strategy, StrategyStatus},
 };
 
 #[cw_serde]
-pub enum LogicalOperator {
-    And,
-    Or,
+pub enum Threshold {
+    All,
+    Any,
 }
 
+use chrono::Utc;
+use cron::Schedule as CronSchedule;
+
 #[cw_serde]
-pub enum Schedule {
+pub enum Cadence {
     Blocks {
         interval: u64,
         previous: Option<u64>,
@@ -25,39 +28,59 @@ pub enum Schedule {
         duration: Duration,
         previous: Option<Timestamp>,
     },
+    Cron(String),
 }
 
-impl Schedule {
+impl Cadence {
     pub fn is_due(&self, env: &Env) -> bool {
         match self {
-            Schedule::Blocks { interval, previous } => {
-                previous.is_none_or(|previous| env.block.height > previous + interval)
+            Cadence::Blocks { interval, previous } => {
+                previous.map_or(true, |previous| env.block.height > previous + interval)
             }
-            Schedule::Time { duration, previous } => previous.is_none_or(|previous| {
+            Cadence::Time { duration, previous } => previous.map_or(true, |previous| {
                 env.block.time.seconds() > previous.seconds() + duration.as_secs()
             }),
+            Cadence::Cron(cron_str) => {
+                if let Ok(schedule) = CronSchedule::from_str(cron_str) {
+                    if let Some(next) = schedule.upcoming(Utc).next() {
+                        return env.block.time.seconds() >= next.timestamp() as u64;
+                    }
+                }
+                false
+            }
         }
     }
 
     pub fn into_condition(&self, env: &Env) -> Condition {
         match self {
-            Schedule::Blocks { interval, previous } => Condition::BlocksCompleted(
+            Cadence::Blocks { interval, previous } => Condition::BlocksCompleted(
                 previous.map_or(env.block.height, |previous| previous + interval),
             ),
-            Schedule::Time { duration, previous } => {
+            Cadence::Time { duration, previous } => {
                 Condition::TimestampElapsed(previous.map_or(env.block.time, |previous| {
                     previous.plus_seconds(duration.as_secs())
                 }))
             }
+            Cadence::Cron(cron_str) => {
+                if let Ok(schedule) = CronSchedule::from_str(cron_str) {
+                    if let Some(next) = schedule.upcoming(Utc).next() {
+                        return Condition::TimestampElapsed(Timestamp::from_seconds(
+                            next.timestamp() as u64,
+                        ));
+                    }
+                }
+                // Return a condition that will never be met if cron is invalid
+                Condition::BlocksCompleted(u64::MAX)
+            }
         }
     }
 
-    pub fn next(&self, env: &Env) -> Self {
+    pub fn next(self, env: &Env) -> Self {
         match self {
-            Schedule::Blocks { interval, previous } => Schedule::Blocks {
-                interval: *interval,
+            Cadence::Blocks { interval, previous } => Cadence::Blocks {
+                interval: interval,
                 previous: Some(previous.map_or(env.block.height, |previous| {
-                    let next = previous + *interval;
+                    let next = previous + interval;
                     if next < env.block.height {
                         let blocks_completed = env.block.height - previous;
                         env.block.height + blocks_completed % interval
@@ -66,8 +89,8 @@ impl Schedule {
                     }
                 })),
             },
-            Schedule::Time { duration, previous } => Schedule::Time {
-                duration: *duration,
+            Cadence::Time { duration, previous } => Cadence::Time {
+                duration: duration,
                 previous: Some(previous.map_or(env.block.time, |previous| {
                     let duration = duration.as_secs();
                     let next = previous.plus_seconds(duration);
@@ -79,6 +102,7 @@ impl Schedule {
                     }
                 })),
             },
+            Cadence::Cron(_) => self,
         }
     }
 }
@@ -87,7 +111,7 @@ impl Schedule {
 pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
-    ScheduleIsDue(Schedule),
+
     CanSwap {
         exchanger_contract: Addr,
         swap_amount: Coin,
@@ -112,7 +136,7 @@ pub enum Condition {
     },
     Compound {
         conditions: Vec<Condition>,
-        operator: LogicalOperator,
+        operator: Threshold,
     },
 }
 
@@ -138,15 +162,6 @@ impl Condition {
                     "Blocks not completed: current height ({}) is before required height ({})",
                     env.block.height, height
                 )))
-            }
-            Condition::ScheduleIsDue(schedule) => {
-                if schedule.is_due(env) {
-                    Ok(())
-                } else {
-                    Err(StdError::generic_err(
-                        schedule.into_condition(env).description(env),
-                    ))
-                }
             }
             Condition::LimitOrderFilled {
                 pair_address,
@@ -185,7 +200,7 @@ impl Condition {
                 let expected_receive_amount =
                     deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
                         exchanger_contract,
-                        &ExchangeQueryMsg::ExpectedReceiveAmount {
+                        &ExchangerQueryMsg::ExpectedReceiveAmount {
                             swap_amount: swap_amount.clone(),
                             target_denom: minimum_receive_amount.denom.clone(),
                             route: route.clone(),
@@ -246,13 +261,13 @@ impl Condition {
                 conditions,
                 operator,
             } => match operator {
-                LogicalOperator::And => {
+                Threshold::All => {
                     for condition in conditions {
                         condition.check(deps, env)?;
                     }
                     Ok(())
                 }
-                LogicalOperator::Or => {
+                Threshold::Any => {
                     for condition in conditions {
                         if condition.check(deps, env).is_ok() {
                             return Ok(());
@@ -275,10 +290,6 @@ impl Condition {
         match self {
             Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {timestamp}"),
             Condition::BlocksCompleted(height) => format!("blocks completed: {height}"),
-            Condition::ScheduleIsDue(schedule) => format!(
-                "schedule is due: {}",
-                schedule.into_condition(env).description(env)
-            ),
             Condition::CanSwap {
                 swap_amount,
                 minimum_receive_amount,
@@ -307,7 +318,7 @@ impl Condition {
             ),
             Condition::Compound { conditions, operator } => {
                 match operator {
-                    LogicalOperator::And => format!(
+                    Threshold::All => format!(
                         "All the following conditions are met: [\n\t{}\n]",
                         conditions
                             .iter()
@@ -315,7 +326,7 @@ impl Condition {
                             .collect::<Vec<_>>()
                             .join(",\n\t")
                     ),
-                    LogicalOperator::Or => format!(
+                    Threshold::Any => format!(
                         "Any of the following conditions are met: [\n\t{}\n]",
                         conditions
                             .iter()
@@ -325,13 +336,6 @@ impl Condition {
                     ),
                 }
             }
-        }
-    }
-
-    pub fn next(&self, env: &Env) -> Condition {
-        match self {
-            Condition::ScheduleIsDue(schedule) => Condition::ScheduleIsDue(schedule.next(env)),
-            _ => self.clone(),
         }
     }
 }
@@ -349,48 +353,48 @@ mod schedule_tests {
         let env = mock_env();
 
         assert_eq!(
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: None
             }
             .next(&env),
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height)
             }
         );
 
         assert_eq!(
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height - 5)
             }
             .next(&env),
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height - 5 + 10)
             }
         );
 
         assert_eq!(
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height - 15)
             }
             .next(&env),
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height + 5)
             }
         );
 
         assert_eq!(
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height - 155)
             }
             .next(&env),
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height + 5)
             }
@@ -402,48 +406,48 @@ mod schedule_tests {
         let env = mock_env();
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: std::time::Duration::from_secs(10),
                 previous: None
             }
             .next(&env),
-            Schedule::Time {
+            Cadence::Time {
                 duration: std::time::Duration::from_secs(10),
                 previous: Some(env.block.time)
             }
         );
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(5))
             }
             .next(&env),
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.plus_seconds(5))
             }
         );
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(15))
             }
             .next(&env),
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.plus_seconds(5))
             }
         );
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(155))
             }
             .next(&env),
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.plus_seconds(5))
             }
@@ -455,7 +459,7 @@ mod schedule_tests {
         let env = mock_env();
 
         assert_eq!(
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: None
             }
@@ -464,7 +468,7 @@ mod schedule_tests {
         );
 
         assert_eq!(
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height)
             }
@@ -473,7 +477,7 @@ mod schedule_tests {
         );
 
         assert_eq!(
-            Schedule::Blocks {
+            Cadence::Blocks {
                 interval: 10,
                 previous: Some(env.block.height - 5)
             }
@@ -487,7 +491,7 @@ mod schedule_tests {
         let env = mock_env();
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: None
             }
@@ -496,7 +500,7 @@ mod schedule_tests {
         );
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time)
             }
@@ -505,7 +509,7 @@ mod schedule_tests {
         );
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(5))
             }
@@ -514,7 +518,7 @@ mod schedule_tests {
         );
 
         assert_eq!(
-            Schedule::Time {
+            Cadence::Time {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(155))
             }
@@ -527,25 +531,25 @@ mod schedule_tests {
     fn block_schedule_is_due() {
         let env = mock_env();
 
-        assert!(Schedule::Blocks {
+        assert!(Cadence::Blocks {
             interval: 10,
             previous: None
         }
         .is_due(&env));
 
-        assert!(!Schedule::Blocks {
+        assert!(!Cadence::Blocks {
             interval: 10,
             previous: Some(env.block.height - 5)
         }
         .is_due(&env));
 
-        assert!(Schedule::Blocks {
+        assert!(Cadence::Blocks {
             interval: 5,
             previous: Some(env.block.height - 6)
         }
         .is_due(&env));
 
-        assert!(!Schedule::Blocks {
+        assert!(!Cadence::Blocks {
             interval: 5,
             previous: Some(env.block.height - 5)
         }
@@ -556,25 +560,25 @@ mod schedule_tests {
     fn time_schedule_is_due() {
         let env = mock_env();
 
-        assert!(Schedule::Time {
+        assert!(Cadence::Time {
             duration: Duration::from_secs(10),
             previous: None
         }
         .is_due(&env));
 
-        assert!(!Schedule::Time {
+        assert!(!Cadence::Time {
             duration: Duration::from_secs(10),
             previous: Some(env.block.time.minus_seconds(5))
         }
         .is_due(&env));
 
-        assert!(Schedule::Time {
+        assert!(Cadence::Time {
             duration: Duration::from_secs(5),
             previous: Some(env.block.time.minus_seconds(6))
         }
         .is_due(&env));
 
-        assert!(!Schedule::Time {
+        assert!(!Cadence::Time {
             duration: Duration::from_secs(5),
             previous: Some(env.block.time.minus_seconds(5))
         }

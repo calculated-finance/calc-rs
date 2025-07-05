@@ -3,7 +3,7 @@ import { compileFromFile } from "json-schema-to-typescript";
 import * as path from "path";
 import { Project } from "ts-morph";
 
-const CONTRACTS = ["Distributor", "Exchanger", "Manager", "Scheduler", "Twap"];
+const CONTRACTS = ["Exchanger", "Manager", "Scheduler", "Strategy"];
 
 async function generateTypes() {
   let output = `// AUTO-GENERATED FILE - DO NOT EDIT\n\n`;

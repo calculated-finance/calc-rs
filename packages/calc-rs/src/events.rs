@@ -2,18 +2,18 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
 use rujira_rs::fin::{Price, Side};
 
-use crate::{conditions::Condition, statistics::Statistics, strategy::Strategy2};
+use crate::{conditions::Condition, statistics::Statistics, strategy::StrategyConfig};
 
 #[cw_serde]
 pub enum DomainEvent {
     StrategyCreated {
         contract_address: Addr,
-        config: Strategy2,
+        config: StrategyConfig,
     },
     StrategyUpdated {
         contract_address: Addr,
-        old_config: Strategy2,
-        new_config: Strategy2,
+        old_config: StrategyConfig,
+        new_config: StrategyConfig,
     },
     StrategyExecuted {
         contract_address: Addr,

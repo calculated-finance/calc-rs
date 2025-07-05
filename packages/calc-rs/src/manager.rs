@@ -1,37 +1,13 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Coin};
+use cosmwasm_std::Addr;
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 
-use crate::{actions::action::Action, strategy::Strategy2};
+use crate::actions::action::Action;
 
 #[cw_serde]
 pub struct ManagerConfig {
     pub fee_collector: Addr,
     pub strategy_code_id: u64,
-}
-
-#[derive(Hash, Eq)]
-#[cw_serde]
-pub enum StrategyType {
-    Twap,
-    Ladder,
-}
-
-impl<'a> Prefixer<'a> for StrategyType {
-    fn prefix(&self) -> Vec<Key> {
-        vec![Key::Val8([self.clone() as u8])]
-    }
-}
-
-impl<'a> PrimaryKey<'a> for StrategyType {
-    type Prefix = Self;
-    type SubPrefix = Self;
-    type Suffix = ();
-    type SuperSuffix = ();
-
-    fn key(&self) -> Vec<Key> {
-        vec![Key::Val8([self.clone() as u8])]
-    }
 }
 
 #[cw_serde]
@@ -60,7 +36,7 @@ impl<'a> PrimaryKey<'a> for StrategyStatus {
 
 #[cw_serde]
 pub struct Affiliate {
-    pub code: String,
+    pub label: String,
     pub address: Addr,
     pub bps: u64,
 }
@@ -77,56 +53,13 @@ pub struct Strategy {
     pub affiliates: Vec<Affiliate>,
 }
 
-// #[cw_serde]
-// pub enum StrategyStatistics {
-//     Twap {
-//         remaining: Coin,
-//         swapped: Coin,
-//         received: Coin,
-//         distributed: HashMap<String, Vec<Coin>>,
-//         withdrawn: Vec<Coin>,
-//     },
-// }
-
-// #[cw_serde]
-// pub enum CreateStrategyConfig {
-//     Twap(InstantiateTwapCommand),
-//     Ladder(InstantiateLadderCommand),
-// }
-
-// impl CreateStrategyConfig {
-//     pub fn strategy_type(&self) -> StrategyType {
-//         match self {
-//             CreateStrategyConfig::Twap { .. } => StrategyType::Twap,
-//             CreateStrategyConfig::Ladder { .. } => StrategyType::Ladder,
-//         }
-//     }
-// }
-
-#[cw_serde]
-pub struct ManagerInstantiateMsg {
-    pub admin: Addr,
-    pub code_ids: Vec<(StrategyType, u64)>,
-    pub fee_collector: Addr,
-    pub affiliate_creation_fee: Coin,
-    pub default_affiliate_bps: u64,
-}
-
-#[cw_serde]
-pub struct ManagerMigrateMsg {
-    pub code_ids: Vec<(StrategyType, u64)>,
-    pub fee_collector: Addr,
-    pub affiliate_creation_fee: Coin,
-    pub default_affiliate_bps: u64,
-}
-
 #[cw_serde]
 pub enum ManagerExecuteMsg {
     InstantiateStrategy {
         owner: Addr,
         label: String,
         affiliates: Vec<Affiliate>,
-        actions: Vec<Action>,
+        action: Action,
     },
     ExecuteStrategy {
         contract_address: Addr,
@@ -137,7 +70,7 @@ pub enum ManagerExecuteMsg {
     },
     UpdateStrategy {
         contract_address: Addr,
-        update: Strategy2,
+        update: Action,
     },
 }
 
@@ -156,48 +89,3 @@ pub enum ManagerQueryMsg {
         limit: Option<u16>,
     },
 }
-
-// pub enum DomainEvent {
-//     StrategyInstantiated {
-//         contract_address: Addr,
-//         config: CreateStrategyConfig,
-//     },
-//     StrategyExecuted {
-//         contract_address: Addr,
-//     },
-//     StrategyUpdated {
-//         contract_address: Addr,
-//         update: Strategy2,
-//     },
-//     StrategyStatusUpdated {
-//         contract_address: Addr,
-//         status: StrategyStatus,
-//     },
-// }
-
-// impl From<DomainEvent> for Event {
-//     fn from(event: DomainEvent) -> Self {
-//         match event {
-//             DomainEvent::StrategyInstantiated {
-//                 contract_address,
-//                 config,
-//             } => Event::new("strategy_created")
-//                 .add_attribute("contract_address", contract_address.as_str())
-//                 .add_attribute("config", format!("{:#?}", config)),
-//             DomainEvent::StrategyExecuted { contract_address } => Event::new("strategy_executed")
-//                 .add_attribute("contract_address", contract_address.as_str()),
-//             DomainEvent::StrategyUpdated {
-//                 contract_address,
-//                 update,
-//             } => Event::new("strategy_updated")
-//                 .add_attribute("contract_address", contract_address.as_str())
-//                 .add_attribute("update", format!("{:#?}", update)),
-//             DomainEvent::StrategyStatusUpdated {
-//                 contract_address,
-//                 status,
-//             } => Event::new("strategy_status_updated")
-//                 .add_attribute("contract_address", contract_address.as_str())
-//                 .add_attribute("status", format!("{:?}", status)),
-//         }
-//     }
-// }

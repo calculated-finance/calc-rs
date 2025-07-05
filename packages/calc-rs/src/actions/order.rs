@@ -2,7 +2,8 @@ use std::{cmp::min, collections::HashSet, u8, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, StdError, StdResult, SubMsg, Uint128,
+    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
+    Uint128,
 };
 use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side,
@@ -12,7 +13,6 @@ use crate::{
     actions::{action::Action, operation::Operation},
     conditions::Condition,
     core::Contract,
-    events::DomainEvent,
     statistics::Statistics,
 };
 
@@ -26,16 +26,6 @@ pub enum Direction {
 pub enum Offset {
     Exact(Decimal),
     Bps(u64),
-}
-
-#[cw_serde]
-pub enum SwapAdjustment {
-    Fixed,
-    LinearScalar {
-        base_receive_amount: Coin,
-        minimum_swap_amount: Option<Coin>,
-        scalar: Decimal,
-    },
 }
 
 #[cw_serde]
@@ -84,7 +74,7 @@ impl OrderPriceStrategy {
 }
 
 #[cw_serde]
-pub struct OrderAction {
+pub struct Order {
     pub pair_address: Addr,
     pub bid_denom: String,
     pub bid_amount: Option<Uint128>,
@@ -93,14 +83,14 @@ pub struct OrderAction {
     pub current_price: Option<Price>,
 }
 
-impl OrderAction {
+impl Order {
     pub fn get_pair(&self, deps: Deps) -> StdResult<ConfigResponse> {
         deps.querier
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
     }
 }
 
-impl Operation for OrderAction {
+impl Operation for Order {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
         if let Some(amount) = self.bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
@@ -121,7 +111,7 @@ impl Operation for OrderAction {
             }
         }
 
-        Ok(Action::Order(OrderAction {
+        Ok(Action::Set(Order {
             current_price: match self.strategy {
                 OrderPriceStrategy::Fixed { price } => Some(Price::Fixed(price)),
                 OrderPriceStrategy::Offset { .. } => None,
@@ -141,9 +131,9 @@ impl Operation for OrderAction {
             })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut messages: Vec<SubMsg> = vec![];
-        let events: Vec<DomainEvent> = vec![];
+        let events: Vec<Event> = vec![];
 
         let existing_order = self.strategy.existing_order(
             deps,
@@ -237,7 +227,7 @@ impl Operation for OrderAction {
         messages.push(set_order_msg);
 
         Ok((
-            Action::Order(OrderAction {
+            Action::Set(Order {
                 current_price: Some(new_price),
                 ..self
             }),
@@ -251,15 +241,14 @@ impl Operation for OrderAction {
         deps: Deps,
         env: &Env,
         update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
-        match update {
-            Action::Order(update) => {
-                let (action, messages, events) = update.init(deps, env)?.execute(deps, env)?;
-                Ok((action, messages, events))
-            }
-            _ => Err(StdError::generic_err(
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        if let Action::Set(update) = update {
+            let (action, messages, events) = update.init(deps, env)?.execute(deps, env)?;
+            Ok((action, messages, events))
+        } else {
+            Err(StdError::generic_err(
                 "Cannot update order action with non-order action",
-            )),
+            ))
         }
     }
 
@@ -296,19 +285,14 @@ impl Operation for OrderAction {
         })?)
     }
 
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &Coins,
-    ) -> StdResult<(Action, Vec<SubMsg>, Coins)> {
+    fn withdraw(&self, deps: Deps, env: &Env, desired: &Coins) -> StdResult<(Vec<SubMsg>, Coins)> {
         let mut withdrawn = Coins::default();
         let mut messages: Vec<SubMsg> = vec![];
 
         let desired_bid_denom_amount = desired.amount_of(&self.bid_denom);
 
         if desired_bid_denom_amount.is_zero() {
-            return Ok((Action::Order(self), messages, withdrawn));
+            return Ok((messages, withdrawn));
         }
 
         let existing_order = self.strategy.existing_order(
@@ -354,10 +338,10 @@ impl Operation for OrderAction {
             withdrawn.add(Coin::new(withdrawal_amount, self.bid_denom.clone()))?;
         }
 
-        Ok((Action::Order(self), messages, withdrawn))
+        Ok((messages, withdrawn))
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<DomainEvent>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let order = self.strategy.existing_order(
             deps,
             env,
@@ -383,6 +367,6 @@ impl Operation for OrderAction {
             messages.push(withdraw_order_msg);
         }
 
-        Ok((Action::Order(self), messages, vec![]))
+        Ok((Action::Set(self), messages, vec![]))
     }
 }

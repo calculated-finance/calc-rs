@@ -1,8 +1,8 @@
 use calc_rs::{
-    conditions::Condition,
+    conditions::{Condition, Threshold},
     core::{Callback, Contract, ContractError, ContractResult},
     exchanger::{ExpectedReceiveAmount, Route},
-    scheduler::{CreateTrigger, SchedulerExecuteMsg, TriggerConditionsThreshold},
+    scheduler::{CreateTrigger, SchedulerExecuteMsg},
     thorchain::{MsgDeposit, SwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
@@ -127,7 +127,7 @@ impl Exchange for ThorchainExchange {
             let after_swap_msg = Contract(self.scheduler_address.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
                     conditions: vec![Condition::BlocksCompleted(env.block.height + 1)],
-                    threshold: TriggerConditionsThreshold::All,
+                    threshold: Threshold::All,
                     to: on_complete.contract,
                     msg: on_complete.msg,
                 }))?,
@@ -438,7 +438,7 @@ mod swap_tests {
             )
             .unwrap()
             .messages[0],
-            SubMsg::new(
+            SubMsg::reply_never(
                 MsgDeposit {
                     memo: "=:rune:my-address:237463".to_string(),
                     coins: vec![swap_amount],
@@ -526,11 +526,11 @@ mod swap_tests {
                 )
                 .unwrap()
                 .messages[1],
-            SubMsg::new(
+            SubMsg::reply_never(
                 Contract(config.scheduler_address.clone()).call(
                     to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
                         conditions: vec![Condition::BlocksCompleted(env.block.height + 1)],
-                        threshold: TriggerConditionsThreshold::All,
+                        threshold: Threshold::All,
                         to: Addr::unchecked("twap"),
                         msg: to_json_binary("dummy message").unwrap(),
                     }))

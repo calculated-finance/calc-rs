@@ -39,16 +39,16 @@
 // impl Distribution {
 //     pub fn get_msg(self, deps: Deps, env: &Env) -> StdResult<SubMsg> {
 //         Ok(match self.destination.recipient {
-//             Recipient::Bank { address, .. } => SubMsg::new(BankMsg::Send {
+//             Recipient::Bank { address, .. } => SubMsg::reply_never(BankMsg::Send {
 //                 to_address: address.into(),
 //                 amount: self.amount,
 //             }),
-//             Recipient::Wasm { address, msg, .. } => SubMsg::new(WasmMsg::Execute {
+//             Recipient::Wasm { address, msg, .. } => SubMsg::reply_never(WasmMsg::Execute {
 //                 contract_addr: address.into(),
 //                 msg,
 //                 funds: self.amount,
 //             }),
-//             Recipient::Deposit { memo } => SubMsg::new(
+//             Recipient::Deposit { memo } => SubMsg::reply_never(
 //                 MsgDeposit {
 //                     memo: memo,
 //                     coins: self.amount,
@@ -170,7 +170,7 @@
 //             }
 //             .get_msg(deps.as_ref(), &env)
 //             .unwrap(),
-//             SubMsg::new(BankMsg::Send {
+//             SubMsg::reply_never(BankMsg::Send {
 //                 to_address: address.to_string(),
 //                 amount: vec![amount.clone()],
 //             })
@@ -192,7 +192,7 @@
 //             }
 //             .get_msg(deps.as_ref(), &env)
 //             .unwrap(),
-//             SubMsg::new(WasmMsg::Execute {
+//             SubMsg::reply_never(WasmMsg::Execute {
 //                 contract_addr: address.to_string(),
 //                 msg: msg.clone(),
 //                 funds: vec![amount.clone()],
@@ -212,7 +212,7 @@
 //             }
 //             .get_msg(deps.as_ref(), &env)
 //             .unwrap(),
-//             SubMsg::new(
+//             SubMsg::reply_never(
 //                 MsgDeposit {
 //                     memo,
 //                     coins: vec![amount],

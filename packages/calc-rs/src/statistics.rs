@@ -3,7 +3,7 @@ use std::{collections::HashMap, u8};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, Coins, StdResult};
 
-use crate::actions::distribute::Recipient;
+use crate::actions::recipients::Recipient;
 
 #[cw_serde]
 #[derive(Default)]
@@ -14,12 +14,11 @@ pub struct Statistics {
     pub withdrawn: Vec<Coin>,
 }
 
-
 impl Statistics {
     pub fn add(self, other: Statistics) -> StdResult<Statistics> {
-        let mut swapped = Coins::try_from(self.swapped.clone()).unwrap_or(Coins::default());
-        let mut filled = Coins::try_from(self.filled.clone()).unwrap_or(Coins::default());
-        let mut withdrawn = Coins::try_from(self.withdrawn.clone()).unwrap_or(Coins::default());
+        let mut swapped = Coins::try_from(self.swapped.clone())?;
+        let mut filled = Coins::try_from(self.filled.clone())?;
+        let mut withdrawn = Coins::try_from(self.withdrawn.clone())?;
 
         for coin in other.swapped {
             swapped.add(coin)?;

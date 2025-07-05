@@ -1,30 +1,13 @@
 export type Uint128 = string;
 
-export interface DistributorStatistics {
-  distributed: {};
-  withdrawn: Coin[];
+export interface ExpectedReceiveAmount {
+  receive_amount: Coin;
+  slippage_bps: number;
 }
 export interface Coin {
   amount: Uint128;
   denom: string;
 }
-export type Recipient =
-  | {
-      bank: {
-        address: Addr;
-      };
-    }
-  | {
-      wasm: {
-        address: Addr;
-        msg: Binary;
-      };
-    }
-  | {
-      deposit: {
-        memo: string;
-      };
-    };
 /**
  * A human readable address.
  *
@@ -35,6 +18,37 @@ export type Recipient =
  * This type is immutable. If you really need to mutate it (Really? Are you sure?), create a mutable copy using `let mut mutable = Addr::to_string()` and operate on that `String` instance.
  */
 export type Addr = string;
+
+export interface ExchangerInstantiateMsg {
+  affiliate_bps?: number | null;
+  affiliate_code?: string | null;
+  scheduler_address: Addr;
+}
+export type ExchangerQueryMsg = {
+  expected_receive_amount: {
+    route?: Route | null;
+    swap_amount: Coin;
+    target_denom: string;
+  };
+};
+export type Route =
+  | {
+      fin_market: {
+        address: Addr;
+      };
+    }
+  | {
+      thorchain: {};
+    };
+export type ExchangerExecuteMsg = {
+  swap: {
+    maximum_slippage_bps: number;
+    minimum_receive_amount: Coin;
+    on_complete?: Callback | null;
+    recipient?: Addr | null;
+    route?: Route | null;
+  };
+};
 /**
  * Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.
  *
@@ -42,63 +56,27 @@ export type Addr = string;
  */
 export type Binary = string;
 
-export interface DistributorInstantiateMsg {
-  denoms: string[];
-  immutable_destinations: Destination[];
-  mutable_destinations: Destination[];
-  owner: Addr;
+export interface Callback {
+  contract: Addr;
+  execution_rebate: Coin[];
+  msg: Binary;
 }
-export interface Destination {
-  label?: string | null;
-  recipient: Recipient;
-  shares: Uint128;
-}
-export type DistributorQueryMsg =
-  | {
-      config: {};
-    }
-  | {
-      statistics: {};
-    };
-export type DistributorExecuteMsg =
-  | {
-      distribute: {};
-    }
-  | {
-      withdraw: {
-        amounts: Coin[];
-      };
-    }
-  | {
-      update: DistributorConfig;
-    };
+export type Boolean = boolean;
 export type Condition =
   | {
-      timestamp_elapsed: Timestamp;
+      timestamp: {
+        timestamp: Timestamp;
+      };
     }
   | {
-      blocks_completed: number;
+      block_height: {
+        height: number;
+      };
     }
   | {
-      exchange_liquidity_provided: {
-        exchanger_contract: Addr;
-        maximum_slippage_bps: number;
+      limit_order: {
         minimum_receive_amount: Coin;
-        route?: Route | null;
         swap_amount: Coin;
-      };
-    }
-  | {
-      balance_available: {
-        address: Addr;
-        amount: Coin;
-      };
-    }
-  | {
-      strategy_status: {
-        contract_address: Addr;
-        manager_contract: Addr;
-        status: StrategyStatus;
       };
     };
 /**
@@ -125,65 +103,6 @@ export type Timestamp = Uint64;
  * let b = Uint64::from(70u32); assert_eq!(b.u64(), 70); ```
  */
 export type Uint64 = string;
-export type Route =
-  | {
-      fin: {
-        address: Addr;
-      };
-    }
-  | {
-      thorchain: {};
-    };
-export type StrategyStatus = "active" | "paused" | "archived";
-
-export interface DistributorConfig {
-  conditions: Condition[];
-  denoms: string[];
-  immutable_destinations: Destination[];
-  mutable_destinations: Destination[];
-  owner: Addr;
-}
-
-export interface ExpectedReceiveAmount {
-  receive_amount: Coin;
-  slippage_bps: number;
-}
-
-export interface ExchangerInstantiateMsg {
-  affiliate_bps?: number | null;
-  affiliate_code?: string | null;
-  scheduler_address: Addr;
-}
-export type ExchangerQueryMsg = {
-  expected_receive_amount: {
-    route?: Route | null;
-    swap_amount: Coin;
-    target_denom: string;
-  };
-};
-export type ExchangerExecuteMsg = {
-  swap: {
-    maximum_slippage_bps: number;
-    minimum_receive_amount: Coin;
-    on_complete?: Callback | null;
-    recipient?: Addr | null;
-    route?: Route | null;
-  };
-};
-
-export interface Callback {
-  contract: Addr;
-  execution_rebate: Coin[];
-  msg: Binary;
-}
-export type Boolean = boolean;
-export type StrategyConfig =
-  | {
-      dca: DcaStrategy;
-    }
-  | {
-      new: NewStrategy;
-    };
 export type DcaSchedule =
   | {
       blocks: {
@@ -212,6 +131,11 @@ export interface DcaStrategy {
   swap_amount: Coin;
 }
 
+export interface Destination {
+  address: Addr;
+  label?: string | null;
+  shares: Uint128;
+}
 export interface Duration {
   nanos: number;
   secs: number;
@@ -225,12 +149,14 @@ export interface NewStrategy {
   owner: Addr;
 }
 
+export type StrategyStatus = "active" | "paused" | "archived";
 export type ArrayOf_Strategy = Strategy[];
 
 export interface Strategy {
   affiliates: Affiliate[];
   contract_address: Addr;
   created_at: number;
+  id: number;
   label: string;
   owner: Addr;
   status: StrategyStatus;
@@ -239,17 +165,13 @@ export interface Strategy {
 export interface Affiliate {
   address: Addr;
   bps: number;
-  code: string;
+  label: string;
 }
 
 export interface ManagerInstantiateMsg {
-  admin: Addr;
-  affiliate_creation_fee: Coin;
-  code_ids: {};
-  default_affiliate_bps: number;
   fee_collector: Addr;
+  strategy_code_id: number;
 }
-
 export type ManagerQueryMsg =
   | {
       config: {};
@@ -263,33 +185,22 @@ export type ManagerQueryMsg =
       strategies: {
         limit?: number | null;
         owner?: Addr | null;
-        start_after?: Addr | null;
+        start_after?: number | null;
         status?: StrategyStatus | null;
-      };
-    }
-  | {
-      affiliate: {
-        code: string;
-      };
-    }
-  | {
-      affiliates: {
-        limit?: number | null;
-        start_after?: Addr | null;
       };
     };
 export type ManagerExecuteMsg =
   | {
       instantiate_strategy: {
+        action: Action;
+        affiliates: Affiliate[];
         label: string;
         owner: Addr;
-        strategy: CreateStrategyConfig;
       };
     }
   | {
       execute_strategy: {
         contract_address: Addr;
-        msg?: Binary | null;
       };
     }
   | {
@@ -303,17 +214,42 @@ export type ManagerExecuteMsg =
         contract_address: Addr;
         update: StrategyConfig;
       };
+    };
+export type Action =
+  | {
+      check: Condition;
     }
   | {
-      add_affiliate: {
-        address: Addr;
-        code: string;
-      };
+      crank: Schedule;
+    }
+  | {
+      perform: Swap;
+    }
+  | {
+      set: Order;
+    }
+  | {
+      distribute_to: Recipients;
+    }
+  | {
+      exhibit: Behaviour;
     };
-export type CreateStrategyConfig = {
-  twap: InstantiateTwapCommand;
-};
-export type Schedule =
+export type Price =
+  | {
+      fixed: Decimal;
+    }
+  | {
+      oracle: number;
+    };
+/**
+ * A fixed-point decimal value with 18 fractional digits, i.e. Decimal(1_000_000_000_000_000_000) == 1.0
+ *
+ * The greatest possible value that can be represented is 340282366920938463463.374607431768211455 (which is (2^128 - 1) / 10^18)
+ */
+export type Decimal = string;
+export type Side = "base" | "quote";
+export type Threshold = "all" | "any";
+export type Cadence =
   | {
       blocks: {
         interval: number;
@@ -325,56 +261,128 @@ export type Schedule =
         duration: Duration;
         previous?: Timestamp | null;
       };
+    }
+  | {
+      cron: string;
+    };
+export type SwapAmountAdjustment =
+  | "fixed"
+  | {
+      linear_scalar: {
+        base_receive_amount: Coin;
+        minimum_swap_amount?: Coin | null;
+        scalar: Decimal;
+      };
+    };
+export type OrderPriceStrategy =
+  | {
+      fixed: {
+        price: Decimal;
+      };
+    }
+  | {
+      offset: {
+        direction: Direction;
+        offset: Offset;
+        tolerance: Offset;
+      };
+    };
+export type Direction = "up" | "down";
+export type Offset =
+  | {
+      exact: Decimal;
+    }
+  | {
+      bps: number;
+    };
+export type Recipient =
+  | {
+      bank: {
+        address: Addr;
+      };
+    }
+  | {
+      wasm: {
+        address: Addr;
+        msg: Binary;
+      };
+    }
+  | {
+      deposit: {
+        memo: string;
+      };
     };
 
-export interface InstantiateTwapCommand {
-  affiliate_code?: string | null;
-  distributor_code_id: number;
-  exchanger_contract: Addr;
-  execution_rebate?: Coin | null;
-  immutable_destinations: Destination[];
-  maximum_slippage_bps: number;
-  minimum_distribute_amount?: Coin | null;
-  minimum_receive_amount: Coin;
-  mutable_destinations: Destination[];
-  owner: Addr;
-  route?: Route | null;
-  scheduler_contract: Addr;
-  swap_amount: Coin;
-  swap_cadence: Schedule;
+export interface Schedule {
+  cadence: Cadence;
+  execution_rebate: Coin[];
+  scheduler: Addr;
 }
 
-export interface TwapConfig {
-  distributor_contract: Addr;
-  exchanger_contract: Addr;
-  execution_rebate?: Coin | null;
-  manager_contract: Addr;
+export interface Swap {
+  adjustment: SwapAmountAdjustment;
+  exchange_contract: Addr;
   maximum_slippage_bps: number;
   minimum_receive_amount: Coin;
-  owner: Addr;
   route?: Route | null;
-  schedule_conditions: Condition[];
-  scheduler_contract: Addr;
   swap_amount: Coin;
-  swap_cadence: Schedule;
-  swap_conditions: Condition[];
+}
+export interface Order {
+  bid_amount?: Uint128 | null;
+  bid_denom: string;
+  current_price?: Price | null;
+  pair_address: Addr;
+  side: Side;
+  strategy: OrderPriceStrategy;
+}
+export interface Recipients {
+  denoms: string[];
+  immutable_destinations: Destination[];
+  mutable_destinations: Destination[];
+}
+
+export interface Behaviour {
+  actions: Action[];
+  threshold: Threshold;
+}
+
+export interface StrategyConfig {
+  action: Action;
+  escrowed: string[];
+  manager: Addr;
+  owner: Addr;
 }
 
 export type ArrayOf_Affiliate = Affiliate[];
 
 export interface ManagerConfig {
-  admin: Addr;
-  affiliate_creation_fee: Coin;
-  code_ids: {};
-  default_affiliate_bps: number;
   fee_collector: Addr;
+  strategy_code_id: number;
+}
+
+export type ArrayOf_Trigger = Trigger[];
+
+export interface Trigger {
+  conditions: Condition[];
+  execution_rebate: Coin[];
+  id: number;
+  msg: Binary;
+  owner: Addr;
+  threshold: Threshold;
+  to: Addr;
 }
 
 export interface SchedulerInstantiateMsg {}
 export type SchedulerQueryMsg =
   | {
-      triggers: {
-        can_execute?: boolean | null;
+      owned: {
+        limit?: number | null;
+        owner: Addr;
+        start_after?: number | null;
+      };
+    }
+  | {
+      filtered: {
         filter: ConditionFilter;
         limit?: number | null;
       };
@@ -386,11 +394,6 @@ export type SchedulerQueryMsg =
     };
 export type ConditionFilter =
   | {
-      owner: {
-        address: Addr;
-      };
-    }
-  | {
       timestamp: {
         end?: Timestamp | null;
         start?: Timestamp | null;
@@ -400,6 +403,11 @@ export type ConditionFilter =
       block_height: {
         end?: number | null;
         start?: number | null;
+      };
+    }
+  | {
+      limit_order: {
+        start_after?: number | null;
       };
     };
 export type SchedulerExecuteMsg =
@@ -412,57 +420,47 @@ export type SchedulerExecuteMsg =
   | {
       execute_trigger: number;
     };
-export type TriggerConditionsThreshold = "any" | "all";
 
 export interface CreateTrigger {
   conditions: Condition[];
   msg: Binary;
-  threshold: TriggerConditionsThreshold;
+  threshold: Threshold;
   to: Addr;
 }
 
-export type ArrayOf_Trigger = Trigger[];
+export type TriggerConditionsThreshold = "any" | "all";
 
-export interface Trigger {
-  conditions: Condition[];
-  execution_rebate: Coin[];
-  id: number;
-  msg: Binary;
+export interface Statistics {
+  distributed: [Recipient, Coin[]][];
+  filled: Coin[];
+  swapped: Coin[];
+  withdrawn: Coin[];
+}
+
+export interface StrategyInstantiateMsg {
+  action: Action;
+  affiliates: Affiliate[];
   owner: Addr;
-  threshold: TriggerConditionsThreshold;
-  to: Addr;
 }
 
-export type StrategyStatistics = {
-  twap: {
-    distributed: {};
-    received: Coin;
-    remaining: Coin;
-    swapped: Coin;
-    withdrawn: Coin[];
-  };
-};
-
-export interface TwapInstantiateMsg {
-  config: CreateStrategyConfig;
-  fee_collector: Addr;
-}
-
-export type TwapQueryMsg =
+export type StrategyQueryMsg =
   | {
       config: {};
     }
   | {
       statistics: {};
+    }
+  | {
+      balances: {
+        include: string[];
+      };
     };
-export type TwapExecuteMsg =
+export type StrategyExecuteMsg =
   | {
       execute: {};
     }
   | {
-      withdraw: {
-        amounts: Coin[];
-      };
+      withdraw: Coin[];
     }
   | {
       update: StrategyConfig;
@@ -473,3 +471,4 @@ export type TwapExecuteMsg =
   | {
       clear: {};
     };
+export type ArrayOf_Coin = Coin[];

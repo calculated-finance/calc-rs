@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use calc_rs::{
     conditions::Condition,
-    scheduler::{ConditionFilter, Trigger},
+    scheduler::{ConditionFilter, CreateTrigger, Trigger},
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Order, StdError, StdResult, Storage};
+use cosmwasm_std::{Addr, Coin, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex, UniqueIndex};
 
 pub const TRIGGER_COUNTER: Item<u64> = Item::new("trigger_counter");
@@ -77,10 +77,16 @@ pub struct TriggerStore<'a> {
 }
 
 impl TriggerStore<'_> {
-    pub fn save(&self, storage: &mut dyn Storage, trigger: &Trigger) -> StdResult<()> {
+    pub fn save(
+        &self,
+        storage: &mut dyn Storage,
+        owner: Addr,
+        command: CreateTrigger,
+        execution_rebate: Vec<Coin>,
+    ) -> StdResult<()> {
         let trigger_id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
 
-        for condition in &trigger.conditions {
+        for condition in &command.conditions {
             let condition_id =
                 CONDITION_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
 
@@ -100,7 +106,12 @@ impl TriggerStore<'_> {
             trigger_id,
             &Trigger {
                 id: trigger_id,
-                ..trigger.clone()
+                owner: owner,
+                conditions: command.conditions,
+                threshold: command.threshold,
+                msg: command.msg,
+                to: command.to,
+                execution_rebate: execution_rebate,
             },
         )
     }

@@ -49,7 +49,7 @@ pub fn execute(
             owner,
             label,
             affiliates,
-            actions,
+            action,
         } => {
             let config = CONFIG.load(deps.storage)?;
             let strategy_id =
@@ -88,7 +88,7 @@ pub fn execute(
                 msg: to_json_binary(&StrategyInstantiateMsg {
                     owner: info.sender,
                     affiliates,
-                    actions,
+                    action,
                 })?,
                 funds: info.funds,
                 salt,
@@ -98,6 +98,12 @@ pub fn execute(
         }
         ManagerExecuteMsg::ExecuteStrategy { contract_address } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+
+            if strategy.status != StrategyStatus::Active {
+                return Err(ContractError::generic_err(
+                    "Cannot execute strategy that is not active",
+                ));
+            }
 
             strategy_store().save(
                 deps.storage,
@@ -145,7 +151,7 @@ pub fn execute(
         } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
 
-            if strategy.owner != info.sender && info.sender != strategy.contract_address {
+            if strategy.owner != info.sender {
                 return Err(ContractError::Unauthorized {});
             }
 
@@ -591,7 +597,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 //         assert_eq!(
 //             response.messages[0],
-//             SubMsg::new(WasmMsg::Instantiate2 {
+//             SubMsg::reply_never(WasmMsg::Instantiate2 {
 //                 admin: Some(owner.to_string()),
 //                 code_id: 3,
 //                 label: "label".to_string(),
@@ -871,7 +877,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 //         assert_eq!(
 //             response.messages[0],
-//             SubMsg::new(WasmMsg::Execute {
+//             SubMsg::reply_never(WasmMsg::Execute {
 //                 contract_addr: strategy.contract_address.to_string(),
 //                 msg: to_json_binary(&calc_rs::manager::StrategyExecuteMsg::Execute {
 //                     msg: strategy_msg_payload
@@ -1201,7 +1207,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 //         assert_eq!(
 //             response.messages[0],
-//             SubMsg::new(WasmMsg::Execute {
+//             SubMsg::reply_never(WasmMsg::Execute {
 //                 contract_addr: contract_address.to_string(),
 //                 msg: to_json_binary(&StrategyExecuteMsg::Update(update)).unwrap(),
 //                 funds: vec![],
@@ -1503,7 +1509,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 //         assert_eq!(
 //             response.messages[0],
-//             SubMsg::new(WasmMsg::Execute {
+//             SubMsg::reply_never(WasmMsg::Execute {
 //                 contract_addr: contract_address.to_string(),
 //                 msg: to_json_binary(&StrategyExecuteMsg::UpdateStatus(new_status)).unwrap(),
 //                 funds: vec![],

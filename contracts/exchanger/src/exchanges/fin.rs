@@ -48,17 +48,13 @@ pub fn get_pair(
                     address: Addr::unchecked(address),
                 })
             }
-            _ => {
-                Err(StdError::generic_err(
-                    "Route not supported for Fin market exchange",
-                ))
-            }
+            _ => Err(StdError::generic_err(
+                "Route not supported for Fin market exchange",
+            )),
         },
-        None => {
-            Err(StdError::generic_err(
-                "Must provide a Fin market route to get a pair",
-            ))
-        }
+        None => Err(StdError::generic_err(
+            "Must provide a Fin market route to get a pair",
+        )),
     }
 }
 
@@ -85,18 +81,18 @@ fn spot_price(
 
     if book_response.base.is_empty() || book_response.quote.is_empty() {
         return Err(StdError::generic_err(format!(
-            "Not enough orders found for {} at fin pair {}",
-            swap_denom, pair.address
+            "Not enough orders found for {swap_denom} at fin pair {}",
+            pair.address
         )));
     }
 
-    let quote_price = (book_response.base[0].price + book_response.quote[0].price)
+    let belief_price = (book_response.base[0].price + book_response.quote[0].price)
         / Decimal::from_str("2").unwrap();
 
     Ok(match position_type {
-        PositionType::Enter => quote_price,
+        PositionType::Enter => belief_price,
         PositionType::Exit => Decimal::one()
-            .checked_div(quote_price)
+            .checked_div(belief_price)
             .expect("should return a valid inverted price for fin sell"),
     })
 }
@@ -947,7 +943,7 @@ mod swap_tests {
 
         assert_eq!(
             response.messages[2],
-            SubMsg::new(WasmMsg::Execute {
+            SubMsg::reply_never(WasmMsg::Execute {
                 contract_addr: callback.contract.into_string(),
                 msg: callback.msg,
                 funds: vec![],

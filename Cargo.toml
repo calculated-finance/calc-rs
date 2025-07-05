@@ -19,19 +19,22 @@ overflow-checks = true
 
 [workspace.dependencies]
 anybuf = "1.0"
+calc-rs = { path = "packages/calc-rs" }
+calc-rs-test = { path = "packages/calc-rs-test" }
 cosmwasm-schema = "2.2.0"
 cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1"] }
 cosmwasm-storage = "1.5.2"
+cw-multi-test = { version = "2", features = ["cosmwasm_2_1"] }
 cw-storage-plus = "2.0.0"
 cw-utils = "2.0.0"
 cw2 = "2.0.0"
+exchanger = { path = "contracts/exchanger" }
+manager = { path = "contracts/manager" }
 prost = "0.13"
 rand = "0.9.1"
 rstest = "0.25.0"
 rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "2c66fcbd88f4287132987362ca18ecd17649d4c7" }
+scheduler = { path = "contracts/scheduler" }
 schemars = "0.8.16"
 serde = { version = "1.0.197", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.58" }
-calc-rs = { path = "packages/calc-rs" }
-calc-rs-test = { path = "packages/calc-rs-test" }
-cw-multi-test = { version = "2", features = ["cosmwasm_2_2"] }

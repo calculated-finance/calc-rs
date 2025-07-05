@@ -1,10 +1,9 @@
-use calc_rs::scheduler::{SchedulerExecuteMsg, SchedulerQueryMsg};
+use calc_rs::scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg};
 use cosmwasm_schema::write_api;
-use scheduler::contract::InstantiateMsg;
 
 fn main() {
     write_api! {
-        instantiate: InstantiateMsg,
+        instantiate: SchedulerInstantiateMsg,
         execute: SchedulerExecuteMsg,
         query: SchedulerQueryMsg,
     }
