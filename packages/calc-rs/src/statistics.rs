@@ -3,7 +3,7 @@ use std::{collections::HashMap, u8};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, Coins, StdResult};
 
-use crate::actions::recipients::Recipient;
+use crate::actions::distribution::Recipient;
 
 #[cw_serde]
 #[derive(Default)]

@@ -19,7 +19,7 @@ impl Behaviour {
         self.actions
             .iter()
             .map(|action| {
-                if let Action::Exhibit(behaviour) = action {
+                if let Action::Compose(behaviour) = action {
                     behaviour.size() + 1
                 } else {
                     1
@@ -38,7 +38,7 @@ impl Operation for Behaviour {
             actions.push(action);
         }
 
-        Ok(Action::Exhibit(Behaviour { actions, ..self }))
+        Ok(Action::Compose(Behaviour { actions, ..self }))
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {
@@ -62,7 +62,7 @@ impl Operation for Behaviour {
         let mut new_actions = vec![];
 
         if self.threshold == Threshold::All {
-            for action in self.actions.into_iter() {
+            for action in self.actions.clone().into_iter() {
                 let result = action.execute(deps, env);
 
                 if result.is_err() {
@@ -70,7 +70,7 @@ impl Operation for Behaviour {
                     all_events.clear();
                     new_actions.clear();
 
-                    break;
+                    return Ok((Action::Compose(self), vec![], vec![]));
                 }
 
                 let (action, messages, events) = result?;
@@ -90,7 +90,7 @@ impl Operation for Behaviour {
         }
 
         Ok((
-            Action::Exhibit(Behaviour {
+            Action::Compose(Behaviour {
                 actions: new_actions,
                 ..self
             }),
@@ -105,7 +105,7 @@ impl Operation for Behaviour {
         env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Exhibit(update) = update {
+        if let Action::Compose(update) = update {
             let new_behaviour = update.init(deps, env)?;
             let (action, messages, events) = new_behaviour.execute(deps, env)?;
             Ok((action, messages, events))
@@ -174,7 +174,7 @@ impl Operation for Behaviour {
         }
 
         Ok((
-            Action::Exhibit(Behaviour {
+            Action::Compose(Behaviour {
                 actions: new_actions,
                 ..self
             }),

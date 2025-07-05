@@ -5,26 +5,29 @@ use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
 
 use crate::{
     actions::{
-        behaviour::Behaviour, crank::Schedule, operation::Operation, order::Order,
-        recipients::Recipients, swap::Swap,
+        behaviour::Behaviour, distribution::Distribution, fin_swap::FinSwap,
+        limit_order::LimitOrder, operation::Operation, schedule::Schedule, swap::Swap,
+        thor_swap::ThorSwap,
     },
     conditions::Condition,
 };
 
 #[cw_serde]
 pub enum Action {
-    Check(Condition),
-    Crank(Schedule),
-    Perform(Swap),
-    Set(Order),
-    DistributeTo(Recipients),
-    Exhibit(Behaviour),
+    CheckCondition(Condition),
+    ExecuteStrategy(Schedule),
+    FinSwap(FinSwap),
+    ThorSwap(ThorSwap),
+    Swap(Swap),
+    SetLimitOrder(LimitOrder),
+    Distribute(Distribution),
+    Compose(Behaviour),
 }
 
 impl Action {
     pub fn size(&self) -> usize {
         match self {
-            Action::Exhibit(action) => action.size(),
+            Action::Compose(action) => action.size(),
             _ => 1,
         }
     }
@@ -33,34 +36,40 @@ impl Action {
 impl Operation for Action {
     fn init(self, deps: Deps, env: &Env) -> StdResult<Action> {
         match self {
-            Action::Check(condition) => condition.init(deps, env),
-            Action::Crank(action) => action.init(deps, env),
-            Action::Perform(action) => action.init(deps, env),
-            Action::Set(action) => action.init(deps, env),
-            Action::DistributeTo(action) => action.init(deps, env),
-            Action::Exhibit(action) => action.init(deps, env),
+            Action::CheckCondition(condition) => condition.init(deps, env),
+            Action::ExecuteStrategy(action) => action.init(deps, env),
+            Action::FinSwap(action) => action.init(deps, env),
+            Action::ThorSwap(action) => action.init(deps, env),
+            Action::Swap(action) => action.init(deps, env),
+            Action::SetLimitOrder(action) => action.init(deps, env),
+            Action::Distribute(action) => action.init(deps, env),
+            Action::Compose(action) => action.init(deps, env),
         }
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {
         match self {
-            Action::Check(condition) => condition.condition(env),
-            Action::Crank(action) => action.condition(env),
-            Action::Perform(action) => action.condition(env),
-            Action::Set(action) => action.condition(env),
-            Action::DistributeTo(action) => action.condition(env),
-            Action::Exhibit(action) => action.condition(env),
+            Action::CheckCondition(condition) => condition.condition(env),
+            Action::ExecuteStrategy(action) => action.condition(env),
+            Action::FinSwap(action) => action.condition(env),
+            Action::ThorSwap(action) => action.condition(env),
+            Action::Swap(action) => action.condition(env),
+            Action::SetLimitOrder(action) => action.condition(env),
+            Action::Distribute(action) => action.condition(env),
+            Action::Compose(action) => action.condition(env),
         }
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         match self {
-            Action::Check(condition) => condition.execute(deps, env),
-            Action::Crank(action) => action.execute(deps, env),
-            Action::Perform(action) => action.execute(deps, env),
-            Action::Set(action) => action.execute(deps, env),
-            Action::DistributeTo(action) => action.execute(deps, env),
-            Action::Exhibit(action) => action.execute(deps, env),
+            Action::CheckCondition(condition) => condition.execute(deps, env),
+            Action::ExecuteStrategy(action) => action.execute(deps, env),
+            Action::FinSwap(action) => action.execute(deps, env),
+            Action::ThorSwap(action) => action.execute(deps, env),
+            Action::Swap(action) => action.execute(deps, env),
+            Action::SetLimitOrder(action) => action.execute(deps, env),
+            Action::Distribute(action) => action.execute(deps, env),
+            Action::Compose(action) => action.execute(deps, env),
         }
     }
 
@@ -71,56 +80,66 @@ impl Operation for Action {
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         match self {
-            Action::Check(condition) => condition.update(deps, env, update),
-            Action::Crank(action) => action.update(deps, env, update),
-            Action::Perform(action) => action.update(deps, env, update),
-            Action::Set(action) => action.update(deps, env, update),
-            Action::DistributeTo(action) => action.update(deps, env, update),
-            Action::Exhibit(action) => action.update(deps, env, update),
+            Action::CheckCondition(condition) => condition.update(deps, env, update),
+            Action::ExecuteStrategy(action) => action.update(deps, env, update),
+            Action::FinSwap(action) => action.update(deps, env, update),
+            Action::ThorSwap(action) => action.update(deps, env, update),
+            Action::Swap(action) => action.update(deps, env, update),
+            Action::SetLimitOrder(action) => action.update(deps, env, update),
+            Action::Distribute(action) => action.update(deps, env, update),
+            Action::Compose(action) => action.update(deps, env, update),
         }
     }
 
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         match self {
-            Action::Check(condition) => condition.escrowed(deps, env),
-            Action::Crank(action) => action.escrowed(deps, env),
-            Action::Perform(action) => action.escrowed(deps, env),
-            Action::Set(action) => action.escrowed(deps, env),
-            Action::DistributeTo(action) => action.escrowed(deps, env),
-            Action::Exhibit(action) => action.escrowed(deps, env),
+            Action::CheckCondition(condition) => condition.escrowed(deps, env),
+            Action::ExecuteStrategy(action) => action.escrowed(deps, env),
+            Action::FinSwap(action) => action.escrowed(deps, env),
+            Action::ThorSwap(action) => action.escrowed(deps, env),
+            Action::Swap(action) => action.escrowed(deps, env),
+            Action::SetLimitOrder(action) => action.escrowed(deps, env),
+            Action::Distribute(action) => action.escrowed(deps, env),
+            Action::Compose(action) => action.escrowed(deps, env),
         }
     }
 
     fn balances(&self, deps: Deps, env: &Env, denoms: &[String]) -> StdResult<Coins> {
         match self {
-            Action::Check(condition) => condition.balances(deps, env, denoms),
-            Action::Crank(action) => action.balances(deps, env, denoms),
-            Action::Perform(action) => action.balances(deps, env, denoms),
-            Action::Set(action) => action.balances(deps, env, denoms),
-            Action::DistributeTo(action) => action.balances(deps, env, denoms),
-            Action::Exhibit(action) => action.balances(deps, env, denoms),
+            Action::CheckCondition(condition) => condition.balances(deps, env, denoms),
+            Action::ExecuteStrategy(action) => action.balances(deps, env, denoms),
+            Action::FinSwap(action) => action.balances(deps, env, denoms),
+            Action::ThorSwap(action) => action.balances(deps, env, denoms),
+            Action::Swap(action) => action.balances(deps, env, denoms),
+            Action::SetLimitOrder(action) => action.balances(deps, env, denoms),
+            Action::Distribute(action) => action.balances(deps, env, denoms),
+            Action::Compose(action) => action.balances(deps, env, denoms),
         }
     }
 
     fn withdraw(&self, deps: Deps, env: &Env, desired: &Coins) -> StdResult<(Vec<SubMsg>, Coins)> {
         match self {
-            Action::Check(condition) => condition.withdraw(deps, env, desired),
-            Action::Crank(action) => action.withdraw(deps, env, desired),
-            Action::Perform(action) => action.withdraw(deps, env, desired),
-            Action::Set(action) => action.withdraw(deps, env, desired),
-            Action::DistributeTo(action) => action.withdraw(deps, env, desired),
-            Action::Exhibit(action) => action.withdraw(deps, env, desired),
+            Action::CheckCondition(condition) => condition.withdraw(deps, env, desired),
+            Action::ExecuteStrategy(action) => action.withdraw(deps, env, desired),
+            Action::FinSwap(action) => action.withdraw(deps, env, desired),
+            Action::ThorSwap(action) => action.withdraw(deps, env, desired),
+            Action::Swap(action) => action.withdraw(deps, env, desired),
+            Action::SetLimitOrder(action) => action.withdraw(deps, env, desired),
+            Action::Distribute(action) => action.withdraw(deps, env, desired),
+            Action::Compose(action) => action.withdraw(deps, env, desired),
         }
     }
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         match self {
-            Action::Check(condition) => condition.cancel(deps, env),
-            Action::Crank(action) => action.cancel(deps, env),
-            Action::Perform(action) => action.cancel(deps, env),
-            Action::Set(action) => action.cancel(deps, env),
-            Action::DistributeTo(action) => action.cancel(deps, env),
-            Action::Exhibit(action) => action.cancel(deps, env),
+            Action::CheckCondition(condition) => condition.cancel(deps, env),
+            Action::ExecuteStrategy(action) => action.cancel(deps, env),
+            Action::FinSwap(action) => action.cancel(deps, env),
+            Action::ThorSwap(action) => action.cancel(deps, env),
+            Action::Swap(action) => action.cancel(deps, env),
+            Action::SetLimitOrder(action) => action.cancel(deps, env),
+            Action::Distribute(action) => action.cancel(deps, env),
+            Action::Compose(action) => action.cancel(deps, env),
         }
     }
 }
