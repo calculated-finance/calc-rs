@@ -32,7 +32,7 @@ impl Operation for Schedule {
             }
         }
 
-        Ok(Action::Crank(self))
+        Ok(Action::ExecuteStrategy(self))
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {
@@ -71,17 +71,19 @@ impl Operation for Schedule {
 
             messages.push(SubMsg::reply_never(set_trigger_msg));
 
-            return Ok((
-                Action::Crank(Schedule {
+            Ok((
+                Action::ExecuteStrategy(Schedule {
                     cadence: next,
                     ..self
                 }),
                 messages,
                 events,
-            ));
+            ))
+        } else {
+            Err(cosmwasm_std::StdError::generic_err(
+                "Cadence is not due for execution",
+            ))
         }
-
-        Ok((Action::Crank(self), messages, events))
     }
 
     fn update(
@@ -90,7 +92,7 @@ impl Operation for Schedule {
         env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Crank(update) = update {
+        if let Action::ExecuteStrategy(update) = update {
             update.execute(deps, env)
         } else {
             Err(cosmwasm_std::StdError::generic_err(
@@ -117,6 +119,6 @@ impl Operation for Schedule {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Crank(self), vec![], vec![]))
+        Ok((Action::ExecuteStrategy(self), vec![], vec![]))
     }
 }

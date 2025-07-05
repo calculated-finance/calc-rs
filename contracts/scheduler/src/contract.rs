@@ -56,6 +56,9 @@ pub fn execute(
     info: MessageInfo,
     msg: SchedulerExecuteMsg,
 ) -> ContractResult {
+    let mut messages = vec![];
+    let mut sub_messages = vec![];
+
     match msg {
         SchedulerExecuteMsg::CreateTrigger(command) => {
             TRIGGERS.save(
@@ -64,8 +67,6 @@ pub fn execute(
                 command,
                 info.funds.clone(),
             )?;
-
-            Ok(Response::default())
         }
         SchedulerExecuteMsg::SetTriggers(commands) => {
             if !info.funds.is_empty() && info.funds.len() != commands.len() {
@@ -111,10 +112,12 @@ pub fn execute(
             //     return Ok(Response::default());
             // }
 
-            Ok(Response::default().add_message(BankMsg::Send {
-                to_address: info.sender.to_string(),
-                amount: rebates_to_refund,
-            }))
+            if !rebates_to_refund.is_empty() {
+                messages.push(BankMsg::Send {
+                    to_address: info.sender.to_string(),
+                    amount: rebates_to_refund.clone(),
+                });
+            }
         }
         SchedulerExecuteMsg::ExecuteTrigger(id) => {
             let trigger = TRIGGERS
@@ -137,16 +140,22 @@ pub fn execute(
                 EXECUTE_REPLY_ID,
             );
 
-            let rebate_msg = BankMsg::Send {
-                to_address: info.sender.to_string(),
-                amount: trigger.execution_rebate,
-            };
+            sub_messages.push(execute_msg);
 
-            Ok(Response::default()
-                .add_submessage(execute_msg)
-                .add_message(rebate_msg))
+            if !trigger.execution_rebate.is_empty() {
+                let rebate_msg = BankMsg::Send {
+                    to_address: info.sender.to_string(),
+                    amount: trigger.execution_rebate,
+                };
+
+                messages.push(rebate_msg);
+            }
         }
-    }
+    };
+
+    Ok(Response::default()
+        .add_messages(messages)
+        .add_submessages(sub_messages))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

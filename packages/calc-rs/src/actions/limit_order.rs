@@ -74,7 +74,7 @@ impl OrderPriceStrategy {
 }
 
 #[cw_serde]
-pub struct Order {
+pub struct LimitOrder {
     pub pair_address: Addr,
     pub bid_denom: String,
     pub bid_amount: Option<Uint128>,
@@ -83,14 +83,14 @@ pub struct Order {
     pub current_price: Option<Price>,
 }
 
-impl Order {
+impl LimitOrder {
     pub fn get_pair(&self, deps: Deps) -> StdResult<ConfigResponse> {
         deps.querier
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
     }
 }
 
-impl Operation for Order {
+impl Operation for LimitOrder {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
         if let Some(amount) = self.bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
@@ -111,7 +111,7 @@ impl Operation for Order {
             }
         }
 
-        Ok(Action::Set(Order {
+        Ok(Action::SetLimitOrder(LimitOrder {
             current_price: match self.strategy {
                 OrderPriceStrategy::Fixed { price } => Some(Price::Fixed(price)),
                 OrderPriceStrategy::Offset { .. } => None,
@@ -209,15 +209,11 @@ impl Operation for Order {
         )
         .with_payload(to_json_binary(&Statistics {
             filled: if let Some(existing_order) = existing_order {
-                if existing_order.filled.gt(&Uint128::zero()) {
-                    let pair = self.get_pair(deps)?;
-                    vec![Coin::new(
-                        existing_order.filled,
-                        pair.denoms.ask(&self.side),
-                    )]
-                } else {
-                    vec![]
-                }
+                let pair = self.get_pair(deps)?;
+                vec![Coin::new(
+                    existing_order.filled,
+                    pair.denoms.ask(&self.side),
+                )]
             } else {
                 vec![]
             },
@@ -227,7 +223,7 @@ impl Operation for Order {
         messages.push(set_order_msg);
 
         Ok((
-            Action::Set(Order {
+            Action::SetLimitOrder(LimitOrder {
                 current_price: Some(new_price),
                 ..self
             }),
@@ -242,7 +238,7 @@ impl Operation for Order {
         env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Set(update) = update {
+        if let Action::SetLimitOrder(update) = update {
             let (action, messages, events) = update.init(deps, env)?.execute(deps, env)?;
             Ok((action, messages, events))
         } else {
@@ -356,17 +352,18 @@ impl Operation for Order {
             let withdraw_order_msg = SubMsg::reply_always(
                 Contract(self.pair_address.clone()).call(
                     to_json_binary(&ExecuteMsg::Order((
-                        vec![(self.side.clone(), order.price, None)],
+                        vec![(self.side.clone(), order.price, Some(Uint128::zero()))],
                         None,
                     )))?,
                     vec![],
                 ),
                 0,
-            );
+            )
+            .with_payload(to_json_binary(&Statistics::default())?);
 
             messages.push(withdraw_order_msg);
         }
 
-        Ok((Action::Set(self), messages, vec![]))
+        Ok((Action::SetLimitOrder(self), messages, vec![]))
     }
 }

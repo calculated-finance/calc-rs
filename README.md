@@ -6,28 +6,28 @@ This repository contains the core smart contracts for the CALC protocol, a decen
 
 ## Overview
 
-The CALC protocol provides a powerful and flexible framework for DeFi users to build sophisticated, conditional trading strategies. The system is designed around a composable, modular architecture that allows for a high degree of customization and extensibility.
+The CALC protocol provides a framework for building automated trading strategies on the Rujira blockchain. It features a composable, modular architecture designed for customization and extensibility.
 
-At its core, a user defines a **Strategy** as a tree of **Actions** (e.g., swap tokens, place a limit order) that are gated by **Conditions** (e.g., time, price, balance). These strategies are then executed automatically by the protocol's interconnected smart contracts, enabling complex workflows like Time-Weighted Average Price (TWAP) orders, Dollar-Cost Averaging (DCA), and dynamic portfolio rebalancing.
+At its core, a user defines a **Strategy** as a series of interconnected **Actions**, which are the fundamental units of work. These Actions, implemented via the `Operation` trait, can be atomic operations or complex, nested behaviors. Each Action is gated by **Conditions** (e.g., time, price, balance), ensuring that operations only proceed when specific criteria are met. Strategies are then executed automatically by the protocol's interconnected smart contracts, enabling workflows such as Time-Weighted Average Price (TWAP) orders, Dollar-Cost Averaging (DCA), and dynamic portfolio rebalancing.
 
 ## Architecture
 
 The protocol follows a hub-and-spoke model, with a central `Manager` contract orchestrating the lifecycle of various modular, special-purpose contracts.
 
 ```
-+-----------------+       +------------------+
-|      User       |------>|     Manager      |
-+-----------------+       +--------+---------+
-                                   |
-                                   v
-+-----------------+       +--------+---------+       +------------------+
-|    Scheduler    |<----->|     Strategy     |<----->|    Exchanger     |
-+-----------------+       +------------------+       +------------------+
-        ^                          |
-        |                          v
-+-----------------+       +-----------------+
-| External Keeper |       |   Recipients    |
-+-----------------+       +-----------------+
++-------------------+       +------------------+
+|       User        |------>|     Manager      |
++-------------------+       +--------+---------+
+                                     |
+                                     v
++-------------------+       +--------+---------+       +------------------+
+|     Scheduler     |<----->|     Strategy     |<----->|    Exchanger     |
++---------+---------+       +--------+---------+       +------------------+
+          ^                          |
+          |                          v
++---------+---------+       +--------+--------+
+|      Executor     |       |   Recipients    |
++-------------------+       +-----------------+
 ```
 
 ### Contract Responsibilities
@@ -38,8 +38,8 @@ The protocol follows a hub-and-spoke model, with a central `Manager` contract or
   - **Lifecycle Control**: Manages the high-level status of strategies (e.g., `Active`, `Paused`, `Archived`).
   - **Affiliate Management**: Handles the registration and fee configuration for protocol affiliates.
 
-- **Strategy (`strategy`)**: The brain of an individual user's automated workflow.
-  - **Execution Engine**: Holds the core logic for a single strategy, defined as a tree of `Action`s.
+- **Strategy (`strategy`)**: Manages an individual user's automated workflow.
+  - **Execution Engine**: Contains the core logic for a single strategy, defined as a tree of `Action`s.
   - **State Machine**: Manages the state of the user's strategy, updating it as actions are executed.
   - **Fund Custody**: Holds the funds required for the strategy's operations.
   - **Composability**: Interacts with other modules like the `Scheduler` and `Exchanger` to execute its defined actions.
@@ -56,21 +56,38 @@ The protocol follows a hub-and-spoke model, with a central `Manager` contract or
 
 ### Core Concepts: Actions & Conditions
 
-The power and flexibility of the CALC protocol come from its composable `Action` and `Condition` system.
+The CALC protocol utilizes a composable `Action` and `Condition` system.
 
 - **`Condition`**: A simple, readable enum that defines a specific on-chain state that must be true for an action to proceed. Examples include:
-  - `TimestampElapsed(timestamp)`
-  - `BlocksCompleted(height)`
-  - `BalanceAvailable { ... }`
-  - `LimitOrderFilled { ... }`
+  - `TimestampElapsed(timestamp)`: Checks if a specific timestamp has been reached.
+  - `BlocksCompleted(height)`: Verifies if a certain block height has been surpassed.
+  - `BalanceAvailable { ... }`: Ensures a minimum balance of a specific token is available.
+  - `LimitOrderFilled { ... }`: Confirms if a previously placed limit order has been filled.
+  - `StrategyStatus { ... }`: Checks the current lifecycle status of another strategy.
+  - `Compound { ... }`: Combines multiple conditions with logical `AND` (`All`) or `OR` (`Any`) operators.
 
-- **`Action`**: The core building block of a strategy. It is a recursive enum that can represent either a single operation or a complex, nested group of operations.
-  - **Leaf Actions**: These are simple, atomic operations like `Swap`, `SetOrder` (for limit orders), or `DistributeTo` (for sending funds).
-  - **Composite Actions**: The `Behaviour` and `Crank` actions are composites.
-    - `Behaviour`: Groups a `Vec<Action>` together, executing them based on a `Threshold` (`All` or `Any`). This allows for creating complex, parallel, or sequential workflows.
-    - `Crank`: Wraps another `Action` and associates it with a `Schedule`. This is the key to creating recurring actions like DCA or TWAP orders.
+- **`Action`**: The core building block of a strategy. It is a versatile enum that implements the `Operation` trait, providing a consistent interface for initialization, execution, and state management.
+  - **`Check(Condition)`**: Evaluates a given `Condition`.
+  - **`Crank(Schedule)`**: Manages scheduled executions, allowing for recurring actions based on block height, time, or cron expressions.
+  - **`Perform(Swap)`**: Executes a token swap via the `Exchanger` contract.
+  - **`Set(Order)`**: Places or modifies a limit order on a FIN market.
+  - **`DistributeTo(Recipients)`**: Distributes funds to predefined recipients.
+  - **`Exhibit(Behaviour)`**: A powerful composite action that groups multiple `Action`s.
 
-This recursive, composite structure allows for building strategies of arbitrary depth and complexity, enabling highly sophisticated and adaptive automated trading.
+- **`Behaviour`**: A composite `Action` that groups a vector of other `Action`s. It includes a `Threshold` (`All` or `Any`), determining whether all nested actions must succeed or if any one is sufficient for the `Behaviour` to be considered successful. This supports complex sequential or conditional workflows.
+
+### Control Flow Paradigms
+
+The CALC protocol employs several control flow paradigms to enable sophisticated automated strategies:
+
+1.  **Event-Driven Execution**: The system responds to external messages (e.g., `ExecuteStrategy` from the Manager) and internal events (e.g., a `Scheduler` trigger firing).
+2.  **Conditional Gating**: `Condition`s are extensively used to ensure actions only proceed when specific criteria are met, preventing unwanted or invalid operations.
+3.  **Hierarchical Composition**: The `Action::Exhibit(Behaviour)` construct allows for building complex, nested execution flows. A `Behaviour` can contain other `Behaviour`s, creating a tree-like structure of operations.
+4.  **Stateful Operations**: Strategies maintain their internal state (`StrategyConfig`, `Statistics`), which is updated by executed actions.
+5.  **Inter-Contract Communication**: Strategies interact with other contracts (Exchanger, FIN market, Scheduler) using `SubMsg`s, enabling asynchronous operations and handling of replies for result processing (e.g., updating statistics after a swap).
+6.  **Lifecycle Management**: The Manager contract provides clear lifecycle states for strategies (Active, Paused, Archived), and state transitions can trigger specific actions (e.g., canceling open orders when archiving).
+
+This combination of modular `Action`s, robust `Condition`s, and flexible control flow mechanisms allows for the creation of highly sophisticated and adaptive automated trading strategies.
 
 ## Getting Started
 

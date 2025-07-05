@@ -111,7 +111,6 @@ impl Cadence {
 pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
-
     CanSwap {
         exchanger_contract: Addr,
         swap_amount: Coin,
@@ -127,6 +126,9 @@ pub enum Condition {
     },
     BalanceAvailable {
         address: Addr,
+        amount: Coin,
+    },
+    OwnBalanceAvailable {
         amount: Coin,
     },
     StrategyStatus {
@@ -236,6 +238,20 @@ impl Condition {
                     address, balance.amount, amount.amount
                 )))
             }
+            Condition::OwnBalanceAvailable { amount } => {
+                let balance = deps
+                    .querier
+                    .query_balance(&env.contract.address, amount.denom.clone())?;
+
+                if balance.amount >= amount.amount {
+                    return Ok(());
+                }
+
+                Err(StdError::generic_err(format!(
+                    "Balance available for {} ({}) is less than required ({})",
+                    env.contract.address, balance.amount, amount.amount
+                )))
+            }
             Condition::StrategyStatus {
                 manager_contract,
                 contract_address,
@@ -309,6 +325,9 @@ impl Condition {
             Condition::BalanceAvailable { address, amount } => format!(
                 "balance available: address={address}, amount={amount}"
             ),
+            Condition::OwnBalanceAvailable { amount } => {
+                format!("balance available: address={}, amount={}", env.contract.address, amount)
+            }
             Condition::StrategyStatus {
                 contract_address,
                 status,

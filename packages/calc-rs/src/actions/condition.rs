@@ -9,7 +9,7 @@ use crate::{
 
 impl Operation for Condition {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
-        Ok(Action::Check(self))
+        Ok(Action::CheckCondition(self))
     }
 
     fn condition(&self, _env: &Env) -> Option<Condition> {
@@ -18,7 +18,7 @@ impl Operation for Condition {
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         self.check(deps, env)?;
-        Ok((Action::Check(self), vec![], vec![]))
+        Ok((Action::CheckCondition(self), vec![], vec![]))
     }
 
     fn update(
@@ -27,8 +27,8 @@ impl Operation for Condition {
         _env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Check(update) = update {
-            Ok((Action::Check(update), vec![], vec![]))
+        if let Action::CheckCondition(update) = update {
+            Ok((Action::CheckCondition(update), vec![], vec![]))
         } else {
             Err(StdError::generic_err("Invalid action type for update"))
         }
@@ -52,6 +52,6 @@ impl Operation for Condition {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Check(self), vec![], vec![]))
+        Ok((Action::CheckCondition(self), vec![], vec![]))
     }
 }

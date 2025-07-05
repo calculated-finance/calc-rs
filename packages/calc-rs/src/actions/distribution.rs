@@ -37,13 +37,13 @@ pub struct Destination {
 }
 
 #[cw_serde]
-pub struct Recipients {
+pub struct Distribution {
     pub denoms: Vec<String>,
     pub mutable_destinations: Vec<Destination>,
     pub immutable_destinations: Vec<Destination>,
 }
 
-impl Operation for Recipients {
+impl Operation for Distribution {
     fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
@@ -87,7 +87,7 @@ impl Operation for Recipients {
             ));
         }
 
-        Ok(Action::DistributeTo(self))
+        Ok(Action::Distribute(self))
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {
@@ -159,7 +159,7 @@ impl Operation for Recipients {
             }
         }
 
-        Ok((Action::DistributeTo(self), messages, events))
+        Ok((Action::Distribute(self), messages, events))
     }
 
     fn update(
@@ -168,7 +168,7 @@ impl Operation for Recipients {
         _env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::DistributeTo(update) = update {
+        if let Action::Distribute(update) = update {
             let existing_total_shares = self
                 .mutable_destinations
                 .iter()
@@ -196,7 +196,7 @@ impl Operation for Recipients {
             }
 
             Ok((
-                Action::DistributeTo(Recipients {
+                Action::Distribute(Distribution {
                     immutable_destinations: self.immutable_destinations,
                     ..update
                 }),
@@ -228,6 +228,6 @@ impl Operation for Recipients {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::DistributeTo(self), vec![], vec![]))
+        Ok((Action::Distribute(self), vec![], vec![]))
     }
 }

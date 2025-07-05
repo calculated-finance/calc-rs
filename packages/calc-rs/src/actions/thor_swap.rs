@@ -5,41 +5,39 @@ use std::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation},
-    core::Contract,
-    exchanger::{ExchangerExecuteMsg, ExchangerQueryMsg, ExpectedReceiveAmount, Route},
+    actions::{action::Action, operation::Operation, swap::SwapAmountAdjustment},
     statistics::Statistics,
+    thorchain::{MsgDeposit, SwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
+    to_json_binary, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg, Uint128,
 };
-use rujira_rs::fin::{ConfigResponse, QueryMsg};
 
 use crate::conditions::Condition;
 
 #[cw_serde]
-pub enum SwapAmountAdjustment {
-    Fixed,
-    LinearScalar {
-        base_receive_amount: Coin,
-        minimum_swap_amount: Option<Coin>,
-        scalar: Decimal,
-    },
-}
-
-#[cw_serde]
-pub struct Swap {
-    pub exchange_contract: Addr,
+pub struct ThorSwap {
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub maximum_slippage_bps: u128,
     pub adjustment: SwapAmountAdjustment,
-    pub route: Option<Route>,
+    pub affiliate_code: Option<String>,
+    pub affiliate_bps: Option<u64>,
 }
 
-impl Operation for Swap {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
+fn is_secured_asset(denom: &str) -> bool {
+    denom.to_lowercase() == "rune" || denom.contains("-")
+}
+
+impl Operation for ThorSwap {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
+        if !is_secured_asset(self.swap_amount.denom.as_str()) {
+            return Err(StdError::generic_err(
+                "Swap amount must be RUNE or a secured asset",
+            ));
+        }
+
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
@@ -50,35 +48,7 @@ impl Operation for Swap {
             ));
         }
 
-        if let Some(route) = self.route.clone() {
-            match route {
-                Route::FinMarket { address } => {
-                    let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
-                        address.clone(),
-                        &QueryMsg::Config {},
-                    )?;
-
-                    let denoms = [pair.denoms.base(), pair.denoms.quote()];
-
-                    if !denoms.contains(&self.swap_amount.denom.as_str()) {
-                        return Err(StdError::generic_err(format!(
-                            "Pair at {} does not support swapping from {}",
-                            address, self.swap_amount.denom
-                        )));
-                    }
-
-                    if !denoms.contains(&self.minimum_receive_amount.denom.as_str()) {
-                        return Err(StdError::generic_err(format!(
-                            "Pair at {} does not support swapping into {}",
-                            address, self.minimum_receive_amount.denom
-                        )));
-                    }
-                }
-                Route::Thorchain {} => {}
-            }
-        }
-
-        Ok(Action::Swap(self))
+        Ok(Action::ThorSwap(self))
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {
@@ -120,23 +90,34 @@ impl Operation for Swap {
                 minimum_swap_amount,
                 scalar,
             } => {
-                let expected_receive_amount =
-                    deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
-                        self.exchange_contract.clone(),
-                        &ExchangerQueryMsg::ExpectedReceiveAmount {
-                            swap_amount: self.swap_amount.clone(),
-                            target_denom: self.swap_amount.denom.clone(),
-                            route: None,
-                        },
-                    )?;
+                let quote = SwapQuote::get(
+                    deps.querier,
+                    &SwapQuoteRequest {
+                        from_asset: self.swap_amount.denom.clone(),
+                        to_asset: self.minimum_receive_amount.denom.clone(),
+                        amount: self.swap_amount.amount,
+                        streaming_interval: Uint128::zero(),
+                        streaming_quantity: Uint128::zero(),
+                        destination: env.contract.address.to_string(),
+                        refund_address: env.contract.address.to_string(),
+                        affiliate: self
+                            .affiliate_code
+                            .clone()
+                            .map_or_else(std::vec::Vec::new, |c| vec![c]),
+                        affiliate_bps: self
+                            .affiliate_bps
+                            .map_or_else(std::vec::Vec::new, |b| vec![b]),
+                    },
+                )
+                .map_err(|e| StdError::generic_err(format!("Failed to get L1 swap quote: {e}")))?;
+
+                let expected_receive_amount = quote.expected_amount_out;
 
                 let base_price =
                     Decimal::from_ratio(base_receive_amount.amount, self.swap_amount.amount);
 
-                let current_price = Decimal::from_ratio(
-                    self.swap_amount.amount,
-                    expected_receive_amount.receive_amount.amount,
-                );
+                let current_price =
+                    Decimal::from_ratio(self.swap_amount.amount, expected_receive_amount);
 
                 let price_delta = base_price.abs_diff(current_price) / base_price;
                 let scaled_price_delta = price_delta * scalar;
@@ -152,7 +133,7 @@ impl Operation for Swap {
                 };
 
                 if scaled_swap_amount.is_zero() {
-                    return Ok((Action::Swap(self), messages, events));
+                    return Ok((Action::ThorSwap(self), messages, events));
                 }
 
                 let new_swap_amount = Coin::new(
@@ -181,20 +162,41 @@ impl Operation for Swap {
         };
 
         if new_swap_amount.amount.is_zero() {
-            return Ok((Action::Swap(self), messages, events));
+            return Ok((Action::ThorSwap(self), messages, events));
+        }
+
+        let quote = SwapQuote::get(
+            deps.querier,
+            &SwapQuoteRequest {
+                from_asset: new_swap_amount.denom.clone(),
+                to_asset: new_minimum_receive_amount.denom.clone(),
+                amount: new_swap_amount.amount,
+                streaming_interval: Uint128::zero(),
+                streaming_quantity: Uint128::zero(),
+                destination: env.contract.address.to_string(),
+                refund_address: env.contract.address.to_string(),
+                affiliate: self
+                    .affiliate_code
+                    .clone()
+                    .map_or_else(std::vec::Vec::new, |c| vec![c]),
+                affiliate_bps: self
+                    .affiliate_bps
+                    .map_or_else(std::vec::Vec::new, |b| vec![b]),
+            },
+        )
+        .map_err(|e| StdError::generic_err(format!("Failed to get L1 swap quote: {e}")))?;
+
+        if quote.expected_amount_out < new_minimum_receive_amount.amount {
+            return Ok((Action::ThorSwap(self), messages, events));
         }
 
         let swap_msg = SubMsg::reply_always(
-            Contract(self.exchange_contract.clone()).call(
-                to_json_binary(&ExchangerExecuteMsg::Swap {
-                    minimum_receive_amount: new_minimum_receive_amount.clone(),
-                    maximum_slippage_bps: self.maximum_slippage_bps,
-                    route: self.route.clone(),
-                    recipient: None,
-                    on_complete: None,
-                })?,
-                vec![new_swap_amount.clone()],
-            ),
+            MsgDeposit {
+                memo: quote.memo,
+                coins: vec![new_swap_amount.clone()],
+                signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
+            }
+            .into_cosmos_msg()?,
             0,
         )
         .with_payload(to_json_binary(&Statistics {
@@ -204,7 +206,7 @@ impl Operation for Swap {
 
         messages.push(swap_msg);
 
-        Ok((Action::Swap(self), messages, events))
+        Ok((Action::ThorSwap(self), messages, events))
     }
 
     fn update(
@@ -213,8 +215,8 @@ impl Operation for Swap {
         _env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Swap(update) = update {
-            return Ok((Action::Swap(update), vec![], vec![]));
+        if let Action::ThorSwap(update) = update {
+            return Ok((Action::ThorSwap(update), vec![], vec![]));
         } else {
             return Err(StdError::generic_err(
                 "Cannot update swap action with non-swap action",
@@ -240,6 +242,6 @@ impl Operation for Swap {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Swap(self), vec![], vec![]))
+        Ok((Action::ThorSwap(self), vec![], vec![]))
     }
 }

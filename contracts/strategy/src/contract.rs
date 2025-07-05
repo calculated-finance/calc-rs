@@ -4,8 +4,8 @@ use calc_rs::{
     actions::{
         action::Action,
         behaviour::Behaviour,
+        distribution::{Destination, Distribution, Recipient},
         operation::Operation,
-        recipients::{Destination, Recipient, Recipients},
     },
     core::{Contract, ContractError, ContractResult},
     manager::{Affiliate, StrategyStatus},
@@ -237,7 +237,7 @@ pub fn execute(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
-    if matches!(reply.result, SubMsgResult::Ok(_)) {
+    if let SubMsgResult::Ok(_) = reply.result {
         let stats = from_json::<Statistics>(reply.payload);
         if let Ok(stats) = stats {
             STATS.update(_deps.storage, |s| s.add(stats))?;
@@ -271,7 +271,7 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
 
 fn with_affiliates(action: Action, affiliates: &[Affiliate]) -> Action {
     match action {
-        Action::DistributeTo(Recipients {
+        Action::Distribute(Distribution {
             denoms,
             mutable_destinations,
             immutable_destinations,
@@ -288,7 +288,7 @@ fn with_affiliates(action: Action, affiliates: &[Affiliate]) -> Action {
             let total_shares_with_fees =
                 total_shares.mul_ceil(Decimal::bps(10_000 + total_affiliate_bps));
 
-            Action::DistributeTo(Recipients {
+            Action::Distribute(Distribution {
                 denoms: denoms.clone(),
                 mutable_destinations: mutable_destinations.clone(),
                 immutable_destinations: [
@@ -307,7 +307,7 @@ fn with_affiliates(action: Action, affiliates: &[Affiliate]) -> Action {
                 .concat(),
             })
         }
-        Action::Exhibit(Behaviour { actions, threshold }) => Action::Exhibit(Behaviour {
+        Action::Compose(Behaviour { actions, threshold }) => Action::Compose(Behaviour {
             actions: actions
                 .into_iter()
                 .map(|action| with_affiliates(action, affiliates))

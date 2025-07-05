@@ -5,40 +5,28 @@ use std::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation},
+    actions::{action::Action, operation::Operation, swap::SwapAmountAdjustment},
     core::Contract,
-    exchanger::{ExchangerExecuteMsg, ExchangerQueryMsg, ExpectedReceiveAmount, Route},
     statistics::Statistics,
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
 };
-use rujira_rs::fin::{ConfigResponse, QueryMsg};
+use rujira_rs::fin::{ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest};
 
 use crate::conditions::Condition;
 
 #[cw_serde]
-pub enum SwapAmountAdjustment {
-    Fixed,
-    LinearScalar {
-        base_receive_amount: Coin,
-        minimum_swap_amount: Option<Coin>,
-        scalar: Decimal,
-    },
-}
-
-#[cw_serde]
-pub struct Swap {
-    pub exchange_contract: Addr,
+pub struct FinSwap {
+    pub pair_address: Addr,
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub maximum_slippage_bps: u128,
     pub adjustment: SwapAmountAdjustment,
-    pub route: Option<Route>,
 }
 
-impl Operation for Swap {
+impl Operation for FinSwap {
     fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
@@ -50,35 +38,27 @@ impl Operation for Swap {
             ));
         }
 
-        if let Some(route) = self.route.clone() {
-            match route {
-                Route::FinMarket { address } => {
-                    let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
-                        address.clone(),
-                        &QueryMsg::Config {},
-                    )?;
+        let pair = deps
+            .querier
+            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
 
-                    let denoms = [pair.denoms.base(), pair.denoms.quote()];
+        let denoms = [pair.denoms.base(), pair.denoms.quote()];
 
-                    if !denoms.contains(&self.swap_amount.denom.as_str()) {
-                        return Err(StdError::generic_err(format!(
-                            "Pair at {} does not support swapping from {}",
-                            address, self.swap_amount.denom
-                        )));
-                    }
-
-                    if !denoms.contains(&self.minimum_receive_amount.denom.as_str()) {
-                        return Err(StdError::generic_err(format!(
-                            "Pair at {} does not support swapping into {}",
-                            address, self.minimum_receive_amount.denom
-                        )));
-                    }
-                }
-                Route::Thorchain {} => {}
-            }
+        if !denoms.contains(&self.swap_amount.denom.as_str()) {
+            return Err(StdError::generic_err(format!(
+                "Pair at {} does not support swapping from {}",
+                self.pair_address, self.swap_amount.denom
+            )));
         }
 
-        Ok(Action::Swap(self))
+        if !denoms.contains(&self.minimum_receive_amount.denom.as_str()) {
+            return Err(StdError::generic_err(format!(
+                "Pair at {} does not support swapping into {}",
+                self.pair_address, self.minimum_receive_amount.denom
+            )));
+        }
+
+        Ok(Action::FinSwap(self))
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {
@@ -103,15 +83,13 @@ impl Operation for Swap {
                     self.swap_amount.denom.clone(),
                 );
 
-                let new_minimum_receive_amount = Coin::new(
+                let new_minimum_receive_amount =
                     self.minimum_receive_amount
                         .amount
                         .mul_floor(Decimal::from_ratio(
                             new_swap_amount.amount,
                             self.swap_amount.amount,
-                        )),
-                    self.minimum_receive_amount.denom.clone(),
-                );
+                        ));
 
                 (new_swap_amount, new_minimum_receive_amount)
             }
@@ -120,23 +98,16 @@ impl Operation for Swap {
                 minimum_swap_amount,
                 scalar,
             } => {
-                let expected_receive_amount =
-                    deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
-                        self.exchange_contract.clone(),
-                        &ExchangerQueryMsg::ExpectedReceiveAmount {
-                            swap_amount: self.swap_amount.clone(),
-                            target_denom: self.swap_amount.denom.clone(),
-                            route: None,
-                        },
-                    )?;
+                let simulation = deps.querier.query_wasm_smart::<SimulationResponse>(
+                    self.pair_address.clone(),
+                    &QueryMsg::Simulate(self.swap_amount.clone()),
+                )?;
 
                 let base_price =
                     Decimal::from_ratio(base_receive_amount.amount, self.swap_amount.amount);
 
-                let current_price = Decimal::from_ratio(
-                    self.swap_amount.amount,
-                    expected_receive_amount.receive_amount.amount,
-                );
+                let current_price =
+                    Decimal::from_ratio(self.swap_amount.amount, simulation.returned);
 
                 let price_delta = base_price.abs_diff(current_price) / base_price;
                 let scaled_price_delta = price_delta * scalar;
@@ -152,7 +123,7 @@ impl Operation for Swap {
                 };
 
                 if scaled_swap_amount.is_zero() {
-                    return Ok((Action::Swap(self), messages, events));
+                    return Ok((Action::FinSwap(self), messages, events));
                 }
 
                 let new_swap_amount = Coin::new(
@@ -166,33 +137,29 @@ impl Operation for Swap {
                     self.swap_amount.denom.clone(),
                 );
 
-                let new_minimum_receive_amount = Coin::new(
+                let new_minimum_receive_amount =
                     self.minimum_receive_amount
                         .amount
                         .mul_ceil(Decimal::from_ratio(
                             new_swap_amount.amount,
                             self.swap_amount.amount,
-                        )),
-                    self.minimum_receive_amount.denom.clone(),
-                );
+                        ));
 
                 (new_swap_amount, new_minimum_receive_amount)
             }
         };
 
         if new_swap_amount.amount.is_zero() {
-            return Ok((Action::Swap(self), messages, events));
+            return Ok((Action::FinSwap(self), messages, events));
         }
 
         let swap_msg = SubMsg::reply_always(
-            Contract(self.exchange_contract.clone()).call(
-                to_json_binary(&ExchangerExecuteMsg::Swap {
-                    minimum_receive_amount: new_minimum_receive_amount.clone(),
-                    maximum_slippage_bps: self.maximum_slippage_bps,
-                    route: self.route.clone(),
-                    recipient: None,
-                    on_complete: None,
-                })?,
+            Contract(self.pair_address.clone()).call(
+                to_json_binary(&ExecuteMsg::Swap(SwapRequest {
+                    min_return: Some(new_minimum_receive_amount),
+                    to: None,
+                    callback: None,
+                }))?,
                 vec![new_swap_amount.clone()],
             ),
             0,
@@ -204,7 +171,7 @@ impl Operation for Swap {
 
         messages.push(swap_msg);
 
-        Ok((Action::Swap(self), messages, events))
+        Ok((Action::FinSwap(self), messages, events))
     }
 
     fn update(
@@ -213,8 +180,8 @@ impl Operation for Swap {
         _env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Swap(update) = update {
-            return Ok((Action::Swap(update), vec![], vec![]));
+        if let Action::FinSwap(update) = update {
+            return Ok((Action::FinSwap(update), vec![], vec![]));
         } else {
             return Err(StdError::generic_err(
                 "Cannot update swap action with non-swap action",
@@ -240,6 +207,6 @@ impl Operation for Swap {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Swap(self), vec![], vec![]))
+        Ok((Action::FinSwap(self), vec![], vec![]))
     }
 }
