@@ -50,7 +50,6 @@ pub struct Strategy {
     pub updated_at: u64,
     pub label: String,
     pub status: StrategyStatus,
-    pub affiliates: Vec<Affiliate>,
 }
 
 #[cw_serde]

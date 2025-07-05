@@ -1,7 +1,11 @@
+use std::cmp::max;
+
 use calc_rs::{
     core::{Contract, ContractError, ContractResult},
     events::DomainEvent,
-    manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy, StrategyStatus},
+    manager::{
+        Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy, StrategyStatus,
+    },
     strategy::{StrategyExecuteMsg, StrategyInstantiateMsg},
 };
 #[cfg(not(feature = "library"))]
@@ -13,6 +17,8 @@ use cosmwasm_std::{
 use cw_storage_plus::Bound;
 
 use crate::state::{strategy_store, updated_at_cursor, CONFIG, STRATEGY_COUNTER};
+
+const BASE_FEE_BPS: u64 = 25;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -44,7 +50,7 @@ pub fn execute(
     let mut messages: Vec<CosmosMsg> = Vec::new();
     let events: Vec<DomainEvent> = Vec::new();
 
-    match msg.clone() {
+    match msg {
         ManagerExecuteMsg::InstantiateStrategy {
             owner,
             label,
@@ -54,7 +60,11 @@ pub fn execute(
             let config = CONFIG.load(deps.storage)?;
             let strategy_id =
                 STRATEGY_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
-            let salt = to_json_binary(&(owner.clone(), strategy_id, env.block.time.seconds()))?;
+            let salt = to_json_binary(&(
+                owner.to_string().truncate(32),
+                strategy_id,
+                env.block.time.seconds(),
+            ))?;
             let code_id = config.strategy_code_id;
 
             let contract_address = deps.api.addr_humanize(&instantiate2_address(
@@ -65,6 +75,23 @@ pub fn execute(
                 &deps.api.addr_canonicalize(env.contract.address.as_str())?,
                 &salt,
             )?)?;
+
+            let total_affiliate_bps = affiliates
+                .iter()
+                .fold(0, |acc, affiliate| acc + affiliate.bps);
+
+            let affiliates = [
+                affiliates,
+                vec![Affiliate {
+                    address: config.fee_collector,
+                    bps: max(
+                        BASE_FEE_BPS.saturating_sub(10),
+                        BASE_FEE_BPS.saturating_sub(total_affiliate_bps),
+                    ),
+                    label: "CALC automation fee".to_string(),
+                }],
+            ]
+            .concat();
 
             strategy_store().save(
                 deps.storage,
@@ -77,7 +104,6 @@ pub fn execute(
                     updated_at: env.block.time.seconds(),
                     label: label.clone(),
                     status: StrategyStatus::Active,
-                    affiliates: Vec::new(),
                 },
             )?;
 
@@ -86,7 +112,7 @@ pub fn execute(
                 code_id,
                 label,
                 msg: to_json_binary(&StrategyInstantiateMsg {
-                    owner: info.sender,
+                    owner: owner.clone(),
                     affiliates,
                     action,
                 })?,

@@ -45,12 +45,11 @@ impl<'a> IndexList<Strategy> for StrategyIndexes<'a> {
     }
 }
 
-pub fn updated_at_cursor(updated_at: u64, contract_address: Option<Addr>) -> String {
-    format!(
-        "{:030}_{}",
-        updated_at,
-        contract_address.unwrap_or(Addr::unchecked(""))
-    )
+pub fn updated_at_cursor(updated_at: u64, contract_address: Option<&Addr>) -> String {
+    match contract_address {
+        Some(addr) => format!("{:030}_{}", updated_at, addr),
+        None => format!("{:030}_", updated_at),
+    }
 }
 
 pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, StrategyIndexes<'a>> {
@@ -58,14 +57,14 @@ pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, StrategyIndexes<'a>> {
         "strategies",
         StrategyIndexes {
             updated_at: UniqueIndex::new(
-                |s| updated_at_cursor(s.updated_at, Some(s.contract_address.clone())),
+                |s| updated_at_cursor(s.updated_at, Some(&s.contract_address)),
                 "strategies_updated_at",
             ),
             owner_updated_at: UniqueIndex::new(
                 |s| {
                     (
                         s.owner.clone(),
-                        updated_at_cursor(s.updated_at, Some(s.contract_address.clone())),
+                        updated_at_cursor(s.updated_at, Some(&s.contract_address)),
                     )
                 },
                 "strategies_owner_updated_at",
@@ -74,7 +73,7 @@ pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, StrategyIndexes<'a>> {
                 |s| {
                     (
                         s.status.clone() as u8,
-                        updated_at_cursor(s.updated_at, Some(s.contract_address.clone())),
+                        updated_at_cursor(s.updated_at, Some(&s.contract_address)),
                     )
                 },
                 "strategies_status_updated_at",
@@ -84,7 +83,7 @@ pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, StrategyIndexes<'a>> {
                     (
                         s.owner.clone(),
                         s.status.clone() as u8,
-                        updated_at_cursor(s.updated_at, Some(s.contract_address.clone())),
+                        updated_at_cursor(s.updated_at, Some(&s.contract_address)),
                     )
                 },
                 "strategies_owner_status_updated_at",

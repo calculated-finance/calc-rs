@@ -1,7 +1,4 @@
-use std::{
-    cmp::{max, min},
-    collections::HashSet,
-};
+use std::{cmp::min, collections::HashSet};
 
 use calc_rs::{
     actions::{
@@ -24,8 +21,7 @@ use cosmwasm_std::{
 
 use crate::state::{STATE, STATS, STRATEGY};
 
-const BASE_FEE_BPS: u64 = 25;
-const FEE_COLLECTOR: &str = "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka"; // TODO: replace with actual fee collector address
+const MAX_BEHAVIOUR_ACTIONS: usize = 10;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -34,31 +30,14 @@ pub fn instantiate(
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
-    if msg.action.size() > 10 {
-        return Err(ContractError::generic_err(
-            "Behaviour cannot exceed 10 actions",
-        ));
+    if msg.action.size() > MAX_BEHAVIOUR_ACTIONS {
+        return Err(ContractError::generic_err(format!(
+            "Behaviour cannot exceed {} actions",
+            MAX_BEHAVIOUR_ACTIONS
+        )));
     }
 
-    let total_affiliate_bps = msg
-        .affiliates
-        .iter()
-        .fold(0, |acc, affiliate| acc + affiliate.bps);
-
-    let affiliates = &[
-        msg.affiliates,
-        vec![Affiliate {
-            address: deps.api.addr_validate(FEE_COLLECTOR)?,
-            bps: max(
-                BASE_FEE_BPS.saturating_sub(10),
-                BASE_FEE_BPS.saturating_sub(total_affiliate_bps),
-            ),
-            label: "CALC automation fee".to_string(),
-        }],
-    ]
-    .concat();
-
-    let action = with_affiliates(msg.action, affiliates).init(deps.as_ref(), &env)?;
+    let action = with_affiliates(msg.action, &msg.affiliates).init(deps.as_ref(), &env)?;
     let escrowed = action.escrowed(deps.as_ref(), &env)?;
 
     STRATEGY.save(
@@ -93,8 +72,9 @@ pub fn execute(
         }
     }
 
-    if !matches!(msg, StrategyExecuteMsg::Clear {}) {
-        STATE.save(deps.storage, &msg)?;
+    if matches!(msg, StrategyExecuteMsg::Clear {}) {
+        STATE.remove(deps.storage);
+        return Ok(Response::default());
     }
 
     let strategy = STRATEGY.load(deps.storage)?;
@@ -102,7 +82,7 @@ pub fn execute(
     let mut all_messages: Vec<SubMsg> = vec![];
     let mut all_events: Vec<Event> = vec![];
 
-    match msg.clone() {
+    match msg {
         StrategyExecuteMsg::Update(update) => {
             if info.sender != strategy.manager {
                 return Err(ContractError::Unauthorized {});
@@ -168,14 +148,10 @@ pub fn execute(
                 return Err(ContractError::Unauthorized {});
             }
 
-            let mut desired = Coins::try_from(amounts)?;
+            let mut remaining_desired = Coins::try_from(amounts.clone())?;
             let mut withdrawals = Coins::default();
 
-            for amount in desired.clone().iter() {
-                if desired.is_empty() {
-                    break;
-                }
-
+            for amount in amounts.iter() {
                 if strategy.escrowed.contains(&amount.denom) {
                     return Err(ContractError::generic_err(format!(
                         "Cannot withdraw escrowed denom: {}",
@@ -191,12 +167,14 @@ pub fn execute(
                     Coin::new(min(balance.amount, amount.amount), amount.denom.clone());
 
                 withdrawals.add(withdrawal.clone())?;
-                desired.sub(withdrawal)?;
+                remaining_desired.sub(withdrawal)?;
             }
 
-            if !desired.is_empty() {
+            if !remaining_desired.is_empty() {
                 let (messages, behaviour_withdrawals) =
-                    strategy.action.withdraw(deps.as_ref(), &env, &desired)?;
+                    strategy
+                        .action
+                        .withdraw(deps.as_ref(), &env, &remaining_desired)?;
 
                 all_messages.extend(messages);
 
@@ -291,7 +269,7 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     }
 }
 
-fn with_affiliates(action: Action, affiliates: &Vec<Affiliate>) -> Action {
+fn with_affiliates(action: Action, affiliates: &[Affiliate]) -> Action {
     match action {
         Action::DistributeTo(Recipients {
             denoms,

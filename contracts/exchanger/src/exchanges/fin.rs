@@ -58,14 +58,7 @@ pub fn get_pair(
     }
 }
 
-fn spot_price(
-    deps: Deps,
-    swap_denom: &str,
-    target_denom: &str,
-    route: &Option<Route>,
-) -> StdResult<Decimal> {
-    let pair = get_pair(deps, swap_denom, target_denom, route)?;
-
+fn spot_price(deps: Deps, pair: Pair, swap_denom: &str) -> StdResult<Decimal> {
     let position_type = match swap_denom == pair.quote_denom {
         true => PositionType::Enter,
         false => PositionType::Exit,
@@ -125,11 +118,11 @@ impl Exchange for FinExchange {
         let simulation = deps
             .querier
             .query::<SimulationResponse>(&QueryRequest::Wasm(WasmQuery::Smart {
-                contract_addr: pair.address.into_string(),
+                contract_addr: pair.address.clone().into_string(),
                 msg: to_json_binary(&QueryMsg::Simulate(swap_amount.clone()))?,
             }))?;
 
-        let spot_price = spot_price(deps, &swap_amount.denom, target_denom, route)?;
+        let spot_price = spot_price(deps, pair, &swap_amount.denom)?;
 
         let optimal_return_amount = max(
             simulation.returned,

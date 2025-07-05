@@ -31,14 +31,14 @@ impl Behaviour {
 
 impl Operation for Behaviour {
     fn init(self, deps: Deps, env: &Env) -> StdResult<Action> {
-        Ok(Action::Exhibit(Behaviour {
-            actions: self
-                .actions
-                .into_iter()
-                .flat_map(|action| action.init(deps, env))
-                .collect(),
-            ..self
-        }))
+        let mut actions = vec![];
+
+        for action in self.actions.into_iter() {
+            let action = action.init(deps, env)?;
+            actions.push(action);
+        }
+
+        Ok(Action::Exhibit(Behaviour { actions, ..self }))
     }
 
     fn condition(&self, env: &Env) -> Option<Condition> {

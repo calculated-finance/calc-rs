@@ -8,6 +8,7 @@ use crate::{
     actions::{action::Action, operation::Operation},
     core::Contract,
     exchanger::{ExchangerExecuteMsg, ExchangerQueryMsg, ExpectedReceiveAmount, Route},
+    statistics::Statistics,
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -53,7 +54,7 @@ impl Operation for Swap {
             match route {
                 Route::FinMarket { address } => {
                     let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
-                        self.exchange_contract.clone(),
+                        address.clone(),
                         &QueryMsg::Config {},
                     )?;
 
@@ -195,7 +196,11 @@ impl Operation for Swap {
                 vec![new_swap_amount.clone()],
             ),
             0,
-        );
+        )
+        .with_payload(to_json_binary(&Statistics {
+            swapped: vec![new_swap_amount],
+            ..Statistics::default()
+        })?);
 
         messages.push(swap_msg);
 
@@ -218,7 +223,7 @@ impl Operation for Swap {
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::from([self.swap_amount.denom.clone()]))
+        Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
     }
 
     fn balances(&self, _deps: Deps, _env: &Env, _denoms: &[String]) -> StdResult<Coins> {

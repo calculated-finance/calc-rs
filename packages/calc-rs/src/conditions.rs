@@ -802,7 +802,6 @@ mod conditions_tests {
                     created_at: 0,
                     updated_at: 0,
                     label: "label".to_string(),
-                    affiliates: vec![],
                 })
                 .unwrap(),
             ))
