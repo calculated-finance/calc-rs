@@ -1,4 +1,3 @@
-pub mod fin_limit;
-pub mod fin_market;
+pub mod fin;
 pub mod mock;
 pub mod thorchain;

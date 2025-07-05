@@ -32,15 +32,13 @@ pub fn get_pair(
 
                 if !denoms.contains(&swap_denom) {
                     return Err(StdError::generic_err(format!(
-                        "Pair at {} does not support swapping {}",
-                        address, swap_denom
+                        "Pair at {address} does not support swapping {swap_denom}"
                     )));
                 }
 
                 if !denoms.contains(&target_denom) {
                     return Err(StdError::generic_err(format!(
-                        "Pair at {} does not support swapping {}",
-                        address, target_denom
+                        "Pair at {address} does not support swapping {target_denom}"
                     )));
                 }
 
@@ -50,28 +48,17 @@ pub fn get_pair(
                     address: Addr::unchecked(address),
                 })
             }
-            _ => {
-                return Err(StdError::generic_err(
-                    "Route not supported for Fin market exchange",
-                ));
-            }
+            _ => Err(StdError::generic_err(
+                "Route not supported for Fin market exchange",
+            )),
         },
-        None => {
-            return Err(StdError::generic_err(
-                "Must provide a Fin market route to get a pair",
-            ));
-        }
+        None => Err(StdError::generic_err(
+            "Must provide a Fin market route to get a pair",
+        )),
     }
 }
 
-fn spot_price(
-    deps: Deps,
-    swap_denom: &str,
-    target_denom: &str,
-    route: &Option<Route>,
-) -> StdResult<Decimal> {
-    let pair = get_pair(deps, swap_denom, target_denom, route)?;
-
+fn spot_price(deps: Deps, pair: Pair, swap_denom: &str) -> StdResult<Decimal> {
     let position_type = match swap_denom == pair.quote_denom {
         true => PositionType::Enter,
         false => PositionType::Exit,
@@ -87,32 +74,38 @@ fn spot_price(
 
     if book_response.base.is_empty() || book_response.quote.is_empty() {
         return Err(StdError::generic_err(format!(
-            "Not enough orders found for {} at fin pair {}",
-            swap_denom, pair.address
+            "Not enough orders found for {swap_denom} at fin pair {}",
+            pair.address
         )));
     }
 
-    let quote_price = (book_response.base[0].price + book_response.quote[0].price)
+    let belief_price = (book_response.base[0].price + book_response.quote[0].price)
         / Decimal::from_str("2").unwrap();
 
     Ok(match position_type {
-        PositionType::Enter => quote_price,
+        PositionType::Enter => belief_price,
         PositionType::Exit => Decimal::one()
-            .checked_div(quote_price)
+            .checked_div(belief_price)
             .expect("should return a valid inverted price for fin sell"),
     })
 }
 
 #[cw_serde]
-pub struct FinMarketExchange {}
+pub struct FinExchange {}
 
-impl FinMarketExchange {
-    pub fn new() -> Self {
-        FinMarketExchange {}
+impl Default for FinExchange {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl Exchange for FinMarketExchange {
+impl FinExchange {
+    pub fn new() -> Self {
+        FinExchange {}
+    }
+}
+
+impl Exchange for FinExchange {
     fn expected_receive_amount(
         &self,
         deps: Deps,
@@ -120,16 +113,16 @@ impl Exchange for FinMarketExchange {
         target_denom: &str,
         route: &Option<Route>,
     ) -> StdResult<ExpectedReceiveAmount> {
-        let pair = get_pair(deps, &swap_amount.denom, &target_denom, route)?;
+        let pair = get_pair(deps, &swap_amount.denom, target_denom, route)?;
 
         let simulation = deps
             .querier
             .query::<SimulationResponse>(&QueryRequest::Wasm(WasmQuery::Smart {
-                contract_addr: pair.address.into_string(),
+                contract_addr: pair.address.clone().into_string(),
                 msg: to_json_binary(&QueryMsg::Simulate(swap_amount.clone()))?,
             }))?;
 
-        let spot_price = spot_price(deps, &swap_amount.denom, &target_denom, route)?;
+        let spot_price = spot_price(deps, pair, &swap_amount.denom)?;
 
         let optimal_return_amount = max(
             simulation.returned,
@@ -235,7 +228,7 @@ mod expected_receive_amount_tests {
         let target_denom = "usdc";
         let pair_address = Addr::unchecked("pair-address");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
                 &swap_amount,
@@ -249,8 +242,7 @@ mod expected_receive_amount_tests {
         assert_eq!(
             result,
             StdError::generic_err(format!(
-                "Querier system error: No such contract: {}",
-                pair_address
+                "Querier system error: No such contract: {pair_address}"
             ))
         );
     }
@@ -304,7 +296,7 @@ mod expected_receive_amount_tests {
             }))
         });
 
-        let expected_amount = FinMarketExchange::new()
+        let expected_amount = FinExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
                 &swap_amount,
@@ -356,7 +348,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, "rune");
         let pair_address = Addr::unchecked("non-existing-pair-address");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -378,8 +370,7 @@ mod swap_tests {
         assert_eq!(
             result,
             ContractError::Std(StdError::generic_err(format!(
-                "Querier system error: No such contract: {}",
-                pair_address
+                "Querier system error: No such contract: {pair_address}"
             )))
         );
     }
@@ -391,7 +382,7 @@ mod swap_tests {
         let swap_amount = Coin::new(100u128, "uruji");
         let minimum_receive_amount = Coin::new(50u128, "rune");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -423,7 +414,7 @@ mod swap_tests {
         let swap_amount = Coin::new(100u128, "uruji");
         let minimum_receive_amount = Coin::new(50u128, "rune");
 
-        let result = FinMarketExchange::new()
+        let result = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -464,7 +455,7 @@ mod swap_tests {
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&ConfigResponse {
-                    denoms: Denoms::new(&"not-uruji", &quote_denom.clone()),
+                    denoms: Denoms::new("not-uruji", &quote_denom.clone()),
                     oracles: None,
                     market_maker: None,
                     tick: Tick::new(10),
@@ -480,7 +471,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, pair.quote_denom.clone());
 
         assert_eq!(
-            FinMarketExchange::new()
+            FinExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -554,7 +545,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -565,7 +556,7 @@ mod swap_tests {
         );
 
         assert_eq!(
-            FinMarketExchange::new()
+            FinExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -639,7 +630,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -650,7 +641,7 @@ mod swap_tests {
         );
 
         assert_eq!(
-            FinMarketExchange::new()
+            FinExchange::new()
                 .swap(
                     deps.as_ref(),
                     &mock_env(),
@@ -722,7 +713,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -730,7 +721,7 @@ mod swap_tests {
         let minimum_receive_amount = Coin::new(50u128, quote_denom.clone());
         let recipient = Addr::unchecked("recipient-address");
 
-        let response = FinMarketExchange::new()
+        let response = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -811,7 +802,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -820,7 +811,7 @@ mod swap_tests {
         let recipient = Addr::unchecked("recipient-address");
         let execution_rebate = vec![Coin::new(1u128, "rune")];
 
-        let response = FinMarketExchange::new()
+        let response = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -905,7 +896,7 @@ mod swap_tests {
                         from_json::<QueryMsg>(msg).unwrap()
                     ),
                 },
-                _ => panic!("Unexpected query type {:#?}", query),
+                _ => panic!("Unexpected query type {query:#?}"),
             }))
         });
 
@@ -924,7 +915,7 @@ mod swap_tests {
             execution_rebate: vec![Coin::new(1u128, "rune")],
         };
 
-        let response = FinMarketExchange::new()
+        let response = FinExchange::new()
             .swap(
                 deps.as_ref(),
                 &mock_env(),
@@ -945,7 +936,7 @@ mod swap_tests {
 
         assert_eq!(
             response.messages[2],
-            SubMsg::new(WasmMsg::Execute {
+            SubMsg::reply_never(WasmMsg::Execute {
                 contract_addr: callback.contract.into_string(),
                 msg: callback.msg,
                 funds: vec![],

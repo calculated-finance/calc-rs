@@ -12,29 +12,18 @@ import { config } from "dotenv";
 import fs from "fs";
 import protobuf from "protobufjs";
 import { setTimeout } from "timers/promises";
+import {
+  ManagerExecuteMsg,
+  SchedulerQueryMsg,
+  StrategyExecuteMsg,
+} from "../calc";
 import types from "./MsgCompiled";
 
+(BigInt.prototype as any).toJSON = function () {
+  return this.toString();
+};
+
 config();
-
-const MANAGER_ADDRESS =
-  "sthor1xg6qsvyktr0zyyck3d67mgae0zun4lhwwn3v9pqkl5pk8mvkxsnscenkc0";
-
-const EXCHANGE_ADDRESS =
-  "sthor196c0zhmpaktqu3hfgdafvsdlr3x9tz0n78qvwn7g7g2c7zmaa0jqxcd6st";
-
-const SCHEDULER_ADDRESS =
-  "sthor1dvdcm5r08utc9axjhywuw3e8lq2q4tfnmxgjg7mtf2s8mtl959fqg8nr8v";
-
-const STRATEGY_ADDRESS =
-  "sthor13wx9rc53am928agavdch5ap0p3e6hhuvn033tdf2vlrh0h4yqkpqss8l9j";
-
-const DISTRIBUTOR_ADDRESS =
-  "sthor1xjkswqj9fwqvfxasugzxx5qg0duvh2lw77dwpxmntx0etx0mhd2ssgjnqw";
-
-const PAIR_ADDRESS =
-  "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";
-
-const DISTRIBUTOR_CODE_ID = 415;
 
 const getWalletWithMnemonic = async () =>
   DirectSecp256k1HdWallet.fromMnemonic(process.env.MNEMONIC!, {
@@ -139,17 +128,11 @@ export const getAccount = async (wallet: DirectSecp256k1HdWallet) => {
   return accounts[0]?.address;
 };
 
-const uploadTwapContract = async () => {
-  return upload("artifacts/twap.wasm");
+const uploadStrategyContract = async () => {
+  return upload("artifacts/strategy.wasm");
 };
 
-const uploadDistributorContract = async () => {
-  return upload("artifacts/distributor.wasm");
-};
-
-const uploadAndInstantiateManagerContract = async (
-  code_ids: [string, number][],
-) => {
+const uploadAndInstantiateManagerContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -157,8 +140,8 @@ const uploadAndInstantiateManagerContract = async (
     "artifacts/manager.wasm",
     adminAddress,
     {
-      code_ids,
       fee_collector: adminAddress,
+      strategy_code_id: await uploadStrategyContract(),
     },
     "Manager Contract",
   );
@@ -176,9 +159,7 @@ const uploadAndInstantiateExchangeContract = async () => {
   );
 };
 
-const uploadAndMigrateManagerContract = async (
-  code_ids: [string, number][],
-) => {
+const uploadAndMigrateManagerContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -187,35 +168,23 @@ const uploadAndMigrateManagerContract = async (
     adminAddress,
     MANAGER_ADDRESS,
     {
-      code_ids,
       fee_collector: adminAddress,
+      strategy_code_id: await uploadStrategyContract(),
     },
   );
 };
 
-const uploadAndMigrateTwapContract = async () => {
+const uploadAndMigrateStrategyContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
   return uploadAndMigrate(
-    "artifacts/twap.wasm",
+    "artifacts/strategy.wasm",
     adminAddress,
     STRATEGY_ADDRESS,
     {
       fee_collector: adminAddress,
     },
-  );
-};
-
-const uploadAndMigrateDistributorContract = async () => {
-  const wallet = await getWalletWithMnemonic();
-  const adminAddress = await getAccount(wallet);
-
-  return uploadAndMigrate(
-    "artifacts/distributor.wasm",
-    adminAddress,
-    DISTRIBUTOR_ADDRESS,
-    {},
   );
 };
 
@@ -266,18 +235,13 @@ const getCodeDetails = async (codeId: number): Promise<CodeDetails> => {
 };
 
 const uploadAndInstantiateContractSuite = async () => {
-  const distributorCodeId = await uploadDistributorContract();
-  console.log("Distributor code ID:", distributorCodeId);
-  const strategyCodeId = await uploadTwapContract();
-  const codeDetails = await getCodeDetails(strategyCodeId);
-  await uploadAndInstantiateManagerContract([["twap", strategyCodeId]]);
+  await uploadAndInstantiateManagerContract();
   await uploadAndInstantiateExchangeContract();
   await uploadAndInstantiateSchedulerContract();
 };
 
 const uploadAndMigrateContractSuite = async () => {
-  const strategyCodeId = await uploadTwapContract();
-  await uploadAndMigrateManagerContract([["twap", strategyCodeId]]);
+  await uploadAndMigrateManagerContract();
   await uploadAndMigrateExchangeContract();
   await uploadAndMigrateSchedulerContract();
 };
@@ -442,61 +406,93 @@ const createStrategy = async () => {
     MANAGER_ADDRESS,
     {
       instantiate_strategy: {
-        owner: account,
-        label: "ATOM -> RUNE TWAP",
-        strategy: {
-          twap: {
-            distributor_code_id: DISTRIBUTOR_CODE_ID,
-            owner: account,
-            swap_amount: {
-              denom: "gaia-atom",
-              amount: "10000000",
-            },
-            minimum_receive_amount: {
-              denom: "rune",
-              amount: "1",
-            },
-            maximum_slippage_bps: 10,
-            swap_cadence: {
-              blocks: {
-                interval: 3,
-              },
-            },
-            exchanger_contract: EXCHANGE_ADDRESS,
-            scheduler_contract: SCHEDULER_ADDRESS,
-            mutable_destinations: [
+        action: {
+          exhibit: {
+            threshold: "any",
+            actions: [
               {
-                recipient: {
-                  bank: {
-                    address: account,
-                  },
+                exhibit: {
+                  threshold: "all",
+                  actions: [
+                    {
+                      crank: {
+                        cadence: {
+                          blocks: {
+                            interval: 10,
+                            previous: 0,
+                          },
+                        },
+                        execution_rebate: [],
+                        scheduler: SCHEDULER_ADDRESS,
+                      },
+                    },
+                    {
+                      perform: {
+                        adjustment: "fixed",
+                        exchange_contract: EXCHANGE_ADDRESS,
+                        maximum_slippage_bps: 200,
+                        minimum_receive_amount: {
+                          denom: "eth-usdt",
+                          amount: "1",
+                        },
+                        swap_amount: {
+                          denom: "rune",
+                          amount: "20000000",
+                        },
+                      },
+                    },
+                  ],
                 },
-                shares: "893232",
-                label: "Me",
               },
-            ],
-            immutable_destinations: [
               {
-                recipient: {
-                  bank: {
-                    address: account,
-                  },
+                exhibit: {
+                  threshold: "all",
+                  actions: [
+                    {
+                      crank: {
+                        cadence: {
+                          blocks: {
+                            interval: 10,
+                            previous: 5,
+                          },
+                        },
+                        execution_rebate: [],
+                        scheduler: SCHEDULER_ADDRESS,
+                      },
+                    },
+                    {
+                      perform: {
+                        adjustment: "fixed",
+                        exchange_contract: EXCHANGE_ADDRESS,
+                        maximum_slippage_bps: 200,
+                        minimum_receive_amount: {
+                          denom: "rune",
+                          amount: "1",
+                        },
+                        swap_amount: {
+                          denom: "eth-usdt",
+                          amount: "20000000",
+                        },
+                      },
+                    },
+                  ],
                 },
-                shares: "234657",
-                label: "Other Me",
               },
             ],
           },
         },
+        affiliates: [],
+        label: "Test",
+        owner: account,
       },
-    },
+    } as ManagerExecuteMsg,
     "auto",
     "Create Strategy",
     [
-      {
-        denom: "gaia-atom",
-        amount: "100000000",
-      },
+      // {
+      //   denom: "rune",
+      //   amount: "200000000",
+      // },
     ],
   );
 
@@ -552,16 +548,16 @@ const executeStrategy = async (address: string) => {
 const getTimeTriggers = async () => {
   const cosmWasmClient = await getSigner();
   const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
-    triggers: {
+    filtered: {
       limit: 10,
       filter: {
         timestamp: {
           start: undefined,
-          end: `${new Date().getTime()}`,
+          end: undefined,
         },
       },
     },
-  });
+  } as SchedulerQueryMsg);
 
   return triggers;
 };
@@ -572,22 +568,33 @@ const getBlockTriggers = async () => {
   const block = await cosmWasmClient.getBlock();
 
   const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
-    triggers: {
+    filtered: {
       limit: 10,
       filter: {
         block_height: {
           start: undefined,
-          end: block.header.height,
+          end: undefined,
         },
       },
     },
-  });
+  } as SchedulerQueryMsg);
 
   return triggers;
 };
 
 const getAllTriggers = async () => {
   return [...(await getBlockTriggers()), ...(await getTimeTriggers())];
+};
+
+const getOwnedTriggers = async (owner: string) => {
+  const cosmWasmClient = await getSigner();
+  const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
+    owned: {
+      owner,
+    },
+  } as SchedulerQueryMsg);
+
+  return triggers;
 };
 
 const executeTriggersWith = async (getTriggers: () => Promise<any[]>) => {
@@ -605,7 +612,7 @@ const executeTriggersWith = async (getTriggers: () => Promise<any[]>) => {
       "auto",
     );
 
-    console.log("Executed trigger:", trigger.id, response);
+    console.log("Executed trigger:", trigger.id, JSON.stringify(response));
   }
 };
 
@@ -686,10 +693,8 @@ const withdrawFromStrategy = async (address: string) => {
     account,
     address,
     {
-      withdraw: {
-        amounts: balances,
-      },
-    },
+      withdraw: balances,
+    } as StrategyExecuteMsg,
     "auto",
   );
 
@@ -822,7 +827,7 @@ const queryQuote = async () => {
   return QueryQuoteResponse.decode(response.value).toJSON();
 };
 
-const updateStrategy = async (updates: Record<string, unknown>) => {
+const updateStrategy = async (address: string, update: any) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
@@ -835,15 +840,14 @@ const updateStrategy = async (updates: Record<string, unknown>) => {
 
   const response = await cosmWasmClient.execute(
     account,
-    STRATEGY_ADDRESS,
+    MANAGER_ADDRESS,
     {
-      update: {
-        twap: {
-          ...existingConfig,
-          ...updates,
-        },
+      update_strategy: {
+        contract_address: STRATEGY_ADDRESS,
+        update,
       },
-    },
+    } as ManagerExecuteMsg,
+    // update,
     "auto",
   );
 
@@ -873,9 +877,60 @@ const run = async () => {
   }
 };
 
+const setOrders = async (pairAddress: string, orders: any[], funds: Coin[]) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWalletWithMnemonic());
+
+  const response = await cosmWasmClient.execute(
+    account,
+    pairAddress,
+    {
+      order: orders,
+    },
+    "auto",
+    "",
+    funds,
+  );
+
+  return response;
+};
+
+const getOrders = async (pairAddress: string) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWalletWithMnemonic());
+  const response = await cosmWasmClient.queryContractSmart(pairAddress, {
+    orders: {
+      limit: 10,
+      owner: account,
+    },
+  });
+
+  return response;
+};
+
+const getBlock = async () => {
+  const cosmWasmClient = await getSigner();
+  return cosmWasmClient.getBlock();
+};
+
+const MANAGER_ADDRESS =
+  "sthor1xg6qsvyktr0zyyck3d67mgae0zun4lhwwn3v9pqkl5pk8mvkxsnscenkc0";
+
+const EXCHANGE_ADDRESS =
+  "sthor196c0zhmpaktqu3hfgdafvsdlr3x9tz0n78qvwn7g7g2c7zmaa0jqxcd6st";
+
+const SCHEDULER_ADDRESS =
+  "sthor1x3hfzl0v43upegeszz8cjygljgex9jtygpx4l44nkxudxjsukn3setrkl6";
+
+const STRATEGY_ADDRESS =
+  "sthor17rkr38lk6vxcnw9ywyu64jjymny0yf42h4c4vj2hhm6chrt44heqtvnnmu";
+
+const PAIR_ADDRESS =
+  "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";
+
 // uploadContractSuite();
-// fetchBalances("thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex").then(console.log);
-getMyBalances().then(console.log);
+fetchBalances(STRATEGY_ADDRESS).then(console.log);
+// getMyBalances().then(console.log);
 // bankSend(
 //   {
 //     amount: "153236136",
@@ -884,46 +939,135 @@ getMyBalances().then(console.log);
 //   STRATEGY_ADDRESS
 // ).then(console.log);
 // fetchFinBook(PAIR_ADDRESS);
-// updateStrategy({
-//   route: {
-//     fin: {
-//       address: PAIR_ADDRESS,
+// updateStrategy(STRATEGY_ADDRESS, {
+//   manager: "sthor1xg6qsvyktr0zyyck3d67mgae0zun4lhwwn3v9pqkl5pk8mvkxsnscenkc0",
+//   owner: "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka",
+//   escrowed: ["rune", "eth-usdt"],
+//   action: {
+//     exhibit: {
+//       actions: [
+//         {
+//           exhibit: {
+//             actions: [
+//               {
+//                 crank: {
+//                   scheduler: SCHEDULER_ADDRESS,
+//                   cadence: {
+//                     blocks: {
+//                       interval: 10,
+//                       previous: 4959840,
+//                     },
+//                   },
+//                   execution_rebate: [],
+//                 },
+//               },
+//               {
+//                 perform: {
+//                   exchange_contract:
+//                     "sthor196c0zhmpaktqu3hfgdafvsdlr3x9tz0n78qvwn7g7g2c7zmaa0jqxcd6st",
+//                   swap_amount: {
+//                     denom: "rune",
+//                     amount: "20000000",
+//                   },
+//                   minimum_receive_amount: {
+//                     denom: "eth-usdt",
+//                     amount: "1",
+//                   },
+//                   maximum_slippage_bps: 200,
+//                   adjustment: "fixed",
+//                   route: null,
+//                 },
+//               },
+//             ],
+//             threshold: "all",
+//           },
+//         },
+//         {
+//           exhibit: {
+//             actions: [
+//               {
+//                 crank: {
+//                   scheduler: SCHEDULER_ADDRESS,
+//                   cadence: {
+//                     blocks: {
+//                       interval: 10,
+//                       previous: 4959835,
+//                     },
+//                   },
+//                   execution_rebate: [],
+//                 },
+//               },
+//               {
+//                 perform: {
+//                   exchange_contract:
+//                     "sthor196c0zhmpaktqu3hfgdafvsdlr3x9tz0n78qvwn7g7g2c7zmaa0jqxcd6st",
+//                   swap_amount: {
+//                     denom: "eth-usdt",
+//                     amount: "20000000",
+//                   },
+//                   minimum_receive_amount: {
+//                     denom: "rune",
+//                     amount: "1",
+//                   },
+//                   maximum_slippage_bps: 200,
+//                   adjustment: "fixed",
+//                   route: null,
+//                 },
+//               },
+//             ],
+//             threshold: "all",
+//           },
+//         },
+//       ],
+//       threshold: "any",
 //     },
 //   },
 // }).then(console.log);
-// createStrategy().then(run);
-// getStrategy(STRATEGY_ADDRESS);
+// createStrategy().then((r) => console.log(JSON.stringify(r, null, 2)));
+// getStrategy(STRATEGY_ADDRESS).then(console.log);
 // getStrategies().then(console.log);
-// getStrategies();
 // getConfig(STRATEGY_ADDRESS).then((c) =>
-//   console.log(JSON.stringify(c, null, 2))
+//   console.log(JSON.stringify(c, null, 2)),
 // );
 // getStatistics(STRATEGY_ADDRESS).then((s) =>
-//   console.log(JSON.stringify(s, null, 2))
+//   console.log(JSON.stringify(s, null, 2)),
 // );
+// bankSend(
+//   {
+//     denom: "rune",
+//     amount: "10000000",
+//   },
+//   STRATEGY_ADDRESS,
+// ).then(console.log);
 // executeTriggersWith(getBlockTriggers);
 // executeTriggersWith(getTimeTriggers);
 // run();
 // getBlockTriggers().then(console.log);
-// getAllTriggers().then(console.log);
-// executeStrategy(STRATEGY_ADDRESS);
+getAllTriggers().then((r) => console.log(JSON.stringify(r, null, 2)));
+// getOwnedTriggers(STRATEGY_ADDRESS).then(async (r) => {
+//   console.log(JSON.stringify(r, null, 2));
+//   console.log(await getBlock());
+// });
+// executeStrategy(STRATEGY_ADDRESS).then((r) =>
+//   console.log(JSON.stringify(r, null, 2)),
+// );
 // executeTriggers(STRATEGY_ADDRESS).then((result) => {
 //   console.log("Trigger execution result:", result);
 // getStatistics(STRATEGY_ADDRESS).then((c) =>
 //   console.log(JSON.stringify(c, null, 2))
 // );
-// });
 // queryPool().then(console.log);
 // queryQuote().then(console.log);
 // getStatistics(STRATEGY_ADDRESS).then(console.log);
 // getTransaction(
-//   "5A54E3F51A2DB27BDAA857914EBA49CE9309BE07C4D66AA8A10F1A6FE97962B9"
+//   "E69D46C0C2CCC2B851E7456BE513A04A90C10D2B9857A858CCBF0779A385F30D",
 // ).then((t) => console.log(JSON.stringify(t.events, null, 2)));
-// withdrawFromStrategy(DISTRIBUTOR_ADDRESS);
+// withdrawFromStrategy(STRATEGY_ADDRESS);
 // uploadAndMigrateTwapContract();
 // uploadDistributorContract().then(console.log);
 // uploadAndMigrateDistributorContract();
 // uploadAndMigrateExchangeContract();
+// uploadAndInstantiateSchedulerContract();
 // uploadAndMigrateSchedulerContract();
 // uploadAndMigrateManagerContract();
 // resumeStrategy(STRATEGY_ADDRESS);
@@ -952,22 +1096,53 @@ const targetDenom = "rune";
 // queryContract(EXCHANGE_ADDRESS, {
 //   custom: {},
 // }).then(console.log);
-executeDeposit("=:THOR.RUNE:thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex:1", [
-  {
-    amount: "1935463600",
-    asset: {
-      chain: "ETH",
-      symbol: "USDT",
-      ticker: "USDT",
-      synth: false,
-      trade: false,
-      secured: true,
-    },
-  },
-]).then(console.log);
+// executeDeposit("=:THOR.RUNE:thor133q36r4sg4ws3h2z7xredrsvq76e8tmq9r23ex:1", [
+//   {
+//     amount: "1935463600",
+//     asset: {
+//       chain: "ETH",
+//       symbol: "USDT",
+//       ticker: "USDT",
+//       synth: false,
+//       trade: false,
+//       secured: true,
+//     },
+//   },
+// ]).then(console.log);
 // uploadAndInstantiateExchangeContract();
 // executeTxn(EXCHANGE_ADDRESS, {
 //   withdraw: {
 //     denoms: ["eth-usdt-0xdac17f958d2ee523a2206206994597c13d831ec7"],
 //   },
 // });
+// fetchFinBook(PAIR_ADDRESS).then((book) =>
+//   console.log(JSON.stringify(book, null, 2)),
+// );
+// getConfig(PAIR_ADDRESS).then((config) =>
+//   console.log(JSON.stringify(config, null, 2)),
+// );
+// getCodeDetails(DISTRIBUTOR_CODE_ID).then((details) => console.log(details));
+// setOrders(
+//   PAIR_ADDRESS,
+//   [
+//     [
+//       ["quote", { fixed: "0.38" }, "0"],
+//       ["quote", { fixed: "0.38" }, "1000"],
+//     ],
+//     null,
+//   ],
+//   [
+//     {
+//       denom: "rune",
+//       amount: "1000",
+//     },
+//   ],
+// ).then((_) =>
+//   getOrders(PAIR_ADDRESS).then((orders) =>
+//     console.log(JSON.stringify(orders, null, 2)),
+//   ),
+// );
+
+// fetchFinBook(PAIR_ADDRESS).then((book) =>
+//   console.log(JSON.stringify(book, null, 2)),
+// );

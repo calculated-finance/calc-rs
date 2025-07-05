@@ -1,64 +1,58 @@
-use calc_rs::{twap::TwapConfig, core::Condition};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
+use rujira_rs::fin::{Price, Side};
 
-#[cw_serde]
-pub struct TwapStatistics {
-    pub swapped: Coin,
-    pub withdrawn: Vec<Coin>,
-}
+use crate::{conditions::Condition, statistics::Statistics, strategy::StrategyConfig};
 
 #[cw_serde]
 pub enum DomainEvent {
-    TwapStrategyCreated {
+    StrategyCreated {
         contract_address: Addr,
-        config: TwapConfig,
+        config: StrategyConfig,
     },
-    TwapStrategyUpdated {
+    StrategyUpdated {
         contract_address: Addr,
-        old_config: TwapConfig,
-        new_config: TwapConfig,
+        old_config: StrategyConfig,
+        new_config: StrategyConfig,
     },
-    TwapFundsDeposited {
+    StrategyExecuted {
         contract_address: Addr,
-        from: Addr,
-        funds: Vec<Coin>,
     },
-    TwapFundsWithdrawn {
+    FundsWithdrawn {
         contract_address: Addr,
         to: Addr,
         funds: Vec<Coin>,
     },
-    TwapExecutionAttempted {
+    ExecutionAttempted {
         contract_address: Addr,
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
-        maximum_slippage_bps: u128,
+        pair_address: Addr,
+        side: Side,
+        price: Price,
     },
-    TwapExecutionSucceeded {
+    ExecutionSucceeded {
         contract_address: Addr,
-        statistics: TwapStatistics,
+        statistics: Statistics,
     },
-    TwapExecutionFailed {
+    ExecutionFailed {
         contract_address: Addr,
         reason: String,
     },
-    TwapSchedulingAttempted {
+    ExecutionSkipped {
+        contract_address: Addr,
+        reason: String,
+    },
+    SchedulingAttempted {
         contract_address: Addr,
         conditions: Vec<Condition>,
     },
-    TwapExecutionSkipped {
+    SchedulingSucceeded {
+        contract_address: Addr,
+    },
+    SchedulingFailed {
         contract_address: Addr,
         reason: String,
     },
-    TwapSchedulingSucceeded {
-        contract_address: Addr,
-    },
-    TwapSchedulingFailed {
-        contract_address: Addr,
-        reason: String,
-    },
-    TwapSchedulingSkipped {
+    SchedulingSkipped {
         contract_address: Addr,
         reason: String,
     },
@@ -67,20 +61,20 @@ pub enum DomainEvent {
 impl From<DomainEvent> for Event {
     fn from(event: DomainEvent) -> Self {
         match event {
-            DomainEvent::TwapStrategyCreated {
+            DomainEvent::StrategyCreated {
                 contract_address,
                 config,
-            } => Event::new("twap_strategy_created")
+            } => Event::new("_strategy_created")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute(
                     "config",
                     to_json_string(&config).expect("Failed to serialize config"),
                 ),
-            DomainEvent::TwapStrategyUpdated {
+            DomainEvent::StrategyUpdated {
                 contract_address,
                 old_config,
                 new_config,
-            } => Event::new("twap_strategy_updated")
+            } => Event::new("_strategy_updated")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute(
                     "old_config",
@@ -90,18 +84,9 @@ impl From<DomainEvent> for Event {
                     "new_config",
                     to_json_string(&new_config).expect("Failed to serialize new config"),
                 ),
-            DomainEvent::TwapFundsDeposited {
-                contract_address,
-                from,
-                funds,
-            } => Event::new("funds_deposited")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("from", from.as_str())
-                .add_attribute(
-                    "funds",
-                    to_json_string(&funds).expect("Failed to serialize funds"),
-                ),
-            DomainEvent::TwapFundsWithdrawn {
+            DomainEvent::StrategyExecuted { contract_address } => Event::new("strategy_executed")
+                .add_attribute("contract_address", contract_address.as_str()),
+            DomainEvent::FundsWithdrawn {
                 contract_address,
                 to,
                 funds,
@@ -112,17 +97,17 @@ impl From<DomainEvent> for Event {
                     "funds",
                     to_json_string(&funds).expect("Failed to serialize withdrawn funds"),
                 ),
-            DomainEvent::TwapExecutionAttempted {
+            DomainEvent::ExecutionAttempted {
                 contract_address,
-                swap_amount,
-                minimum_receive_amount,
-                maximum_slippage_bps,
+                pair_address,
+                side,
+                price,
             } => Event::new("execution_attempted")
                 .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute("swap_amount", swap_amount.to_string())
-                .add_attribute("minimum_receive_amount", minimum_receive_amount.to_string())
-                .add_attribute("maximum_slippage_bps", maximum_slippage_bps.to_string()),
-            DomainEvent::TwapExecutionSucceeded {
+                .add_attribute("pair_address", pair_address.as_str())
+                .add_attribute("side", side.to_string())
+                .add_attribute("price", price.to_string()),
+            DomainEvent::ExecutionSucceeded {
                 contract_address,
                 statistics,
             } => Event::new("execution_succeeded")
@@ -131,19 +116,19 @@ impl From<DomainEvent> for Event {
                     "statistics",
                     to_json_string(&statistics).expect("Failed to serialize statistics"),
                 ),
-            DomainEvent::TwapExecutionFailed {
+            DomainEvent::ExecutionFailed {
                 contract_address,
                 reason,
             } => Event::new("execution_failed")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("reason", reason),
-            DomainEvent::TwapExecutionSkipped {
+            DomainEvent::ExecutionSkipped {
                 contract_address,
                 reason,
             } => Event::new("execution_skipped")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("reason", reason),
-            DomainEvent::TwapSchedulingAttempted {
+            DomainEvent::SchedulingAttempted {
                 contract_address,
                 conditions,
             } => Event::new("scheduling_attempted")
@@ -152,17 +137,17 @@ impl From<DomainEvent> for Event {
                     "conditions",
                     to_json_string(&conditions).expect("Failed to serialize conditions"),
                 ),
-            DomainEvent::TwapSchedulingSucceeded { contract_address } => {
+            DomainEvent::SchedulingSucceeded { contract_address } => {
                 Event::new("scheduling_succeeded")
                     .add_attribute("contract_address", contract_address.as_str())
             }
-            DomainEvent::TwapSchedulingFailed {
+            DomainEvent::SchedulingFailed {
                 contract_address,
                 reason,
             } => Event::new("scheduling_failed")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("reason", reason),
-            DomainEvent::TwapSchedulingSkipped {
+            DomainEvent::SchedulingSkipped {
                 contract_address,
                 reason,
             } => Event::new("scheduling_skipped")

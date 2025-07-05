@@ -1,17 +1,12 @@
-use crate::core::Condition;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Coin, Deps, Env, MessageInfo, StdResult, Timestamp};
 
-#[cw_serde]
-pub enum TriggerConditionsThreshold {
-    Any,
-    All,
-}
+use crate::conditions::{Condition, Threshold};
 
 #[cw_serde]
 pub struct CreateTrigger {
     pub conditions: Vec<Condition>,
-    pub threshold: TriggerConditionsThreshold,
+    pub threshold: Threshold,
     pub to: Addr,
     pub msg: Binary,
 }
@@ -21,7 +16,7 @@ pub struct Trigger {
     pub id: u64,
     pub owner: Addr,
     pub conditions: Vec<Condition>,
-    pub threshold: TriggerConditionsThreshold,
+    pub threshold: Threshold,
     pub msg: Binary,
     pub to: Addr,
     pub execution_rebate: Vec<Coin>,
@@ -30,7 +25,7 @@ pub struct Trigger {
 impl Trigger {
     pub fn from_command(info: &MessageInfo, command: CreateTrigger, rebate: Vec<Coin>) -> Self {
         Self {
-            id: 0,
+            id: 0, // This will be set later when the trigger is stored
             owner: info.sender.clone(),
             conditions: command.conditions,
             threshold: command.threshold,
@@ -42,15 +37,14 @@ impl Trigger {
 
     pub fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<bool> {
         Ok(match self.threshold {
-            TriggerConditionsThreshold::All => {
-                self.conditions.iter().all(|c| c.check(deps, env).is_ok())
-            }
-            TriggerConditionsThreshold::Any => {
-                self.conditions.iter().any(|c| c.check(deps, env).is_ok())
-            }
+            Threshold::All => self.conditions.iter().all(|c| c.check(deps, env).is_ok()),
+            Threshold::Any => self.conditions.iter().any(|c| c.check(deps, env).is_ok()),
         })
     }
 }
+
+#[cw_serde]
+pub struct SchedulerInstantiateMsg {}
 
 #[cw_serde]
 pub enum SchedulerExecuteMsg {
@@ -61,9 +55,6 @@ pub enum SchedulerExecuteMsg {
 
 #[cw_serde]
 pub enum ConditionFilter {
-    Owner {
-        address: Addr,
-    },
     Timestamp {
         start: Option<Timestamp>,
         end: Option<Timestamp>,
@@ -72,16 +63,24 @@ pub enum ConditionFilter {
         start: Option<u64>,
         end: Option<u64>,
     },
+    LimitOrder {
+        start_after: Option<u64>,
+    },
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum SchedulerQueryMsg {
     #[returns(Vec<Trigger>)]
-    Triggers {
+    Owned {
+        owner: Addr,
+        limit: Option<usize>,
+        start_after: Option<u64>,
+    },
+    #[returns(Vec<Trigger>)]
+    Filtered {
         filter: ConditionFilter,
         limit: Option<usize>,
-        can_execute: Option<bool>,
     },
     #[returns(bool)]
     CanExecute { id: u64 },

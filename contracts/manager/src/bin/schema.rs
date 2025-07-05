@@ -1,9 +1,9 @@
-use calc_rs::manager::{ManagerExecuteMsg, ManagerInstantiateMsg, ManagerQueryMsg};
+use calc_rs::manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {
     write_api! {
-        instantiate: ManagerInstantiateMsg,
+        instantiate: ManagerConfig,
         execute: ManagerExecuteMsg,
         query: ManagerQueryMsg,
     }

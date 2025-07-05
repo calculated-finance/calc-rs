@@ -5,12 +5,16 @@ use cosmwasm_std::{Addr, Coin};
 #[cw_serde]
 pub enum Route {
     FinMarket { address: Addr },
-    FinLimit { address: Addr },
     Thorchain {},
 }
 
 #[cw_serde]
-pub enum ExchangeExecuteMsg {
+pub struct ExchangerInstantiateMsg {
+    pub scheduler_address: Addr,
+}
+
+#[cw_serde]
+pub enum ExchangerExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
         maximum_slippage_bps: u128,
@@ -28,7 +32,7 @@ pub struct ExpectedReceiveAmount {
 
 #[cw_serde]
 #[derive(QueryResponses)]
-pub enum ExchangeQueryMsg {
+pub enum ExchangerQueryMsg {
     #[returns(ExpectedReceiveAmount)]
     ExpectedReceiveAmount {
         swap_amount: Coin,
