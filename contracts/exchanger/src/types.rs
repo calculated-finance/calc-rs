@@ -16,6 +16,7 @@ pub trait Exchange {
     fn expected_receive_amount(
         &self,
         deps: Deps,
+        env: &Env,
         swap_amount: &Coin,
         target_denom: &str,
         route: &Option<Route>,

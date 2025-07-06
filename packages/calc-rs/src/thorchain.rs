@@ -33,7 +33,9 @@ impl MsgDeposit {
                 let (chain, symbol) = if c.denom.to_ascii_lowercase().contains("rune") {
                     ("THOR", "RUNE")
                 } else {
-                    c.denom.split_once("-").unwrap_or_else(|| panic!("Cannot use native denom {} in deposit msg", c.denom))
+                    c.denom.split_once("-").unwrap_or_else(|| {
+                        panic!("Cannot use native denom {} in deposit msg", c.denom)
+                    })
                 };
 
                 Anybuf::new()
@@ -188,6 +190,8 @@ pub struct SwapQuote {
     pub gas_rate_units: String,
     pub memo: String,
     pub expected_amount_out: Uint128,
+    pub max_streaming_quantity: u64,
+    pub streaming_swap_blocks: u64,
 }
 
 impl TryFrom<QuerySwapQuoteResponseFees> for QuoteFees {
@@ -220,6 +224,8 @@ impl TryFrom<QueryQuoteSwapResponse> for SwapQuote {
             gas_rate_units: value.gas_rate_units,
             memo: value.memo,
             expected_amount_out: Uint128::from_str(value.expected_amount_out.as_str())?,
+            max_streaming_quantity: u64::try_from(value.streaming_swap_blocks).unwrap_or(1),
+            streaming_swap_blocks: u64::try_from(value.streaming_swap_blocks).unwrap_or(1),
         })
     }
 }

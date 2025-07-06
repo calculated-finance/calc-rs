@@ -65,7 +65,7 @@ pub fn get_exchanges(deps: Deps) -> StdResult<Vec<Box<dyn Exchange>>> {
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, _env: Env, msg: ExchangerQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, env: Env, msg: ExchangerQueryMsg) -> StdResult<Binary> {
     let exchanges = get_exchanges(deps)?;
     match msg {
         ExchangerQueryMsg::ExpectedReceiveAmount {
@@ -75,6 +75,7 @@ pub fn query(deps: Deps, _env: Env, msg: ExchangerQueryMsg) -> StdResult<Binary>
         } => to_json_binary(&expected_receive_amount(
             exchanges,
             deps,
+            &env,
             &swap_amount,
             target_denom,
             &route,
@@ -100,7 +101,7 @@ pub fn execute(
         } => swap(
             exchanges,
             deps.as_ref(),
-            env,
+            &env,
             info,
             &minimum_receive_amount,
             maximum_slippage_bps,
@@ -121,6 +122,7 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 fn expected_receive_amount(
     exchanges: Vec<Box<dyn Exchange>>,
     deps: Deps,
+    env: &Env,
     swap_amount: &Coin,
     target_denom: String,
     route: &Option<Route>,
@@ -128,7 +130,7 @@ fn expected_receive_amount(
     exchanges
         .iter()
         .flat_map(|e| {
-            e.expected_receive_amount(deps, swap_amount, &target_denom, route)
+            e.expected_receive_amount(deps, env, swap_amount, &target_denom, route)
                 .ok()
         })
         .max_by(|a, b| a.receive_amount.amount.cmp(&b.receive_amount.amount))
@@ -146,7 +148,7 @@ fn expected_receive_amount(
 fn swap(
     exchanges: Vec<Box<dyn Exchange>>,
     deps: Deps,
-    env: Env,
+    env: &Env,
     info: MessageInfo,
     minimum_receive_amount: &Coin,
     maximum_slippage_bps: u128,
@@ -184,7 +186,7 @@ fn swap(
             (
                 exchange,
                 exchange
-                    .expected_receive_amount(deps, &swap_amount, &target_denom, route)
+                    .expected_receive_amount(deps, env, &swap_amount, &target_denom, route)
                     .unwrap_or(ExpectedReceiveAmount {
                         receive_amount: Coin::new(0u128, target_denom.clone()),
                         slippage_bps: 10_000,
@@ -218,18 +220,22 @@ fn swap(
 mod expected_receive_amount_tests {
     use crate::{contract::expected_receive_amount, exchanges::mock::MockExchange};
     use calc_rs::exchanger::ExpectedReceiveAmount;
-    use cosmwasm_std::{testing::mock_dependencies, Coin, StdError};
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Coin, StdError,
+    };
 
     #[test]
     fn returns_error_when_no_exchange_can_swap() {
         let mut mock = Box::new(MockExchange::default());
         mock.get_expected_receive_amount_fn =
-            Box::new(|_, _, _, _| Err(StdError::generic_err("Not enough liquidity")));
+            Box::new(|_, _, _, _, _| Err(StdError::generic_err("Not enough liquidity")));
 
         assert_eq!(
             expected_receive_amount(
                 vec![mock],
                 mock_dependencies().as_ref(),
+                &mock_env(),
                 &Coin::new(1000u128, "rune"),
                 "uruji".to_string(),
                 &None,
@@ -253,12 +259,13 @@ mod expected_receive_amount_tests {
 
         let mut mock = Box::new(MockExchange::default());
         mock.get_expected_receive_amount_fn =
-            Box::new(move |_, _, _, _| Ok(expected_response.clone()));
+            Box::new(move |_, _, _, _, _| Ok(expected_response.clone()));
 
         assert_eq!(
             expected_receive_amount(
                 vec![mock],
                 mock_dependencies().as_ref(),
+                &mock_env(),
                 swap_amount,
                 target_denom,
                 &None,
@@ -285,12 +292,13 @@ mod expected_receive_amount_tests {
 
         let mut mock = Box::new(MockExchange::default());
         mock.get_expected_receive_amount_fn =
-            Box::new(move |_, _, _, _| Ok(expected_response.clone()));
+            Box::new(move |_, _, _, _, _| Ok(expected_response.clone()));
 
         assert_eq!(
             expected_receive_amount(
                 vec![mock, Box::new(MockExchange::default())],
                 mock_dependencies().as_ref(),
+                &mock_env(),
                 swap_amount,
                 target_denom.clone(),
                 &None,
@@ -334,7 +342,7 @@ mod swap_tests {
             swap(
                 vec![mock],
                 mock_dependencies().as_ref(),
-                mock_env(),
+                &mock_env(),
                 MessageInfo {
                     sender: Addr::unchecked("sender"),
                     funds: vec![swap_amount.clone()],
@@ -364,7 +372,7 @@ mod swap_tests {
             swap(
                 vec![Box::new(MockExchange::default())],
                 mock_dependencies().as_ref(),
-                mock_env(),
+                &mock_env(),
                 MessageInfo {
                     sender: Addr::unchecked("sender"),
                     funds: vec![swap_amount.clone()],
@@ -393,7 +401,7 @@ mod swap_tests {
 
         let minimum_receive_amount = Coin::new(100u128, "uruji");
 
-        mock.get_expected_receive_amount_fn = Box::new(|_, _, _, _| {
+        mock.get_expected_receive_amount_fn = Box::new(|_, _, _, _, _| {
             Ok(ExpectedReceiveAmount {
                 receive_amount: Coin::new(100u128, "uruji"),
                 slippage_bps: 0,
@@ -404,7 +412,7 @@ mod swap_tests {
             swap(
                 vec![mock, Box::new(MockExchange::default())],
                 mock_dependencies().as_ref(),
-                mock_env(),
+                &mock_env(),
                 MessageInfo {
                     sender: Addr::unchecked("sender"),
                     funds: vec![Coin::new(100u128, "rune")],
@@ -429,7 +437,7 @@ mod swap_tests {
                     Box::new(MockExchange::default()),
                 ],
                 mock_dependencies().as_ref(),
-                mock_env(),
+                &mock_env(),
                 MessageInfo {
                     sender: Addr::unchecked("sender"),
                     funds: vec![Coin::new(100u128, "rune")],
@@ -455,6 +463,7 @@ mod swap_tests {
         let expected_response = MockExchange::default()
             .expected_receive_amount(
                 deps.as_ref(),
+                &mock_env(),
                 &swap_amount.clone(),
                 &minimum_receive_amount.denom.clone(),
                 &None,
@@ -463,7 +472,7 @@ mod swap_tests {
 
         let mut mock = Box::new(MockExchange::default());
 
-        mock.get_expected_receive_amount_fn = Box::new(move |_, _, _, _| {
+        mock.get_expected_receive_amount_fn = Box::new(move |_, _, _, _, _| {
             Ok(ExpectedReceiveAmount {
                 receive_amount: Coin::new(
                     expected_response.receive_amount.amount * Uint128::new(2),
@@ -481,7 +490,7 @@ mod swap_tests {
             swap(
                 vec![mock, Box::new(MockExchange::default())],
                 deps.as_ref(),
-                mock_env(),
+                &mock_env(),
                 MessageInfo {
                     sender: Addr::unchecked("sender"),
                     funds: vec![swap_amount.clone()],
@@ -503,7 +512,7 @@ mod swap_tests {
 
         let minimum_receive_amount = Coin::new(100u128, "uruji");
 
-        mock.get_expected_receive_amount_fn = Box::new(|_, _, _, _| {
+        mock.get_expected_receive_amount_fn = Box::new(|_, _, _, _, _| {
             Ok(ExpectedReceiveAmount {
                 receive_amount: Coin::new(101u128, "uruji"),
                 slippage_bps: 0,
@@ -520,7 +529,7 @@ mod swap_tests {
             swap(
                 vec![mock],
                 mock_dependencies().as_ref(),
-                mock_env(),
+                &mock_env(),
                 MessageInfo {
                     sender: Addr::unchecked("sender"),
                     funds: vec![Coin::new(100u128, "rune"), execution_rebate[0].clone()],

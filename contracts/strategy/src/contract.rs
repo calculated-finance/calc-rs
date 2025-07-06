@@ -80,7 +80,9 @@ pub fn execute(
                 .prepare_to_cancel(deps.as_ref(), &env)?
                 .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?;
 
+            // If no stateful actions to unwind, we can proceed with the update
             if cancel_response.messages.is_empty() {
+                // Can only add escrowed denoms
                 let escrowed = update
                     .escrowed(deps.as_ref(), &env)?
                     .union(&config.escrowed)
@@ -99,7 +101,8 @@ pub fn execute(
                     0,
                 );
 
-                init_response.add_submessage(execute_msg) // Execute the new strategy after any init messages
+                // Execute the new strategy after any init messages have completed
+                init_response.add_submessage(execute_msg)
             } else {
                 let clear_state_msg = SubMsg::reply_never(
                     Contract(env.contract.address.clone())
@@ -111,7 +114,7 @@ pub fn execute(
                         .call(to_json_binary(&StrategyExecuteMsg::Update(update))?, vec![]),
                 );
 
-                cancel_response
+                cancel_response // Unwind any stateful actions before we overwrite them
                     .add_submessage(clear_state_msg) // Clear the state so we can run update again
                     .add_submessage(update_again_msg) // Run update to setup the new strategy
             }

@@ -1,30 +1,21 @@
 use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{
-    Addr, BankMsg, Coins, Decimal, Deps, DepsMut, Env, Event, Response, StdResult, Storage, SubMsg,
-    Uint128,
-};
+use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
 
 use crate::{
     actions::{
-        distribution::{Destination, Distribution, Recipient},
-        fin_swap::FinSwap,
-        limit_order::LimitOrder,
-        operation::Operation,
-        schedule::Schedule,
-        swap::Swap,
-        thor_swap::ThorSwap,
+        distribution::Distribution, fin_swap::FinSwap, limit_order::LimitOrder,
+        operation::Operation, schedule::Schedule, swap::OptimalSwap, thor_swap::ThorSwap,
     },
     conditions::Conditions,
-    manager::Affiliate,
 };
 
 #[cw_serde]
 pub enum Action {
     FinSwap(FinSwap),
     ThorSwap(ThorSwap),
-    Swap(Swap),
+    OptimalSwap(OptimalSwap),
     SetLimitOrder(LimitOrder),
     Distribute(Distribution),
     Schedule(Schedule),
@@ -48,7 +39,7 @@ impl Operation for Action {
         match self {
             Action::FinSwap(action) => action.init(deps, env),
             Action::ThorSwap(action) => action.init(deps, env),
-            Action::Swap(action) => action.init(deps, env),
+            Action::OptimalSwap(action) => action.init(deps, env),
             Action::SetLimitOrder(action) => action.init(deps, env),
             Action::Distribute(action) => action.init(deps, env),
             Action::Schedule(action) => action.init(deps, env),
@@ -61,7 +52,7 @@ impl Operation for Action {
         match self {
             Action::FinSwap(action) => action.execute(deps, env),
             Action::ThorSwap(action) => action.execute(deps, env),
-            Action::Swap(action) => action.execute(deps, env),
+            Action::OptimalSwap(action) => action.execute(deps, env),
             Action::SetLimitOrder(action) => action.execute(deps, env),
             Action::Distribute(action) => action.execute(deps, env),
             Action::Schedule(action) => action.execute(deps, env),
@@ -79,7 +70,7 @@ impl Operation for Action {
         match self {
             Action::FinSwap(action) => action.update(deps, env, update),
             Action::ThorSwap(action) => action.update(deps, env, update),
-            Action::Swap(action) => action.update(deps, env, update),
+            Action::OptimalSwap(action) => action.update(deps, env, update),
             Action::SetLimitOrder(action) => action.update(deps, env, update),
             Action::Distribute(action) => action.update(deps, env, update),
             Action::Schedule(action) => action.update(deps, env, update),
@@ -92,7 +83,7 @@ impl Operation for Action {
         match self {
             Action::FinSwap(action) => action.escrowed(deps, env),
             Action::ThorSwap(action) => action.escrowed(deps, env),
-            Action::Swap(action) => action.escrowed(deps, env),
+            Action::OptimalSwap(action) => action.escrowed(deps, env),
             Action::SetLimitOrder(action) => action.escrowed(deps, env),
             Action::Distribute(action) => action.escrowed(deps, env),
             Action::Schedule(action) => action.escrowed(deps, env),
@@ -105,7 +96,7 @@ impl Operation for Action {
         match self {
             Action::FinSwap(action) => action.balances(deps, env, denoms),
             Action::ThorSwap(action) => action.balances(deps, env, denoms),
-            Action::Swap(action) => action.balances(deps, env, denoms),
+            Action::OptimalSwap(action) => action.balances(deps, env, denoms),
             Action::SetLimitOrder(action) => action.balances(deps, env, denoms),
             Action::Distribute(action) => action.balances(deps, env, denoms),
             Action::Schedule(action) => action.balances(deps, env, denoms),
@@ -118,7 +109,7 @@ impl Operation for Action {
         match self {
             Action::FinSwap(action) => action.withdraw(deps, env, desired),
             Action::ThorSwap(action) => action.withdraw(deps, env, desired),
-            Action::Swap(action) => action.withdraw(deps, env, desired),
+            Action::OptimalSwap(action) => action.withdraw(deps, env, desired),
             Action::SetLimitOrder(action) => action.withdraw(deps, env, desired),
             Action::Distribute(action) => action.withdraw(deps, env, desired),
             Action::Schedule(action) => action.withdraw(deps, env, desired),
@@ -131,7 +122,7 @@ impl Operation for Action {
         match self {
             Action::FinSwap(action) => action.cancel(deps, env),
             Action::ThorSwap(action) => action.cancel(deps, env),
-            Action::Swap(action) => action.cancel(deps, env),
+            Action::OptimalSwap(action) => action.cancel(deps, env),
             Action::SetLimitOrder(action) => action.cancel(deps, env),
             Action::Distribute(action) => action.cancel(deps, env),
             Action::Schedule(action) => action.cancel(deps, env),

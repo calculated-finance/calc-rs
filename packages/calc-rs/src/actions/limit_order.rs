@@ -29,9 +29,8 @@ pub enum Offset {
 
 #[cw_serde]
 pub enum OrderPriceStrategy {
-    Fixed {
-        price: Decimal,
-    },
+    Fixed(Decimal),
+    Oracle(i16),
     Offset {
         direction: Direction,
         offset: Offset,
@@ -49,7 +48,7 @@ impl OrderPriceStrategy {
         current_price: &Option<Price>,
     ) -> Option<OrderResponse> {
         match self {
-            OrderPriceStrategy::Fixed { price } => deps
+            OrderPriceStrategy::Fixed(price) => deps
                 .querier
                 .query_wasm_smart::<OrderResponse>(
                     pair_address,
@@ -57,6 +56,17 @@ impl OrderPriceStrategy {
                         env.contract.address.to_string(),
                         side.clone(),
                         Price::Fixed(*price),
+                    )),
+                )
+                .ok(),
+            OrderPriceStrategy::Oracle(offset) => deps
+                .querier
+                .query_wasm_smart::<OrderResponse>(
+                    pair_address,
+                    &QueryMsg::Order((
+                        env.contract.address.to_string(),
+                        side.clone(),
+                        Price::Oracle(*offset),
                     )),
                 )
                 .ok(),
@@ -112,7 +122,8 @@ impl Operation for LimitOrder {
 
         Ok(Action::SetLimitOrder(LimitOrder {
             current_price: match self.strategy {
-                OrderPriceStrategy::Fixed { price } => Some(Price::Fixed(price)),
+                OrderPriceStrategy::Fixed(price) => Some(Price::Fixed(price)),
+                OrderPriceStrategy::Oracle(offset) => Some(Price::Oracle(offset)),
                 OrderPriceStrategy::Offset { .. } => None,
             },
             ..self
@@ -120,9 +131,6 @@ impl Operation for LimitOrder {
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut messages: Vec<SubMsg> = vec![];
-        let events: Vec<Event> = vec![];
-
         let existing_order = self.strategy.existing_order(
             deps,
             env,
@@ -135,13 +143,9 @@ impl Operation for LimitOrder {
             .querier
             .query_balance(env.contract.address.clone(), self.bid_denom.clone())?;
 
-        let remaining = bid_denom_balance.amount
-            + existing_order
-                .clone()
-                .map_or(Uint128::zero(), |o| o.remaining);
-
-        let new_rate = match self.strategy.clone() {
-            OrderPriceStrategy::Fixed { price } => price,
+        let new_price = match self.strategy.clone() {
+            OrderPriceStrategy::Fixed(price) => Price::Fixed(price),
+            OrderPriceStrategy::Oracle(offset) => Price::Oracle(offset),
             OrderPriceStrategy::Offset {
                 direction, offset, ..
             } => {
@@ -160,7 +164,7 @@ impl Operation for LimitOrder {
                 }[0]
                 .price;
 
-                match offset {
+                Price::Fixed(match offset {
                     Offset::Exact(offset) => match direction {
                         Direction::Up => book_price.saturating_add(offset),
                         Direction::Down => book_price.saturating_sub(offset),
@@ -171,11 +175,44 @@ impl Operation for LimitOrder {
                         Direction::Down => book_price
                             .saturating_mul(Decimal::one().saturating_sub(Decimal::bps(offset))),
                     },
-                }
+                })
             }
         };
 
-        let new_price = Price::Fixed(new_rate);
+        if bid_denom_balance.amount.is_zero() {
+            if let Some(current_price) = self.current_price.clone() {
+                if new_price == current_price {
+                    // We have no more bid denom & we are not adjusting the price
+                    return Ok((Action::SetLimitOrder(self), vec![], vec![]));
+                }
+
+                if let OrderPriceStrategy::Offset { tolerance, .. } = self.strategy.clone() {
+                    if let (Price::Fixed(current_price), Price::Fixed(new_price)) =
+                        (current_price, &new_price)
+                    {
+                        let price_delta = new_price.abs_diff(current_price);
+
+                        let tolerance_threshold = match tolerance {
+                            Offset::Exact(tolerance_val) => tolerance_val,
+                            Offset::Bps(tolerance_bps) => {
+                                current_price.saturating_mul(Decimal::bps(tolerance_bps))
+                            }
+                        };
+
+                        if price_delta <= tolerance_threshold {
+                            // Price change is within tolerance, no need to update the order
+                            return Ok((Action::SetLimitOrder(self), vec![], vec![]));
+                        }
+                    }
+                }
+            }
+        }
+
+        let remaining = bid_denom_balance.amount
+            + existing_order
+                .clone()
+                .map_or(Uint128::zero(), |o| o.remaining);
+
         let new_bid_amount = min(self.bid_amount.unwrap_or(remaining), remaining);
 
         let mut orders = if let Some(o) = existing_order.clone() {
@@ -184,7 +221,12 @@ impl Operation for LimitOrder {
             vec![]
         };
 
-        if new_bid_amount.gt(&Uint128::zero()) && new_rate.gt(&Decimal::zero()) {
+        let new_price_is_valid = match new_price {
+            Price::Fixed(price) => price.gt(&Decimal::zero()),
+            _ => true,
+        };
+
+        if new_price_is_valid && new_bid_amount.gt(&Uint128::zero()) {
             orders.push((self.side.clone(), new_price.clone(), Some(new_bid_amount)));
         }
 
@@ -208,15 +250,13 @@ impl Operation for LimitOrder {
             ..Statistics::default()
         })?);
 
-        messages.push(set_order_msg);
-
         Ok((
             Action::SetLimitOrder(LimitOrder {
                 current_price: Some(new_price),
                 ..self
             }),
-            messages,
-            events,
+            vec![set_order_msg],
+            vec![],
         ))
     }
 

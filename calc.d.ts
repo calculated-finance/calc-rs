@@ -36,7 +36,10 @@ export type Route =
       };
     }
   | {
-      thorchain: {};
+      thorchain: {
+        max_streaming_quantity?: number | null;
+        streaming_interval?: number | null;
+      };
     };
 export type ExchangerExecuteMsg = {
   swap: {
@@ -148,9 +151,10 @@ export interface NewStrategy {
 }
 
 export type StrategyStatus = "active" | "paused" | "archived";
-export type ArrayOf_Strategy = Strategy[];
+export type ArrayOf_StrategyHandle = StrategyHandle[];
 
-export interface Strategy {
+export interface StrategyHandle {
+  affiliates: Affiliate[];
   contract_address: Addr;
   created_at: number;
   id: number;
@@ -158,6 +162,11 @@ export interface Strategy {
   owner: Addr;
   status: StrategyStatus;
   updated_at: number;
+}
+export interface Affiliate {
+  address: Addr;
+  bps: number;
+  label: string;
 }
 
 export interface ManagerInstantiateMsg {
@@ -184,10 +193,10 @@ export type ManagerQueryMsg =
 export type ManagerExecuteMsg =
   | {
       instantiate_strategy: {
-        action: ActionConfig;
         affiliates: Affiliate[];
         label: string;
         owner: Addr;
+        strategy: StrategyFor_New;
       };
     }
   | {
@@ -204,10 +213,10 @@ export type ManagerExecuteMsg =
   | {
       update_strategy: {
         contract_address: Addr;
-        update: ActionConfig;
+        update: StrategyFor_New;
       };
     };
-export type ActionConfig =
+export type Action =
   | {
       fin_swap: FinSwap;
     }
@@ -231,10 +240,10 @@ export type ActionConfig =
        * @minItems 2
        * @maxItems 2
        */
-      conditional: [Conditions, ActionConfig];
+      conditional: [Conditions, Action];
     }
   | {
-      many: ActionConfig[];
+      many: Action[];
     };
 export type SwapAmountAdjustment =
   | "fixed"
@@ -261,9 +270,10 @@ export type Price =
 export type Side = "base" | "quote";
 export type OrderPriceStrategy =
   | {
-      fixed: {
-        price: Decimal;
-      };
+      fixed: Decimal;
+    }
+  | {
+      oracle: number;
     }
   | {
       offset: {
@@ -314,7 +324,13 @@ export type Cadence =
       cron: string;
     };
 export type Threshold = "all" | "any";
+export type New = null;
 
+export interface StrategyFor_New {
+  action: Action;
+  owner: Addr;
+  state: New;
+}
 export interface FinSwap {
   adjustment: SwapAmountAdjustment;
   maximum_slippage_bps: number;
@@ -327,10 +343,15 @@ export interface ThorSwap {
   adjustment: SwapAmountAdjustment;
   affiliate_bps?: number | null;
   affiliate_code?: string | null;
+  max_streaming_quantity?: number | null;
   maximum_slippage_bps: number;
   minimum_receive_amount: Coin;
+  on_complete?: Callback | null;
+  scheduler: Addr;
+  streaming_interval?: number | null;
   swap_amount: Coin;
 }
+
 export interface Swap {
   adjustment: SwapAmountAdjustment;
   exchange_contract: Addr;
@@ -354,7 +375,7 @@ export interface Distribution {
 }
 
 export interface Schedule {
-  action: ActionConfig;
+  action: Action;
   cadence: Cadence;
   execution_rebate: Coin[];
   scheduler: Addr;
@@ -363,11 +384,6 @@ export interface Schedule {
 export interface Conditions {
   conditions: Condition[];
   threshold: Threshold;
-}
-export interface Affiliate {
-  address: Addr;
-  bps: number;
-  label: string;
 }
 
 export type ArrayOf_Affiliate = Affiliate[];
@@ -454,10 +470,13 @@ export interface Statistics {
   withdrawn: Coin[];
 }
 
-export interface StrategyInstantiateMsg {
-  action: ActionConfig;
-  affiliates: Affiliate[];
+export type StrategyInstantiateMsg = StrategyFor_WithAffiliates;
+export type WithAffiliates = null;
+
+export interface StrategyFor_WithAffiliates {
+  action: Action;
   owner: Addr;
+  state: WithAffiliates;
 }
 
 export type StrategyQueryMsg =
@@ -480,7 +499,7 @@ export type StrategyExecuteMsg =
       withdraw: Coin[];
     }
   | {
-      update: ActionConfig;
+      update: StrategyFor_WithAffiliates;
     }
   | {
       update_status: StrategyStatus;
@@ -489,10 +508,15 @@ export type StrategyExecuteMsg =
       clear: {};
     };
 export type ArrayOf_Coin = Coin[];
+export type Idle = null;
 
 export interface StrategyConfig {
-  action: ActionConfig;
   escrowed: string[];
   manager: Addr;
+  strategy: StrategyFor_Idle;
+}
+export interface StrategyFor_Idle {
+  action: Action;
   owner: Addr;
+  state: Idle;
 }

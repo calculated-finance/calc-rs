@@ -2,10 +2,7 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Addr;
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 
-use crate::{
-    actions::action::Action,
-    strategy::{New, Strategy},
-};
+use crate::strategy::{New, Strategy};
 
 #[cw_serde]
 pub struct ManagerConfig {

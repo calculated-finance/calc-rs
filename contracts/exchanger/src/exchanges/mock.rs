@@ -1,6 +1,6 @@
 use calc_rs::{
-    exchanger::{ExpectedReceiveAmount, Route},
     core::{Callback, ContractResult},
+    exchanger::{ExpectedReceiveAmount, Route},
 };
 use cosmwasm_std::{Addr, Coin, Deps, Env, MessageInfo, StdResult};
 
@@ -8,7 +8,9 @@ use crate::types::Exchange;
 
 pub struct MockExchange {
     pub get_expected_receive_amount_fn: Box<
-        dyn Fn(Deps, &Coin, &str, &Option<Route>) -> StdResult<ExpectedReceiveAmount> + Send + Sync,
+        dyn Fn(Deps, &Env, &Coin, &str, &Option<Route>) -> StdResult<ExpectedReceiveAmount>
+            + Send
+            + Sync,
     >,
     pub swap_fn: Box<
         dyn Fn(
@@ -30,7 +32,7 @@ pub struct MockExchange {
 impl Default for MockExchange {
     fn default() -> Self {
         Self {
-            get_expected_receive_amount_fn: Box::new(|_, swap_amount, target_denom, _| {
+            get_expected_receive_amount_fn: Box::new(|_, _, swap_amount, target_denom, _| {
                 Ok(ExpectedReceiveAmount {
                     receive_amount: Coin::new(swap_amount.amount, target_denom),
                     slippage_bps: Default::default(),
@@ -45,11 +47,12 @@ impl Exchange for MockExchange {
     fn expected_receive_amount(
         &self,
         deps: Deps,
+        info: &Env,
         swap_amount: &Coin,
         target_denom: &str,
         route: &Option<Route>,
     ) -> StdResult<ExpectedReceiveAmount> {
-        (self.get_expected_receive_amount_fn)(deps, swap_amount, target_denom, route)
+        (self.get_expected_receive_amount_fn)(deps, info, swap_amount, target_denom, route)
     }
 
     fn swap(

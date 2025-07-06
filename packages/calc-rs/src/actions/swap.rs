@@ -27,16 +27,16 @@ pub enum SwapAmountAdjustment {
 }
 
 #[cw_serde]
-pub struct Swap {
+pub struct OptimalSwap {
     pub exchange_contract: Addr,
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub maximum_slippage_bps: u128,
     pub adjustment: SwapAmountAdjustment,
-    pub route: Option<Route>,
+    pub routes: Vec<Route>,
 }
 
-impl Operation for Swap {
+impl Operation for OptimalSwap {
     fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
@@ -48,7 +48,7 @@ impl Operation for Swap {
             ));
         }
 
-        if let Some(route) = self.route.clone() {
+        for route in self.routes.iter() {
             match route {
                 Route::FinMarket { address } => {
                     let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
@@ -72,11 +72,41 @@ impl Operation for Swap {
                         )));
                     }
                 }
-                Route::Thorchain {} => {}
+                Route::Thorchain {
+                    streaming_interval,
+                    max_streaming_quantity,
+                    ..
+                } => {
+                    if let Some(streaming_interval) = streaming_interval {
+                        if streaming_interval.eq(&0) {
+                            return Err(StdError::generic_err("Streaming interval cannot be zero"));
+                        }
+
+                        if streaming_interval.gt(&50) {
+                            return Err(StdError::generic_err(
+                                "Streaming interval cannot exceed 50 blocks",
+                            ));
+                        }
+                    }
+
+                    if let Some(max_streaming_quantity) = max_streaming_quantity {
+                        if max_streaming_quantity.eq(&0) {
+                            return Err(StdError::generic_err(
+                                "Maximum streaming quantity cannot be zero",
+                            ));
+                        }
+
+                        if max_streaming_quantity.gt(&1_800) {
+                            return Err(StdError::generic_err(
+                                "Maximum streaming quantity cannot exceed 1,800",
+                            ));
+                        }
+                    }
+                }
             }
         }
 
-        Ok(Action::Swap(self))
+        Ok(Action::OptimalSwap(self))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -143,7 +173,7 @@ impl Operation for Swap {
                 };
 
                 if scaled_swap_amount.is_zero() {
-                    return Ok((Action::Swap(self), messages, events));
+                    return Ok((Action::OptimalSwap(self), messages, events));
                 }
 
                 let new_swap_amount = Coin::new(
@@ -172,7 +202,7 @@ impl Operation for Swap {
         };
 
         if new_swap_amount.amount.is_zero() {
-            return Ok((Action::Swap(self), messages, events));
+            return Ok((Action::OptimalSwap(self), messages, events));
         }
 
         let swap_msg = SubMsg::reply_always(
@@ -180,7 +210,7 @@ impl Operation for Swap {
                 to_json_binary(&ExchangerExecuteMsg::Swap {
                     minimum_receive_amount: new_minimum_receive_amount.clone(),
                     maximum_slippage_bps: self.maximum_slippage_bps,
-                    route: self.route.clone(),
+                    route: self.routes.clone(),
                     recipient: None,
                     on_complete: None,
                 })?,
@@ -195,7 +225,7 @@ impl Operation for Swap {
 
         messages.push(swap_msg);
 
-        Ok((Action::Swap(self), messages, events))
+        Ok((Action::OptimalSwap(self), messages, events))
     }
 
     fn update(
@@ -204,8 +234,8 @@ impl Operation for Swap {
         _env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Swap(update) = update {
-            return Ok((Action::Swap(update), vec![], vec![]));
+        if let Action::OptimalSwap(update) = update {
+            return Ok((Action::OptimalSwap(update), vec![], vec![]));
         } else {
             return Err(StdError::generic_err(
                 "Cannot update swap action with non-swap action",
@@ -231,6 +261,6 @@ impl Operation for Swap {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Swap(self), vec![], vec![]))
+        Ok((Action::OptimalSwap(self), vec![], vec![]))
     }
 }

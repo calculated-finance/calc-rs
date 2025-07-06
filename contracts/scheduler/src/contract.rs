@@ -1,7 +1,7 @@
 use std::vec;
 
 use calc_rs::{
-    conditions::Conditional,
+    conditions::Satisfiable,
     core::{Contract, ContractError, ContractResult},
     scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg},
 };

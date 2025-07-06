@@ -4,7 +4,7 @@ use cosmwasm_std::{Coins, Deps, Env, Event, StdError, StdResult, SubMsg};
 
 use crate::{
     actions::{action::Action, operation::Operation},
-    conditions::{Conditional, Conditions},
+    conditions::{Conditions, Satisfiable},
 };
 
 impl Operation for (Conditions, Box<Action>) {

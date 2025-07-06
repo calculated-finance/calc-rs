@@ -12,7 +12,10 @@ use crate::{
         distribution::{Destination, Distribution, Recipient},
         operation::Operation,
         schedule::Schedule,
+        swap::OptimalSwap,
+        thor_swap::ThorSwap,
     },
+    exchanger::Route,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
 };
@@ -140,6 +143,31 @@ impl Strategy<New> {
                     ]
                     .concat(),
                 })
+            }
+            Action::ThorSwap(thor_swap) => Action::ThorSwap(ThorSwap {
+                affiliate_code: Some("rj".to_string()),
+                affiliate_bps: Some(10),
+                ..thor_swap
+            }),
+            Action::OptimalSwap(swap) => {
+                if let Some(Route::Thorchain {
+                    streaming_interval,
+                    max_streaming_quantity,
+                    ..
+                }) = swap.routes
+                {
+                    Action::OptimalSwap(OptimalSwap {
+                        routes: Some(Route::Thorchain {
+                            streaming_interval,
+                            max_streaming_quantity,
+                            affiliate_code: Some("rj".to_string()),
+                            affiliate_bps: Some(10),
+                        }),
+                        ..swap
+                    })
+                } else {
+                    Action::OptimalSwap(swap)
+                }
             }
             Action::Schedule(schedule) => Action::Schedule(Schedule {
                 action: Box::new(Self::add_affiliates(*schedule.action, affiliates)),

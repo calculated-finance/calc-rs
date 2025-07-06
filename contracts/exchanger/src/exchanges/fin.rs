@@ -109,6 +109,7 @@ impl Exchange for FinExchange {
     fn expected_receive_amount(
         &self,
         deps: Deps,
+        _env: &Env,
         swap_amount: &Coin,
         target_denom: &str,
         route: &Option<Route>,
@@ -147,7 +148,7 @@ impl Exchange for FinExchange {
     fn swap(
         &self,
         deps: Deps,
-        _env: &Env,
+        env: &Env,
         info: &MessageInfo,
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
@@ -163,8 +164,13 @@ impl Exchange for FinExchange {
             route,
         )?;
 
-        let expected_receive_amount =
-            self.expected_receive_amount(deps, swap_amount, &minimum_receive_amount.denom, route)?;
+        let expected_receive_amount = self.expected_receive_amount(
+            deps,
+            &env,
+            swap_amount,
+            &minimum_receive_amount.denom,
+            route,
+        )?;
 
         if expected_receive_amount.receive_amount.amount < minimum_receive_amount.amount {
             return Err(ContractError::generic_err(format!(
@@ -215,8 +221,10 @@ mod expected_receive_amount_tests {
     use super::*;
 
     use cosmwasm_std::{
-        from_json, testing::mock_dependencies, to_json_binary, Addr, Coin, ContractResult, Decimal,
-        StdError, SystemResult, Uint128, WasmQuery,
+        from_json,
+        testing::{mock_dependencies, mock_env},
+        to_json_binary, Addr, Coin, ContractResult, Decimal, StdError, SystemResult, Uint128,
+        WasmQuery,
     };
     use rujira_rs::fin::{BookItemResponse, Denoms, Tick};
 
@@ -231,6 +239,7 @@ mod expected_receive_amount_tests {
         let result = FinExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
+                &mock_env(),
                 &swap_amount,
                 target_denom,
                 &Some(Route::FinMarket {
@@ -299,6 +308,7 @@ mod expected_receive_amount_tests {
         let expected_amount = FinExchange::new()
             .expected_receive_amount(
                 deps.as_ref(),
+                &mock_env(),
                 &swap_amount,
                 target_denom,
                 &Some(Route::FinMarket {
@@ -425,7 +435,12 @@ mod swap_tests {
                 &swap_amount,
                 &minimum_receive_amount,
                 0,
-                &Some(Route::Thorchain {}),
+                &Some(Route::Thorchain {
+                    streaming_interval: None,
+                    max_streaming_quantity: None,
+                    affiliate_code: None,
+                    affiliate_bps: None,
+                }),
                 Addr::unchecked("recipient-address"),
                 None,
             )

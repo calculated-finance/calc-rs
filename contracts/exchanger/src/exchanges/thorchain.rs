@@ -33,33 +33,49 @@ impl Exchange for ThorchainExchange {
     fn expected_receive_amount(
         &self,
         deps: Deps,
+        env: &Env,
         swap_amount: &Coin,
         target_denom: &str,
-        _route: &Option<Route>,
+        route: &Option<Route>,
     ) -> StdResult<ExpectedReceiveAmount> {
-        let quote_request = SwapQuoteRequest {
+        let mut quote_request = SwapQuoteRequest {
             from_asset: swap_amount.denom.clone(),
             to_asset: target_denom.to_string(),
             amount: swap_amount.amount,
             streaming_interval: Uint128::zero(),
             streaming_quantity: Uint128::zero(),
-            destination: "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka".to_string(),
-            refund_address: "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka".to_string(),
-            affiliate: self
-                .affiliate_code
-                .clone()
-                .map_or_else(std::vec::Vec::new, |c| vec![c]),
-            affiliate_bps: self
-                .affiliate_bps
-                .map_or_else(std::vec::Vec::new, |b| vec![b]),
+            destination: env.contract.address.to_string(),
+            refund_address: env.contract.address.to_string(),
+            affiliate: vec![],
+            affiliate_bps: vec![],
         };
 
-        let quote = SwapQuote::get(deps.querier, &quote_request)
+        if let Some(Route::Thorchain {
+            streaming_interval,
+            max_streaming_quantity,
+            affiliate_code,
+            affiliate_bps,
+        }) = route
+        {
+            quote_request = SwapQuoteRequest {
+                streaming_interval: Uint128::new(streaming_interval.unwrap_or(3) as u128),
+                streaming_quantity: Uint128::new(max_streaming_quantity.unwrap_or(0) as u128),
+                affiliate: affiliate_code.clone().map_or_else(Vec::new, |c| vec![c]),
+                affiliate_bps: affiliate_bps.map_or_else(Vec::new, |b| vec![b]),
+                ..quote_request
+            };
+        }
+
+        let initial_quote = SwapQuote::get(deps.querier, &quote_request)
             .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {e}")))?;
 
         Ok(ExpectedReceiveAmount {
-            receive_amount: Coin::new(quote.expected_amount_out, target_denom),
-            slippage_bps: quote.fees.map(|f| f.slippage_bps).unwrap_or(0).into(),
+            receive_amount: Coin::new(initial_quote.expected_amount_out, target_denom),
+            slippage_bps: initial_quote
+                .fees
+                .map(|f| f.slippage_bps)
+                .unwrap_or(0)
+                .into(),
         })
     }
 
@@ -71,11 +87,11 @@ impl Exchange for ThorchainExchange {
         swap_amount: &Coin,
         minimum_receive_amount: &Coin,
         maximum_slippage_bps: u128,
-        _route: &Option<Route>,
+        route: &Option<Route>,
         recipient: Addr,
         on_complete: Option<Callback>,
     ) -> ContractResult {
-        let quote_request = SwapQuoteRequest {
+        let mut quote_request = SwapQuoteRequest {
             from_asset: swap_amount.denom.clone(),
             to_asset: minimum_receive_amount.denom.clone(),
             amount: swap_amount.amount,
@@ -91,6 +107,22 @@ impl Exchange for ThorchainExchange {
                 .affiliate_bps
                 .map_or_else(std::vec::Vec::new, |b| vec![b]),
         };
+
+        if let Some(Route::Thorchain {
+            streaming_interval,
+            max_streaming_quantity,
+            affiliate_code,
+            affiliate_bps,
+        }) = route
+        {
+            quote_request = SwapQuoteRequest {
+                streaming_interval: Uint128::new(streaming_interval.unwrap_or(3) as u128),
+                streaming_quantity: Uint128::new(max_streaming_quantity.unwrap_or(0) as u128),
+                affiliate: affiliate_code.clone().map_or_else(Vec::new, |c| vec![c]),
+                affiliate_bps: affiliate_bps.map_or_else(Vec::new, |b| vec![b]),
+                ..quote_request
+            };
+        }
 
         let quote = SwapQuote::get(deps.querier, &quote_request)
             .map_err(|e| StdError::generic_err(format!("Failed to get swap quote: {e}")))?;
@@ -121,12 +153,11 @@ impl Exchange for ThorchainExchange {
         let mut messages = vec![swap_msg];
 
         if let Some(on_complete) = on_complete {
-            // schedule a trigger to execute after the swap is complete, in this instance
-            // 1 block later given deposit msgs are processed in the subsequent block and
-            // we don't support streaming swaps.
             let after_swap_msg = Contract(self.scheduler_address.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                    condition: Condition::BlocksCompleted(env.block.height + 1),
+                    condition: Condition::BlocksCompleted(
+                        env.block.height + quote.streaming_swap_blocks,
+                    ),
                     threshold: Threshold::All,
                     to: on_complete.contract,
                     msg: on_complete.msg,
@@ -146,7 +177,7 @@ mod expected_receive_amount_tests {
     use super::*;
 
     use calc_rs_test::test::mock_dependencies_with_custom_grpc_querier;
-    use cosmwasm_std::{ContractResult, SystemResult};
+    use cosmwasm_std::{testing::mock_env, ContractResult, SystemResult};
     use prost::Message;
     use rujira_rs::proto::types::{QueryQuoteSwapResponse, QuoteFees};
 
@@ -203,7 +234,13 @@ mod expected_receive_amount_tests {
                 affiliate_code: None,
                 affiliate_bps: None
             })
-            .expected_receive_amount(deps.as_ref(), &swap_amount, target_denom, &None)
+            .expected_receive_amount(
+                deps.as_ref(),
+                &mock_env(),
+                &swap_amount,
+                target_denom,
+                &None
+            )
             .unwrap(),
             ExpectedReceiveAmount {
                 receive_amount: Coin::new(expected_receive_amount, target_denom),

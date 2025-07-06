@@ -107,7 +107,7 @@ impl Cadence {
     }
 }
 
-pub trait Conditional {
+pub trait Satisfiable {
     fn is_satisfied(&self, deps: Deps, env: &Env) -> bool;
 }
 
@@ -117,7 +117,7 @@ pub struct Conditions {
     pub threshold: Threshold,
 }
 
-impl Conditional for Conditions {
+impl Satisfiable for Conditions {
     fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
         match self.threshold {
             Threshold::All => {
@@ -172,7 +172,7 @@ pub enum Condition {
     Compose(Conditions),
 }
 
-impl Conditional for Condition {
+impl Satisfiable for Condition {
     fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
         match self {
             Condition::TimestampElapsed(timestamp) => env.block.time >= *timestamp,
