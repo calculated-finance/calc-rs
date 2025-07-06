@@ -115,6 +115,7 @@ mod config_tests {
         let mut deps = mock_dependencies();
 
         let scheduler_address = deps.api.addr_make("scheduler");
+
         CONFIG
             .save(
                 deps.as_mut(),
@@ -125,7 +126,5 @@ mod config_tests {
                 },
             )
             .unwrap();
-
-        assert_eq!((), ());
     }
 }

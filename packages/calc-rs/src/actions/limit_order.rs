@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashSet, u8, vec};
+use std::{cmp::min, collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -11,7 +11,6 @@ use rujira_rs::fin::{
 
 use crate::{
     actions::{action::Action, operation::Operation},
-    conditions::Condition,
     core::Contract,
     statistics::Statistics,
 };
@@ -118,17 +117,6 @@ impl Operation for LimitOrder {
             },
             ..self
         }))
-    }
-
-    fn condition(&self, env: &Env) -> Option<Condition> {
-        self.current_price
-            .clone()
-            .map(|price| Condition::LimitOrderFilled {
-                pair_address: self.pair_address.clone(),
-                owner: env.contract.address.clone(),
-                side: self.side.clone(),
-                price,
-            })
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {

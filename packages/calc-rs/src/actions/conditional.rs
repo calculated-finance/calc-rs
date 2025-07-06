@@ -4,21 +4,25 @@ use cosmwasm_std::{Coins, Deps, Env, Event, StdError, StdResult, SubMsg};
 
 use crate::{
     actions::{action::Action, operation::Operation},
-    conditions::Condition,
+    conditions::{Conditional, Conditions},
 };
 
-impl Operation for Condition {
+impl Operation for (Conditions, Box<Action>) {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
-        Ok(Action::CheckCondition(self))
-    }
-
-    fn condition(&self, _env: &Env) -> Option<Condition> {
-        Some(self.clone())
+        Ok(Action::Conditional(self))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        self.check(deps, env)?;
-        Ok((Action::CheckCondition(self), vec![], vec![]))
+        if self.0.is_satisfied(deps, env) {
+            let (action, msgs, events) = self.1.execute(deps, env)?;
+            Ok((
+                Action::Conditional((self.0, Box::new(action))),
+                msgs,
+                events,
+            ))
+        } else {
+            Ok((Action::Conditional(self), vec![], vec![]))
+        }
     }
 
     fn update(
@@ -27,8 +31,8 @@ impl Operation for Condition {
         _env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::CheckCondition(update) = update {
-            Ok((Action::CheckCondition(update), vec![], vec![]))
+        if let Action::Conditional(update) = update {
+            Ok((Action::Conditional(update), vec![], vec![]))
         } else {
             Err(StdError::generic_err("Invalid action type for update"))
         }
@@ -52,6 +56,6 @@ impl Operation for Condition {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::CheckCondition(self), vec![], vec![]))
+        Ok((Action::Conditional(self), vec![], vec![]))
     }
 }

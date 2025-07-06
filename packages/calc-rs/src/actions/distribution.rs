@@ -1,4 +1,4 @@
-use std::{collections::HashSet, u8, vec};
+use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -10,8 +10,6 @@ use crate::actions::action::Action;
 use crate::actions::operation::Operation;
 use crate::statistics::Statistics;
 use crate::thorchain::MsgDeposit;
-
-use crate::conditions::{Condition, Threshold};
 
 #[cw_serde]
 pub enum Recipient {
@@ -88,20 +86,6 @@ impl Operation for Distribution {
         }
 
         Ok(Action::Distribute(self))
-    }
-
-    fn condition(&self, env: &Env) -> Option<Condition> {
-        Some(Condition::Compound {
-            conditions: self
-                .denoms
-                .iter()
-                .map(|denom| Condition::BalanceAvailable {
-                    address: env.contract.address.clone(),
-                    amount: Coin::new(1u128, denom.clone()),
-                })
-                .collect(),
-            operator: Threshold::Any,
-        })
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {

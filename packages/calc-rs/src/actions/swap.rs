@@ -1,7 +1,7 @@
 use std::{
     cmp::{max, min},
     collections::HashSet,
-    u8, vec,
+    vec,
 };
 
 use crate::{
@@ -15,8 +15,6 @@ use cosmwasm_std::{
     to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
 };
 use rujira_rs::fin::{ConfigResponse, QueryMsg};
-
-use crate::conditions::Condition;
 
 #[cw_serde]
 pub enum SwapAmountAdjustment {
@@ -79,13 +77,6 @@ impl Operation for Swap {
         }
 
         Ok(Action::Swap(self))
-    }
-
-    fn condition(&self, env: &Env) -> Option<Condition> {
-        Some(Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
-            amount: Coin::new(1_000u128, self.swap_amount.denom.clone()),
-        })
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {

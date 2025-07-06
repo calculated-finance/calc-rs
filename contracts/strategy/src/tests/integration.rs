@@ -1,23 +1,25 @@
 #[cfg(test)]
 mod integration_tests {
-    use std::{collections::HashSet, u128, vec};
+    use std::{collections::HashSet, vec};
 
     use calc_rs::{
         actions::{
             action::Action,
-            behaviour::Behaviour,
             fin_swap::FinSwap,
             schedule::Schedule,
             swap::{Swap, SwapAmountAdjustment},
         },
-        conditions::{Cadence, Condition, Threshold},
+        conditions::{Cadence, Condition, Conditions, Threshold},
         exchanger::{ExchangerInstantiateMsg, Route},
-        manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy},
+        manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle},
         scheduler::SchedulerInstantiateMsg,
         statistics::Statistics,
-        strategy::{StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
+        strategy::{Idle, New, Strategy, StrategyConfig, StrategyQueryMsg, WithAffiliates},
     };
-    use cosmwasm_std::{Addr, Coin, Decimal, StdError, StdResult, Uint128};
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Addr, Coin, Decimal, StdError, StdResult, Uint128,
+    };
     use cw_multi_test::{error::AnyResult, App, AppResponse, ContractWrapper, Executor};
     use rujira_rs::fin::{
         BookResponse, ConfigResponse, Denoms, ExecuteMsg, InstantiateMsg, OrdersResponse, Price,
@@ -29,17 +31,12 @@ mod integration_tests {
 
     use crate::contract::{execute, instantiate, query, reply};
 
-    // --- TEST HARNESS SETUP ---
-
     pub struct CalcTestApp {
         pub app: App,
         pub fin_addr: Addr,
-        pub base_denom: String,
-        pub quote_denom: String,
         pub manager_addr: Addr,
         pub scheduler_addr: Addr,
         pub exchanger_addr: Addr,
-        pub admin: Addr,
         pub owner: Addr,
     }
 
@@ -185,13 +182,10 @@ mod integration_tests {
             Self {
                 app,
                 fin_addr,
-                base_denom: base_denom.to_string(),
-                quote_denom: quote_denom.to_string(),
                 manager_addr,
                 scheduler_addr,
                 exchanger_addr,
                 owner,
-                admin,
             }
         }
 
@@ -267,13 +261,13 @@ mod integration_tests {
             sender: &Addr,
             owner: &Addr,
             label: &str,
-            action: Action,
+            strategy: Strategy<New>,
         ) -> StdResult<Addr> {
             let msg = ManagerExecuteMsg::InstantiateStrategy {
                 owner: owner.clone(),
                 label: label.to_string(),
                 affiliates: vec![],
-                action,
+                strategy,
             };
 
             let response = self
@@ -320,7 +314,7 @@ mod integration_tests {
                 .unwrap();
         }
 
-        pub fn query_strategy(&self, strategy_addr: &Addr) -> Strategy {
+        pub fn query_strategy(&self, strategy_addr: &Addr) -> StrategyHandle {
             self.app
                 .wrap()
                 .query_wasm_smart(
@@ -376,17 +370,14 @@ mod integration_tests {
             route: None,
         };
 
-        let strategy_behaviour = Action::Compose(Behaviour {
-            actions: vec![Action::Swap(swap_action.clone())],
-            threshold: Threshold::All,
-        });
+        let strategy = Strategy::new(harness.owner.clone(), Action::Swap(swap_action.clone()));
 
         let strategy_addr = harness
             .create_strategy(
                 &harness.owner.clone(),
                 &harness.owner.clone(),
                 "Simple ATOM->OSMO Swap",
-                strategy_behaviour.clone(),
+                strategy.clone(),
             )
             .unwrap();
 
@@ -396,9 +387,12 @@ mod integration_tests {
             config,
             StrategyConfig {
                 manager: harness.manager_addr.clone(),
-                owner: harness.owner.clone(),
                 escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
-                action: strategy_behaviour
+                strategy: Strategy {
+                    owner: harness.owner.clone(),
+                    action: Action::Swap(swap_action),
+                    state: Idle
+                }
             }
         );
     }
@@ -426,10 +420,7 @@ mod integration_tests {
                 &harness.owner.clone(),
                 &harness.owner.clone(),
                 "Simple ATOM->OSMO Swap",
-                Action::Compose(Behaviour {
-                    actions: vec![Action::Swap(swap_action.clone())],
-                    threshold: Threshold::All,
-                }),
+                Strategy::new(harness.owner.clone(), Action::Swap(swap_action.clone())),
             )
             .unwrap();
 
@@ -486,15 +477,18 @@ mod integration_tests {
                 &harness.owner.clone(),
                 &harness.owner.clone(),
                 "Simple ATOM->OSMO Swap",
-                Action::Compose(Behaviour {
-                    actions: vec![
-                        Action::Swap(swap_action.clone()),
-                        Action::CheckCondition(Condition::OwnBalanceAvailable {
-                            amount: swap_action.swap_amount.clone(),
-                        }),
-                    ],
-                    threshold: Threshold::All,
-                }),
+                Strategy::new(
+                    harness.owner.clone(),
+                    Action::Conditional((
+                        Conditions {
+                            conditions: vec![Condition::OwnBalanceAvailable {
+                                amount: swap_action.swap_amount.clone(),
+                            }],
+                            threshold: Threshold::All,
+                        },
+                        Box::new(Action::Swap(swap_action.clone())),
+                    )),
+                ),
             )
             .unwrap();
 
@@ -542,10 +536,10 @@ mod integration_tests {
                 &creator,
                 &owner,
                 "Limit Order Strategy",
-                Action::Compose(Behaviour {
-                    actions: vec![Action::SetLimitOrder(order_action.clone())],
-                    threshold: Threshold::All,
-                }),
+                Strategy::new(
+                    harness.owner.clone(),
+                    Action::SetLimitOrder(order_action.clone()),
+                ),
             )
             .unwrap();
 
@@ -623,10 +617,10 @@ mod integration_tests {
                 &creator,
                 &owner,
                 "Limit Order Strategy",
-                Action::Compose(Behaviour {
-                    actions: vec![Action::SetLimitOrder(order_action.clone())],
-                    threshold: Threshold::All,
-                }),
+                Strategy::new(
+                    harness.owner.clone(),
+                    Action::SetLimitOrder(order_action.clone()),
+                ),
             )
             .unwrap();
 
@@ -725,27 +719,23 @@ mod integration_tests {
             adjustment: SwapAmountAdjustment::Fixed,
         };
 
-        let execute_strategy_action = Action::ExecuteStrategy(Schedule {
-            scheduler: harness.scheduler_addr.clone(),
-            cadence: Cadence::Blocks {
-                interval: 5,
-                previous: None,
-            },
-            execution_rebate: vec![],
-        });
-
         let strategy_addr = harness
             .create_strategy(
                 &harness.owner.clone(),
                 &harness.owner.clone(),
                 "Scheduled Strategy",
-                Action::Compose(Behaviour {
-                    actions: vec![
-                        execute_strategy_action.clone(),
-                        Action::FinSwap(swap_action.clone()),
-                    ],
-                    threshold: Threshold::All,
-                }),
+                Strategy::new(
+                    harness.owner.clone(),
+                    Action::Schedule(Schedule {
+                        scheduler: harness.scheduler_addr.clone(),
+                        cadence: Cadence::Blocks {
+                            interval: 5,
+                            previous: None,
+                        },
+                        execution_rebate: vec![],
+                        action: Box::new(Action::FinSwap(swap_action.clone())),
+                    }),
+                ),
             )
             .unwrap();
 
@@ -857,7 +847,7 @@ mod integration_tests {
     //     };
 
     //     // Every 5 seconds
-    //     let crank_action = Action::ExecuteStrategy(Schedule {
+    //     let crank_action = ActionConfig::ExecuteStrategy(Schedule {
     //         scheduler: harness.scheduler_addr.clone(),
     //         cadence: Cadence::Cron("*/5 * * * * *".to_string()),
     //         execution_rebate: vec![Coin::new(1u128, harness.base_denom.clone())],
@@ -868,8 +858,8 @@ mod integration_tests {
     //             &creator,
     //             &owner,
     //             "Crank Cron Strategy",
-    //             Action::Compose(Behaviour {
-    //                 actions: vec![crank_action.clone(), Action::Swap(swap_action.clone())],
+    //             ActionConfig::Compose(Behaviour {
+    //                 actions: vec![crank_action.clone(), ActionConfig::Swap(swap_action.clone())],
     //                 threshold: Threshold::All,
     //             }),
     //         )
@@ -964,7 +954,7 @@ mod integration_tests {
     //         }),
     //     };
 
-    //     let crank_action = Action::ExecuteStrategy(Schedule {
+    //     let crank_action = ActionConfig::ExecuteStrategy(Schedule {
     //         scheduler: harness.scheduler_addr.clone(),
     //         cadence: Cadence::Blocks {
     //             interval: 5,
@@ -978,8 +968,8 @@ mod integration_tests {
     //             &creator,
     //             &owner,
     //             "Crank Strategy",
-    //             Action::Compose(Behaviour {
-    //                 actions: vec![crank_action.clone(), Action::Swap(swap_action.clone())],
+    //             ActionConfig::Compose(Behaviour {
+    //                 actions: vec![crank_action.clone(), ActionConfig::Swap(swap_action.clone())],
     //                 threshold: Threshold::All,
     //             }),
     //         )
@@ -1039,10 +1029,10 @@ mod integration_tests {
     //             &creator,
     //             &owner,
     //             "Composite All Threshold Strategy",
-    //             Action::Compose(Behaviour {
+    //             ActionConfig::Compose(Behaviour {
     //                 actions: vec![
-    //                     Action::Swap(valid_swap_action.clone()),
-    //                     Action::Swap(invalid_swap_action.clone()),
+    //                     ActionConfig::Swap(valid_swap_action.clone()),
+    //                     ActionConfig::Swap(invalid_swap_action.clone()),
     //                 ],
     //                 threshold: Threshold::All,
     //             }),
@@ -1105,10 +1095,10 @@ mod integration_tests {
     //             &creator,
     //             &owner,
     //             "Composite Any Threshold Strategy",
-    //             Action::Compose(Behaviour {
+    //             ActionConfig::Compose(Behaviour {
     //                 actions: vec![
-    //                     Action::Swap(valid_swap_action.clone()),
-    //                     Action::Swap(invalid_swap_action.clone()),
+    //                     ActionConfig::Swap(valid_swap_action.clone()),
+    //                     ActionConfig::Swap(invalid_swap_action.clone()),
     //                 ],
     //                 threshold: Threshold::Any,
     //             }),
@@ -1164,8 +1154,8 @@ mod integration_tests {
     //         route: None,
     //     };
 
-    //     let strategy_behaviour = Action::Compose(Behaviour {
-    //         actions: vec![Action::Swap(swap_action.clone())],
+    //     let strategy_behaviour = ActionConfig::Compose(Behaviour {
+    //         actions: vec![ActionConfig::Swap(swap_action.clone())],
     //         threshold: Threshold::All,
     //     });
 
@@ -1213,8 +1203,8 @@ mod integration_tests {
     //         route: None,
     //     };
 
-    //     let strategy_behaviour = Action::Compose(Behaviour {
-    //         actions: vec![Action::Swap(swap_action.clone())],
+    //     let strategy_behaviour = ActionConfig::Compose(Behaviour {
+    //         actions: vec![ActionConfig::Swap(swap_action.clone())],
     //         threshold: Threshold::All,
     //     });
 
@@ -1271,8 +1261,8 @@ mod integration_tests {
     //             &creator,
     //             &owner,
     //             "Simple ATOM->OSMO Swap",
-    //             Action::Compose(Behaviour {
-    //                 actions: vec![Action::Swap(swap_action.clone())],
+    //             ActionConfig::Compose(Behaviour {
+    //                 actions: vec![ActionConfig::Swap(swap_action.clone())],
     //                 threshold: Threshold::All,
     //             }),
     //         )
@@ -1319,7 +1309,7 @@ mod integration_tests {
     //         route: None,
     //     };
 
-    //     let crank_action = Action::ExecuteStrategy(Schedule {
+    //     let crank_action = ActionConfig::ExecuteStrategy(Schedule {
     //         scheduler: harness.scheduler_addr.clone(),
     //         cadence: Cadence::Cron("invalid cron string".to_string()),
     //         execution_rebate: vec![Coin::new(1u128, harness.base_denom.clone())],
@@ -1329,8 +1319,8 @@ mod integration_tests {
     //         &creator,
     //         &owner,
     //         "Invalid Cron Strategy",
-    //         Action::Compose(Behaviour {
-    //             actions: vec![crank_action.clone(), Action::Swap(swap_action.clone())],
+    //         ActionConfig::Compose(Behaviour {
+    //             actions: vec![crank_action.clone(), ActionConfig::Swap(swap_action.clone())],
     //             threshold: Threshold::All,
     //         }),
     //     );
@@ -1358,10 +1348,10 @@ mod integration_tests {
     //     };
 
     //     // Create a deeply nested behaviour
-    //     let mut deep_behaviour = Action::Swap(swap_action.clone());
+    //     let mut deep_behaviour = ActionConfig::Swap(swap_action.clone());
     //     for _ in 0..200 {
     //         // A large number to trigger recursion limit
-    //         deep_behaviour = Action::Compose(Behaviour {
+    //         deep_behaviour = ActionConfig::Compose(Behaviour {
     //             actions: vec![deep_behaviour],
     //             threshold: Threshold::All,
     //         });

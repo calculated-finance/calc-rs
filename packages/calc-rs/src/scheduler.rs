@@ -1,11 +1,11 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin, Deps, Env, MessageInfo, StdResult, Timestamp};
+use cosmwasm_std::{Addr, Binary, Coin, MessageInfo, Timestamp};
 
 use crate::conditions::{Condition, Threshold};
 
 #[cw_serde]
 pub struct CreateTrigger {
-    pub conditions: Vec<Condition>,
+    pub condition: Condition,
     pub threshold: Threshold,
     pub to: Addr,
     pub msg: Binary,
@@ -15,7 +15,7 @@ pub struct CreateTrigger {
 pub struct Trigger {
     pub id: u64,
     pub owner: Addr,
-    pub conditions: Vec<Condition>,
+    pub condition: Condition,
     pub threshold: Threshold,
     pub msg: Binary,
     pub to: Addr,
@@ -27,19 +27,12 @@ impl Trigger {
         Self {
             id: 0, // This will be set later when the trigger is stored
             owner: info.sender.clone(),
-            conditions: command.conditions,
+            condition: command.condition,
             threshold: command.threshold,
             msg: command.msg,
             to: command.to,
             execution_rebate: rebate,
         }
-    }
-
-    pub fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<bool> {
-        Ok(match self.threshold {
-            Threshold::All => self.conditions.iter().all(|c| c.check(deps, env).is_ok()),
-            Threshold::Any => self.conditions.iter().any(|c| c.check(deps, env).is_ok()),
-        })
     }
 }
 

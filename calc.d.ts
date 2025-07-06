@@ -20,8 +20,6 @@ export interface Coin {
 export type Addr = string;
 
 export interface ExchangerInstantiateMsg {
-  affiliate_bps?: number | null;
-  affiliate_code?: string | null;
   scheduler_address: Addr;
 }
 export type ExchangerQueryMsg = {
@@ -153,7 +151,6 @@ export type StrategyStatus = "active" | "paused" | "archived";
 export type ArrayOf_Strategy = Strategy[];
 
 export interface Strategy {
-  affiliates: Affiliate[];
   contract_address: Addr;
   created_at: number;
   id: number;
@@ -161,11 +158,6 @@ export interface Strategy {
   owner: Addr;
   status: StrategyStatus;
   updated_at: number;
-}
-export interface Affiliate {
-  address: Addr;
-  bps: number;
-  label: string;
 }
 
 export interface ManagerInstantiateMsg {
@@ -192,7 +184,7 @@ export type ManagerQueryMsg =
 export type ManagerExecuteMsg =
   | {
       instantiate_strategy: {
-        action: Action;
+        action: ActionConfig;
         affiliates: Affiliate[];
         label: string;
         owner: Addr;
@@ -212,58 +204,37 @@ export type ManagerExecuteMsg =
   | {
       update_strategy: {
         contract_address: Addr;
-        update: StrategyConfig;
+        update: ActionConfig;
       };
     };
-export type Action =
+export type ActionConfig =
   | {
-      check: Condition;
+      fin_swap: FinSwap;
     }
   | {
-      crank: Schedule;
+      thor_swap: ThorSwap;
     }
   | {
-      perform: Swap;
+      swap: Swap;
     }
   | {
-      set: Order;
+      set_limit_order: LimitOrder;
     }
   | {
-      distribute_to: Recipients;
+      distribute: Distribution;
     }
   | {
-      exhibit: Behaviour;
-    };
-export type Price =
-  | {
-      fixed: Decimal;
+      schedule: Schedule;
     }
   | {
-      oracle: number;
-    };
-/**
- * A fixed-point decimal value with 18 fractional digits, i.e. Decimal(1_000_000_000_000_000_000) == 1.0
- *
- * The greatest possible value that can be represented is 340282366920938463463.374607431768211455 (which is (2^128 - 1) / 10^18)
- */
-export type Decimal = string;
-export type Side = "base" | "quote";
-export type Threshold = "all" | "any";
-export type Cadence =
-  | {
-      blocks: {
-        interval: number;
-        previous?: number | null;
-      };
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      conditional: [Conditions, ActionConfig];
     }
   | {
-      time: {
-        duration: Duration;
-        previous?: Timestamp | null;
-      };
-    }
-  | {
-      cron: string;
+      many: ActionConfig[];
     };
 export type SwapAmountAdjustment =
   | "fixed"
@@ -274,6 +245,20 @@ export type SwapAmountAdjustment =
         scalar: Decimal;
       };
     };
+/**
+ * A fixed-point decimal value with 18 fractional digits, i.e. Decimal(1_000_000_000_000_000_000) == 1.0
+ *
+ * The greatest possible value that can be represented is 340282366920938463463.374607431768211455 (which is (2^128 - 1) / 10^18)
+ */
+export type Decimal = string;
+export type Price =
+  | {
+      fixed: Decimal;
+    }
+  | {
+      oracle: number;
+    };
+export type Side = "base" | "quote";
 export type OrderPriceStrategy =
   | {
       fixed: {
@@ -312,13 +297,40 @@ export type Recipient =
         memo: string;
       };
     };
+export type Cadence =
+  | {
+      blocks: {
+        interval: number;
+        previous?: number | null;
+      };
+    }
+  | {
+      time: {
+        duration: Duration;
+        previous?: Timestamp | null;
+      };
+    }
+  | {
+      cron: string;
+    };
+export type Threshold = "all" | "any";
 
-export interface Schedule {
-  cadence: Cadence;
-  execution_rebate: Coin[];
-  scheduler: Addr;
+export interface FinSwap {
+  adjustment: SwapAmountAdjustment;
+  maximum_slippage_bps: number;
+  minimum_receive_amount: Coin;
+  pair_address: Addr;
+  swap_amount: Coin;
 }
 
+export interface ThorSwap {
+  adjustment: SwapAmountAdjustment;
+  affiliate_bps?: number | null;
+  affiliate_code?: string | null;
+  maximum_slippage_bps: number;
+  minimum_receive_amount: Coin;
+  swap_amount: Coin;
+}
 export interface Swap {
   adjustment: SwapAmountAdjustment;
   exchange_contract: Addr;
@@ -327,7 +339,7 @@ export interface Swap {
   route?: Route | null;
   swap_amount: Coin;
 }
-export interface Order {
+export interface LimitOrder {
   bid_amount?: Uint128 | null;
   bid_denom: string;
   current_price?: Price | null;
@@ -335,22 +347,27 @@ export interface Order {
   side: Side;
   strategy: OrderPriceStrategy;
 }
-export interface Recipients {
+export interface Distribution {
   denoms: string[];
   immutable_destinations: Destination[];
   mutable_destinations: Destination[];
 }
 
-export interface Behaviour {
-  actions: Action[];
-  threshold: Threshold;
+export interface Schedule {
+  action: ActionConfig;
+  cadence: Cadence;
+  execution_rebate: Coin[];
+  scheduler: Addr;
 }
 
-export interface StrategyConfig {
-  action: Action;
-  escrowed: string[];
-  manager: Addr;
-  owner: Addr;
+export interface Conditions {
+  conditions: Condition[];
+  threshold: Threshold;
+}
+export interface Affiliate {
+  address: Addr;
+  bps: number;
+  label: string;
 }
 
 export type ArrayOf_Affiliate = Affiliate[];
@@ -363,7 +380,7 @@ export interface ManagerConfig {
 export type ArrayOf_Trigger = Trigger[];
 
 export interface Trigger {
-  conditions: Condition[];
+  condition: Condition;
   execution_rebate: Coin[];
   id: number;
   msg: Binary;
@@ -422,7 +439,7 @@ export type SchedulerExecuteMsg =
     };
 
 export interface CreateTrigger {
-  conditions: Condition[];
+  condition: Condition;
   msg: Binary;
   threshold: Threshold;
   to: Addr;
@@ -438,7 +455,7 @@ export interface Statistics {
 }
 
 export interface StrategyInstantiateMsg {
-  action: Action;
+  action: ActionConfig;
   affiliates: Affiliate[];
   owner: Addr;
 }
@@ -463,7 +480,7 @@ export type StrategyExecuteMsg =
       withdraw: Coin[];
     }
   | {
-      update: StrategyConfig;
+      update: ActionConfig;
     }
   | {
       update_status: StrategyStatus;
@@ -472,3 +489,10 @@ export type StrategyExecuteMsg =
       clear: {};
     };
 export type ArrayOf_Coin = Coin[];
+
+export interface StrategyConfig {
+  action: ActionConfig;
+  escrowed: string[];
+  manager: Addr;
+  owner: Addr;
+}

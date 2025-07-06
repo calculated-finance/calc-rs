@@ -14,8 +14,6 @@ use cosmwasm_std::{
     to_json_binary, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg, Uint128,
 };
 
-use crate::conditions::Condition;
-
 #[cw_serde]
 pub struct ThorSwap {
     pub swap_amount: Coin,
@@ -49,13 +47,6 @@ impl Operation for ThorSwap {
         }
 
         Ok(Action::ThorSwap(self))
-    }
-
-    fn condition(&self, env: &Env) -> Option<Condition> {
-        Some(Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
-            amount: Coin::new(1_000u128, self.swap_amount.denom.clone()),
-        })
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -216,11 +207,11 @@ impl Operation for ThorSwap {
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         if let Action::ThorSwap(update) = update {
-            return Ok((Action::ThorSwap(update), vec![], vec![]));
+            Ok((Action::ThorSwap(update), vec![], vec![]))
         } else {
-            return Err(StdError::generic_err(
+            Err(StdError::generic_err(
                 "Cannot update swap action with non-swap action",
-            ));
+            ))
         }
     }
 

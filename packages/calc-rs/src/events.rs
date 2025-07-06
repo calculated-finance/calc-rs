@@ -2,7 +2,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
 use rujira_rs::fin::{Price, Side};
 
-use crate::{conditions::Condition, statistics::Statistics, strategy::StrategyConfig};
+use crate::{conditions::Conditions, statistics::Statistics, strategy::StrategyConfig};
 
 #[cw_serde]
 pub enum DomainEvent {
@@ -43,7 +43,7 @@ pub enum DomainEvent {
     },
     SchedulingAttempted {
         contract_address: Addr,
-        conditions: Vec<Condition>,
+        conditions: Vec<Conditions>,
     },
     SchedulingSucceeded {
         contract_address: Addr,

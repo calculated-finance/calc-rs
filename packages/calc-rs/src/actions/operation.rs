@@ -2,11 +2,10 @@ use std::collections::HashSet;
 
 use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
 
-use crate::{actions::action::Action, conditions::Condition};
+use crate::actions::action::Action;
 
 pub trait Operation {
     fn init(self, deps: Deps, env: &Env) -> StdResult<Action>;
-    fn condition(&self, env: &Env) -> Option<Condition>;
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)>;
     fn update(
         self,

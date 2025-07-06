@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use calc_rs::{
-    conditions::Condition,
+    conditions::{Condition, Conditions},
     scheduler::{ConditionFilter, CreateTrigger, Trigger},
 };
 use cosmwasm_schema::cw_serde;
@@ -76,6 +76,36 @@ pub struct TriggerStore<'a> {
     triggers: IndexedMap<u64, Trigger, TriggerIndexes<'a>>,
 }
 
+fn save_condition(
+    storage: &mut dyn Storage,
+    trigger_id: u64,
+    condition: &Condition,
+) -> StdResult<()> {
+    match condition {
+        Condition::Compose(Conditions { conditions, .. }) => {
+            for cond in conditions {
+                save_condition(storage, trigger_id, cond)?;
+            }
+
+            Ok(())
+        }
+        _ => {
+            let condition_id =
+                CONDITION_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
+
+            CONDITIONS.save(
+                storage,
+                condition_id,
+                &ConditionStore {
+                    id: condition_id,
+                    trigger_id,
+                    condition: Condition::from(condition.clone()),
+                },
+            )
+        }
+    }
+}
+
 impl TriggerStore<'_> {
     pub fn save(
         &self,
@@ -86,20 +116,7 @@ impl TriggerStore<'_> {
     ) -> StdResult<()> {
         let trigger_id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
 
-        for condition in &command.conditions {
-            let condition_id =
-                CONDITION_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
-
-            CONDITIONS.save(
-                storage,
-                condition_id,
-                &ConditionStore {
-                    id: condition_id,
-                    trigger_id,
-                    condition: condition.clone(),
-                },
-            )?;
-        }
+        save_condition(storage, trigger_id, &command.condition)?;
 
         self.triggers.save(
             storage,
@@ -107,7 +124,7 @@ impl TriggerStore<'_> {
             &Trigger {
                 id: trigger_id,
                 owner: owner,
-                conditions: command.conditions,
+                condition: command.condition,
                 threshold: command.threshold,
                 msg: command.msg,
                 to: command.to,

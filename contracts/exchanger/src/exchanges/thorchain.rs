@@ -126,7 +126,7 @@ impl Exchange for ThorchainExchange {
             // we don't support streaming swaps.
             let after_swap_msg = Contract(self.scheduler_address.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                    conditions: vec![Condition::BlocksCompleted(env.block.height + 1)],
+                    condition: Condition::BlocksCompleted(env.block.height + 1),
                     threshold: Threshold::All,
                     to: on_complete.contract,
                     msg: on_complete.msg,
@@ -217,7 +217,7 @@ mod expected_receive_amount_tests {
 mod swap_tests {
     use super::*;
 
-    use calc_rs::core::ContractError;
+    use calc_rs::{conditions::Condition, core::ContractError};
     use calc_rs_test::test::mock_dependencies_with_custom_grpc_querier;
     use cosmwasm_std::{
         testing::{message_info, mock_env},
@@ -529,7 +529,7 @@ mod swap_tests {
             SubMsg::reply_never(
                 Contract(config.scheduler_address.clone()).call(
                     to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                        conditions: vec![Condition::BlocksCompleted(env.block.height + 1)],
+                        condition: Condition::BlocksCompleted(env.block.height + 1),
                         threshold: Threshold::All,
                         to: Addr::unchecked("twap"),
                         msg: to_json_binary("dummy message").unwrap(),

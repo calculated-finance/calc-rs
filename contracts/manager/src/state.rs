@@ -1,4 +1,4 @@
-use calc_rs::manager::{ManagerConfig, Strategy};
+use calc_rs::manager::{ManagerConfig, StrategyHandle};
 use cosmwasm_std::{Addr, StdResult};
 use cw_storage_plus::{Index, IndexList, IndexedMap, Item, UniqueIndex};
 
@@ -27,15 +27,15 @@ pub const CONFIG: ConfigStore = ConfigStore {
 pub const STRATEGY_COUNTER: Item<u64> = Item::new("strategy_counter");
 
 pub struct StrategyIndexes<'a> {
-    pub updated_at: UniqueIndex<'a, String, Strategy, Addr>,
-    pub owner_updated_at: UniqueIndex<'a, (Addr, String), Strategy, Addr>,
-    pub status_updated_at: UniqueIndex<'a, (u8, String), Strategy, Addr>,
-    pub owner_status_updated_at: UniqueIndex<'a, (Addr, u8, String), Strategy, Addr>,
+    pub updated_at: UniqueIndex<'a, String, StrategyHandle, Addr>,
+    pub owner_updated_at: UniqueIndex<'a, (Addr, String), StrategyHandle, Addr>,
+    pub status_updated_at: UniqueIndex<'a, (u8, String), StrategyHandle, Addr>,
+    pub owner_status_updated_at: UniqueIndex<'a, (Addr, u8, String), StrategyHandle, Addr>,
 }
 
-impl<'a> IndexList<Strategy> for StrategyIndexes<'a> {
-    fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Strategy>> + '_> {
-        let s: Vec<&dyn Index<Strategy>> = vec![
+impl<'a> IndexList<StrategyHandle> for StrategyIndexes<'a> {
+    fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<StrategyHandle>> + '_> {
+        let s: Vec<&dyn Index<StrategyHandle>> = vec![
             &self.updated_at,
             &self.owner_updated_at,
             &self.status_updated_at,
@@ -52,7 +52,7 @@ pub fn updated_at_cursor(updated_at: u64, contract_address: Option<&Addr>) -> St
     }
 }
 
-pub fn strategy_store<'a>() -> IndexedMap<Addr, Strategy, StrategyIndexes<'a>> {
+pub fn strategy_store<'a>() -> IndexedMap<Addr, StrategyHandle, StrategyIndexes<'a>> {
     IndexedMap::new(
         "strategies",
         StrategyIndexes {

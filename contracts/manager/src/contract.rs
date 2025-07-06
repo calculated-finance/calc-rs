@@ -4,7 +4,8 @@ use calc_rs::{
     core::{Contract, ContractError, ContractResult},
     events::DomainEvent,
     manager::{
-        Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy, StrategyStatus,
+        Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle,
+        StrategyStatus,
     },
     strategy::{StrategyExecuteMsg, StrategyInstantiateMsg},
 };
@@ -55,7 +56,7 @@ pub fn execute(
             owner,
             label,
             affiliates,
-            action,
+            strategy,
         } => {
             let config = CONFIG.load(deps.storage)?;
             let strategy_id =
@@ -96,7 +97,7 @@ pub fn execute(
             strategy_store().save(
                 deps.storage,
                 contract_address.clone(),
-                &Strategy {
+                &StrategyHandle {
                     id: strategy_id,
                     owner: owner.clone(),
                     contract_address: contract_address.clone(),
@@ -104,6 +105,7 @@ pub fn execute(
                     updated_at: env.block.time.seconds(),
                     label: label.clone(),
                     status: StrategyStatus::Active,
+                    affiliates: affiliates.clone(),
                 },
             )?;
 
@@ -111,11 +113,9 @@ pub fn execute(
                 admin: Some(owner.to_string()),
                 code_id,
                 label,
-                msg: to_json_binary(&StrategyInstantiateMsg {
-                    owner: owner.clone(),
-                    affiliates,
-                    action,
-                })?,
+                msg: to_json_binary(&StrategyInstantiateMsg(
+                    strategy.with_affiliates(&affiliates),
+                ))?,
                 funds: info.funds,
                 salt,
             };
@@ -134,7 +134,7 @@ pub fn execute(
             strategy_store().save(
                 deps.storage,
                 contract_address.clone(),
-                &Strategy {
+                &StrategyHandle {
                     updated_at: env.block.time.seconds(),
                     ..strategy
                 },
@@ -155,21 +155,23 @@ pub fn execute(
                 return Err(ContractError::Unauthorized {});
             }
 
-            strategy_store().save(
-                deps.storage,
-                contract_address.clone(),
-                &Strategy {
-                    updated_at: env.block.time.seconds(),
-                    ..strategy
-                },
-            )?;
-
             let update_msg = Contract(contract_address.clone()).call(
-                to_json_binary(&StrategyExecuteMsg::Update(update.clone()))?,
+                to_json_binary(&StrategyExecuteMsg::Update(
+                    update.with_affiliates(&strategy.affiliates),
+                ))?,
                 info.funds,
             );
 
             messages.push(update_msg);
+
+            strategy_store().save(
+                deps.storage,
+                contract_address.clone(),
+                &StrategyHandle {
+                    updated_at: env.block.time.seconds(),
+                    ..strategy
+                },
+            )?;
         }
         ManagerExecuteMsg::UpdateStrategyStatus {
             contract_address,
@@ -184,15 +186,15 @@ pub fn execute(
             strategy_store().save(
                 deps.storage,
                 contract_address.clone(),
-                &Strategy {
+                &StrategyHandle {
                     status: status.clone(),
                     updated_at: env.block.time.seconds(),
                     ..strategy
                 },
             )?;
 
-            let update_status_msg = Contract(contract_address.clone()).call(
-                to_json_binary(&StrategyExecuteMsg::UpdateStatus(status.clone()))?,
+            let update_status_msg = Contract(contract_address).call(
+                to_json_binary(&StrategyExecuteMsg::UpdateStatus(status))?,
                 info.funds,
             );
 
@@ -248,7 +250,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
                     None => 30,
                 })
                 .flat_map(|result| result.map(|(_, strategy)| strategy))
-                .collect::<Vec<Strategy>>();
+                .collect::<Vec<StrategyHandle>>();
 
             to_json_binary(&strategies)
         }

@@ -1,11 +1,11 @@
-use std::{collections::HashSet, iter::once};
+use std::collections::HashSet;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult, SubMsg};
 
 use crate::{
     actions::{action::Action, operation::Operation},
-    conditions::{Cadence, Condition, Threshold},
+    conditions::{Cadence, Threshold},
     core::Contract,
     manager::ManagerExecuteMsg,
     scheduler::{CreateTrigger, SchedulerExecuteMsg},
@@ -16,6 +16,7 @@ pub struct Schedule {
     pub scheduler: Addr,
     pub cadence: Cadence,
     pub execution_rebate: Vec<Coin>,
+    pub action: Box<Action>,
 }
 
 use cron::Schedule as CronSchedule;
@@ -26,40 +27,30 @@ impl Operation for Schedule {
         if let Cadence::Cron(cron_str) = &self.cadence {
             if CronSchedule::from_str(cron_str).is_err() {
                 return Err(cosmwasm_std::StdError::generic_err(format!(
-                    "Invalid cron string: {}",
-                    cron_str
+                    "Invalid cron string: {cron_str}",
                 )));
             }
         }
 
-        Ok(Action::ExecuteStrategy(self))
-    }
-
-    fn condition(&self, env: &Env) -> Option<Condition> {
-        Some(Condition::Compound {
-            conditions: self
-                .execution_rebate
-                .iter()
-                .map(|rebate| Condition::BalanceAvailable {
-                    address: env.contract.address.clone(),
-                    amount: rebate.clone(),
-                })
-                .chain(once(self.cadence.into_condition(env)))
-                .collect(),
-            operator: Threshold::All,
-        })
+        Ok(Action::Schedule(self))
     }
 
     fn execute(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut messages = vec![];
-        let events = vec![];
+        let mut events = vec![];
 
         if self.cadence.is_due(env) {
             let next = self.cadence.next(env);
 
+            let (action, messages_from_action, events_from_action) =
+                self.action.execute(_deps, env)?;
+
+            messages.extend(messages_from_action);
+            events.extend(events_from_action);
+
             let set_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                    conditions: vec![next.into_condition(env)],
+                    condition: next.into_condition(env),
                     threshold: Threshold::All,
                     to: env.contract.address.clone(),
                     msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
@@ -72,17 +63,16 @@ impl Operation for Schedule {
             messages.push(SubMsg::reply_never(set_trigger_msg));
 
             Ok((
-                Action::ExecuteStrategy(Schedule {
+                Action::Schedule(Schedule {
                     cadence: next,
+                    action: Box::new(action),
                     ..self
                 }),
                 messages,
                 events,
             ))
         } else {
-            Err(cosmwasm_std::StdError::generic_err(
-                "Cadence is not due for execution",
-            ))
+            Ok((Action::Schedule(self), messages, events))
         }
     }
 
@@ -92,8 +82,8 @@ impl Operation for Schedule {
         env: &Env,
         update: Action,
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::ExecuteStrategy(update) = update {
-            update.execute(deps, env)
+        if let Action::Schedule(update) = update {
+            update.init(deps, env)?.execute(deps, env)
         } else {
             Err(cosmwasm_std::StdError::generic_err(
                 "Cannot update Crank action with a different action type",
@@ -119,6 +109,6 @@ impl Operation for Schedule {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::ExecuteStrategy(self), vec![], vec![]))
+        Ok((Action::Schedule(self), vec![], vec![]))
     }
 }
