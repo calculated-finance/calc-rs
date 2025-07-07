@@ -727,25 +727,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
-name = "exchanger"
-version = "0.1.0"
-dependencies = [
- "anybuf 1.0.0",
- "calc-rs",
- "calc-rs-test",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "prost",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
- "schemars",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1663,7 +1644,6 @@ dependencies = [
  "cw-storage-plus",
  "cw-utils",
  "cw2",
- "exchanger",
  "manager",
  "rstest",
  "rujira-fin",

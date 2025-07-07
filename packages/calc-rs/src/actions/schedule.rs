@@ -20,28 +20,44 @@ pub struct Schedule {
     pub action: Box<Action>,
 }
 
-use cron::Schedule as CronSchedule;
-use std::str::FromStr;
-
 impl Operation for Schedule {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Cadence::Cron(cron_str) = &self.cadence {
-            if CronSchedule::from_str(cron_str).is_err() {
-                return Err(cosmwasm_std::StdError::generic_err(format!(
-                    "Invalid cron string: {cron_str}",
-                )));
-            }
-        }
+    fn init(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        let set_trigger_msg = Contract(self.scheduler.clone()).call(
+            to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
+                condition: self.cadence.into_condition(env)?,
+                threshold: Threshold::All,
+                to: env.contract.address.clone(),
+                msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                    contract_address: env.contract.address.clone(),
+                })?,
+            }]))?,
+            self.execution_rebate.clone(),
+        );
 
-        Ok((Action::Schedule(self), vec![], vec![]))
+        let cadence = match &self.cadence {
+            Cadence::Cron {
+                expr,
+                previous: None,
+            } => Cadence::Cron {
+                expr: expr.clone(),
+                previous: Some(env.block.time),
+            },
+            _ => self.cadence.clone(),
+        };
+
+        Ok((
+            Action::Schedule(Schedule { cadence, ..self }),
+            vec![SubMsg::reply_never(set_trigger_msg)],
+            vec![],
+        ))
     }
 
     fn execute(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut messages = vec![];
         let mut events = vec![];
 
-        if self.cadence.is_due(env) {
-            let next = self.cadence.next(env);
+        if self.cadence.is_due(env)? {
+            let next = self.cadence.next(env)?;
 
             let (action, messages_from_action, events_from_action) =
                 self.action.execute(_deps, env)?;
@@ -51,7 +67,7 @@ impl Operation for Schedule {
 
             let set_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                    condition: next.into_condition(env),
+                    condition: next.into_condition(env)?,
                     threshold: Threshold::All,
                     to: env.contract.address.clone(),
                     msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
