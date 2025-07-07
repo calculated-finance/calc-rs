@@ -23,7 +23,7 @@ use cron::Schedule as CronSchedule;
 use std::str::FromStr;
 
 impl Operation for Schedule {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         if let Cadence::Cron(cron_str) = &self.cadence {
             if CronSchedule::from_str(cron_str).is_err() {
                 return Err(cosmwasm_std::StdError::generic_err(format!(
@@ -32,7 +32,7 @@ impl Operation for Schedule {
             }
         }
 
-        Ok(Action::Schedule(self))
+        Ok((Action::Schedule(self), vec![], vec![]))
     }
 
     fn execute(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -76,36 +76,21 @@ impl Operation for Schedule {
         }
     }
 
-    fn update(
-        self,
-        deps: Deps,
-        env: &Env,
-        update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Schedule(update) = update {
-            update.init(deps, env)?.execute(deps, env)
-        } else {
-            Err(cosmwasm_std::StdError::generic_err(
-                "Cannot update Crank action with a different action type",
-            ))
-        }
-    }
-
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::new())
     }
 
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &[String]) -> StdResult<Coins> {
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
         Ok(Coins::default())
     }
 
     fn withdraw(
-        &self,
+        self,
         _deps: Deps,
         _env: &Env,
-        _desired: &Coins,
-    ) -> StdResult<(Vec<SubMsg>, Coins)> {
-        Ok((vec![], Coins::default()))
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        Ok((Action::Schedule(self), vec![], vec![]))
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {

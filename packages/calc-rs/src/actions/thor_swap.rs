@@ -19,6 +19,15 @@ use cosmwasm_std::{
 };
 
 #[cw_serde]
+pub struct StreamingSwap {
+    starting_block: u64,
+    streaming_interval: u64,
+    streaming_quantity: u64,
+    swap_amount: Coin,
+    expected_receive_amount: Coin,
+}
+
+#[cw_serde]
 pub struct ThorSwap {
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
@@ -28,6 +37,7 @@ pub struct ThorSwap {
     pub max_streaming_quantity: Option<u64>,
     pub affiliate_code: Option<String>,
     pub affiliate_bps: Option<u64>,
+    pub previous_swap: Option<StreamingSwap>,
     pub on_complete: Option<Callback>,
     pub scheduler: Addr,
 }
@@ -37,7 +47,7 @@ fn is_secured_asset(denom: &str) -> bool {
 }
 
 impl Operation for ThorSwap {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         if !is_secured_asset(self.swap_amount.denom.as_str()) {
             return Err(StdError::generic_err(
                 "Swap denom must be RUNE or a secured asset",
@@ -86,7 +96,7 @@ impl Operation for ThorSwap {
             }
         }
 
-        Ok(Action::ThorSwap(self))
+        Ok((Action::ThorSwap(self), vec![], vec![]))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -159,44 +169,13 @@ impl Operation for ThorSwap {
                     minimum_swap_amount,
                     scalar,
                 } => {
-                    let swap_quote_request = SwapQuoteRequest {
-                        from_asset: self.swap_amount.denom.clone(),
-                        to_asset: self.minimum_receive_amount.denom.clone(),
-                        amount: self.swap_amount.amount,
-                        streaming_interval: Uint128::new(
-                            // Default to swapping every 3 blocks
-                            self.streaming_interval.unwrap_or(3) as u128,
-                        ),
-                        streaming_quantity: Uint128::new(
-                            // Setting this to 0 allows the chain to
-                            // calculate the maximum streaming quantity
-                            self.max_streaming_quantity.unwrap_or(0) as u128,
-                        ),
-                        destination: env.contract.address.to_string(),
-                        refund_address: env.contract.address.to_string(),
-                        affiliate: self
-                            .affiliate_code
-                            .clone()
-                            .map_or_else(std::vec::Vec::new, |c| vec![c]),
-                        affiliate_bps: self
-                            .affiliate_bps
-                            .map_or_else(std::vec::Vec::new, |b| vec![b]),
-                    };
-
-                    let quote = SwapQuote::get(deps.querier, &swap_quote_request).map_err(|e| {
-                        StdError::generic_err(format!(
-                            "Failed to get L1 swap quote with {:#?}: {e}",
-                            swap_quote_request
-                        ))
-                    })?;
-
-                    let expected_receive_amount = quote.expected_amount_out;
+                    let quote = self.get_quote(deps, env)?;
 
                     let base_price =
                         Decimal::from_ratio(base_receive_amount.amount, self.swap_amount.amount);
 
                     let current_price =
-                        Decimal::from_ratio(self.swap_amount.amount, expected_receive_amount);
+                        Decimal::from_ratio(self.swap_amount.amount, quote.expected_amount_out);
 
                     let price_delta = base_price.abs_diff(current_price) / base_price;
                     let scaled_price_delta = price_delta * scalar;
@@ -248,30 +227,19 @@ impl Operation for ThorSwap {
             return Ok((Action::ThorSwap(self), vec![], vec![]));
         }
 
-        let adjusted_swap_quote_request = SwapQuoteRequest {
-            from_asset: new_swap_amount.denom.clone(),
-            to_asset: new_minimum_receive_amount.denom.clone(),
-            amount: new_swap_amount.amount,
-            streaming_interval: Uint128::new(
-                // Default to swapping every 3 blocks
-                self.streaming_interval.unwrap_or(3) as u128,
-            ),
-            streaming_quantity: Uint128::new(max_streaming_quantity as u128),
-            destination: env.contract.address.to_string(),
-            refund_address: env.contract.address.to_string(),
-            affiliate: self
-                .affiliate_code
-                .clone()
-                .map_or_else(std::vec::Vec::new, |c| vec![c]),
-            affiliate_bps: self
-                .affiliate_bps
-                .map_or_else(std::vec::Vec::new, |b| vec![b]),
-        };
+        let adjusted_quote = ThorSwap {
+            swap_amount: new_swap_amount.clone(),
+            minimum_receive_amount: new_minimum_receive_amount.clone(),
+            max_streaming_quantity: Some(max_streaming_quantity),
+            ..self.clone()
+        }
+        .get_quote(deps, env)?;
 
-        let quote = SwapQuote::get(deps.querier, &adjusted_swap_quote_request)
-            .map_err(|e| StdError::generic_err(format!("Failed to get L1 swap quote: {e}")))?;
-
-        if quote.expected_amount_out < new_minimum_receive_amount.amount {
+        // Unlike for atomic swaps, we avoid fire and forget
+        // L1 swaps as failures are unable to be detected
+        if adjusted_quote.expected_amount_out < new_minimum_receive_amount.amount
+            || adjusted_quote.recommended_min_amount_in > new_swap_amount.amount
+        {
             return Ok((Action::ThorSwap(self), vec![], vec![]));
         }
 
@@ -280,7 +248,7 @@ impl Operation for ThorSwap {
 
         let swap_msg = SubMsg::reply_always(
             MsgDeposit {
-                memo: quote.memo,
+                memo: adjusted_quote.memo,
                 coins: vec![new_swap_amount.clone()],
                 signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
             }
@@ -302,7 +270,9 @@ impl Operation for ThorSwap {
         {
             let create_trigger_msg = SubMsg::reply_never(Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                    condition: Condition::BlocksCompleted(env.block.height + 1),
+                    condition: Condition::BlocksCompleted(
+                        env.block.height + adjusted_quote.streaming_swap_blocks,
+                    ),
                     threshold: Threshold::Any,
                     to: contract,
                     msg: msg,
@@ -316,39 +286,70 @@ impl Operation for ThorSwap {
         Ok((Action::ThorSwap(self), messages, events))
     }
 
-    fn update(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::ThorSwap(update) = update {
-            Ok((Action::ThorSwap(update), vec![], vec![]))
-        } else {
-            Err(StdError::generic_err(
-                "Cannot update swap action with non-swap action",
-            ))
-        }
-    }
-
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
     }
 
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &[String]) -> StdResult<Coins> {
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
         Ok(Coins::default())
     }
 
     fn withdraw(
-        &self,
+        self,
         _deps: Deps,
         _env: &Env,
-        _desired: &Coins,
-    ) -> StdResult<(Vec<SubMsg>, Coins)> {
-        Ok((vec![], Coins::default()))
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        Ok((Action::ThorSwap(self), vec![], vec![]))
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         Ok((Action::ThorSwap(self), vec![], vec![]))
+    }
+}
+
+impl ThorSwap {
+    pub fn get_quote(&self, deps: Deps, env: &Env) -> StdResult<SwapQuote> {
+        let swap_quote_request = SwapQuoteRequest {
+            from_asset: self.swap_amount.denom.clone(),
+            to_asset: self.minimum_receive_amount.denom.clone(),
+            amount: self.swap_amount.amount,
+            streaming_interval: Uint128::new(
+                // Default to swapping every 3 blocks
+                self.streaming_interval.unwrap_or(3) as u128,
+            ),
+            streaming_quantity: Uint128::new(
+                // Setting this to 0 allows the chain to
+                // calculate the maximum streaming quantity
+                self.max_streaming_quantity.unwrap_or(0) as u128,
+            ),
+            destination: env.contract.address.to_string(),
+            refund_address: env.contract.address.to_string(),
+            affiliate: self
+                .affiliate_code
+                .clone()
+                .map_or_else(std::vec::Vec::new, |c| vec![c]),
+            affiliate_bps: self
+                .affiliate_bps
+                .map_or_else(std::vec::Vec::new, |b| vec![b]),
+        };
+
+        let quote = SwapQuote::get(deps.querier, &swap_quote_request).map_err(|e| {
+            StdError::generic_err(format!(
+                "Failed to get L1 swap quote with {:#?}: {e}",
+                swap_quote_request
+            ))
+        })?;
+
+        Ok(quote)
+    }
+
+    pub fn get_expected_amount_out(&self, deps: Deps, env: &Env) -> StdResult<Coin> {
+        let swap_quote = self.get_quote(deps, env)?;
+
+        Ok(Coin::new(
+            swap_quote.expected_amount_out,
+            self.minimum_receive_amount.denom.clone(),
+        ))
     }
 }

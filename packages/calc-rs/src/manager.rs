@@ -2,7 +2,7 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Addr;
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 
-use crate::strategy::{New, Strategy};
+use crate::strategy::{Json, Strategy};
 
 #[cw_serde]
 pub struct ManagerConfig {
@@ -59,7 +59,7 @@ pub enum ManagerExecuteMsg {
         owner: Addr,
         label: String,
         affiliates: Vec<Affiliate>,
-        strategy: Strategy<New>,
+        strategy: Strategy<Json>,
     },
     ExecuteStrategy {
         contract_address: Addr,
@@ -70,7 +70,7 @@ pub enum ManagerExecuteMsg {
     },
     UpdateStrategy {
         contract_address: Addr,
-        update: Strategy<New>,
+        update: Strategy<Json>,
     },
 }
 

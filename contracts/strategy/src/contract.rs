@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashSet};
+use std::collections::HashSet;
 
 use calc_rs::{
     core::{Contract, ContractError, ContractResult},
@@ -9,8 +9,8 @@ use calc_rs::{
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    from_json, to_json_binary, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo,
-    Reply, Response, StdResult, SubMsg, SubMsgResult,
+    from_json, to_json_binary, BankMsg, Binary, Coins, Deps, DepsMut, Env, MessageInfo, Reply,
+    Response, StdResult, SubMsg, SubMsgResult,
 };
 
 use crate::state::{CONFIG, ESCROWED, STATE, STATS};
@@ -129,47 +129,38 @@ pub fn execute(
                 .prepare_to_execute(deps.as_ref(), &env)?
                 .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?
         }
-        StrategyExecuteMsg::Withdraw(amounts) => {
+        StrategyExecuteMsg::Withdraw(desired) => {
             if info.sender != config.strategy.owner {
                 return Err(ContractError::Unauthorized {});
             }
 
-            let mut remaining_desired = Coins::try_from(amounts.clone())?;
             let mut withdrawals = Coins::default();
 
-            for amount in amounts.iter() {
-                if config.escrowed.contains(&amount.denom) {
+            for denom in desired.iter() {
+                if config.escrowed.contains(denom) {
                     return Err(ContractError::generic_err(format!(
                         "Cannot withdraw escrowed denom: {}",
-                        amount.denom
+                        denom
                     )));
                 }
 
                 let balance = deps
                     .querier
-                    .query_balance(env.contract.address.clone(), amount.denom.clone())?;
+                    .query_balance(env.contract.address.clone(), denom.clone())?;
 
-                let withdrawal =
-                    Coin::new(min(balance.amount, amount.amount), amount.denom.clone());
-
-                withdrawals.add(withdrawal.clone())?;
-                remaining_desired.sub(withdrawal)?;
+                withdrawals.add(balance.clone())?;
             }
 
-            let withdrawal_msg = SubMsg::reply_never(BankMsg::Send {
+            let contract_withdrawal_msg = SubMsg::reply_never(BankMsg::Send {
                 to_address: config.strategy.owner.to_string(),
                 amount: withdrawals.to_vec(),
             });
 
-            if !remaining_desired.is_empty() {
-                Response::default().add_submessage(withdrawal_msg)
-            } else {
-                config
-                    .strategy
-                    .prepare_to_withdraw(deps.as_ref(), &env, &remaining_desired)?
-                    .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?
-                    .add_submessage(withdrawal_msg)
-            }
+            config
+                .strategy
+                .prepare_to_withdraw(deps.as_ref(), &env, &desired)?
+                .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?
+                .add_submessage(contract_withdrawal_msg)
         }
         StrategyExecuteMsg::UpdateStatus(status) => {
             if info.sender != config.manager {
@@ -220,12 +211,13 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
-    let strategy = CONFIG.load(deps.storage)?;
+    let config = CONFIG.load(deps.storage)?;
+
     match msg {
-        StrategyQueryMsg::Config {} => to_json_binary(&strategy),
+        StrategyQueryMsg::Config {} => to_json_binary(&config),
         StrategyQueryMsg::Statistics {} => to_json_binary(&STATS.load(deps.storage)?),
-        StrategyQueryMsg::Balances { include } => {
-            let mut balances = strategy.strategy.balances(deps, &env, &include)?;
+        StrategyQueryMsg::Balances(include) => {
+            let mut balances = config.strategy.balances(deps, &env, &include)?;
 
             for denom in include {
                 let balance = deps

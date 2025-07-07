@@ -25,7 +25,7 @@ pub struct FinSwap {
 }
 
 impl Operation for FinSwap {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
+    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
@@ -56,7 +56,7 @@ impl Operation for FinSwap {
             )));
         }
 
-        Ok(Action::FinSwap(self))
+        Ok((Action::FinSwap(self), vec![], vec![]))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -165,39 +165,38 @@ impl Operation for FinSwap {
         Ok((Action::FinSwap(self), messages, events))
     }
 
-    fn update(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::FinSwap(update) = update {
-            Ok((Action::FinSwap(update), vec![], vec![]))
-        } else {
-            Err(StdError::generic_err(
-                "Cannot update swap action with non-swap action",
-            ))
-        }
-    }
-
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
     }
 
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &[String]) -> StdResult<Coins> {
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
         Ok(Coins::default())
     }
 
     fn withdraw(
-        &self,
+        self,
         _deps: Deps,
         _env: &Env,
-        _desired: &Coins,
-    ) -> StdResult<(Vec<SubMsg>, Coins)> {
-        Ok((vec![], Coins::default()))
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        Ok((Action::FinSwap(self), vec![], vec![]))
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         Ok((Action::FinSwap(self), vec![], vec![]))
+    }
+}
+
+impl FinSwap {
+    pub fn get_expected_amount_out(&self, deps: Deps) -> StdResult<Coin> {
+        let simulation = deps.querier.query_wasm_smart::<SimulationResponse>(
+            self.pair_address.clone(),
+            &QueryMsg::Simulate(self.swap_amount.clone()),
+        )?;
+
+        Ok(Coin::new(
+            simulation.returned,
+            self.swap_amount.denom.clone(),
+        ))
     }
 }

@@ -1,19 +1,24 @@
 use std::{collections::HashSet, vec};
 
-use cosmwasm_std::{Coins, Deps, Env, Event, StdError, StdResult, SubMsg};
+use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
 
 use crate::actions::{action::Action, operation::Operation};
 
 impl Operation for Vec<Action> {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<Action> {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut actions = vec![];
+        let mut messages = vec![];
+        let mut events = vec![];
 
         for action in self.into_iter() {
-            let action = action.init(deps, env)?;
+            let (action, action_messages, action_events) = action.init(deps, env)?;
+
             actions.push(action);
+            messages.extend(action_messages);
+            events.extend(action_events);
         }
 
-        Ok(Action::Many(actions))
+        Ok((Action::Many(actions), messages, events))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -32,21 +37,6 @@ impl Operation for Vec<Action> {
         Ok((Action::Many(new_actions), all_messages, all_events))
     }
 
-    fn update(
-        self,
-        deps: Deps,
-        env: &Env,
-        update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Many(update) = update {
-            let new_behaviour = update.init(deps, env)?;
-            let (action, messages, events) = new_behaviour.execute(deps, env)?;
-            Ok((action, messages, events))
-        } else {
-            Err(StdError::generic_err("Invalid action type for update"))
-        }
-    }
-
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         let mut escrowed = HashSet::new();
 
@@ -58,7 +48,7 @@ impl Operation for Vec<Action> {
         Ok(escrowed)
     }
 
-    fn balances(&self, deps: Deps, env: &Env, denoms: &[String]) -> StdResult<Coins> {
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
         let mut balances = Coins::default();
 
         for action in self.iter() {
@@ -72,25 +62,25 @@ impl Operation for Vec<Action> {
         Ok(balances)
     }
 
-    fn withdraw(&self, deps: Deps, env: &Env, desired: &Coins) -> StdResult<(Vec<SubMsg>, Coins)> {
-        let mut remaining_desired = desired.clone();
-        let mut withdrawals = Coins::default();
+    fn withdraw(
+        self,
+        deps: Deps,
+        env: &Env,
+        desired: &HashSet<String>,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut actions = vec![];
         let mut messages = vec![];
+        let mut events = vec![];
 
         for action in self.clone().into_iter() {
-            let (action_messages, action_withdrawals) = action.withdraw(deps, env, desired)?;
-
-            for withdrawal in action_withdrawals {
-                remaining_desired.sub(withdrawal.clone())?;
-                withdrawals.add(withdrawal)?;
-            }
+            let (action, action_messages, action_events) = action.withdraw(deps, env, desired)?;
 
             actions.push(action);
             messages.extend(action_messages);
+            events.extend(action_events);
         }
 
-        Ok((messages, withdrawals))
+        Ok((Action::Many(actions), messages, events))
     }
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {

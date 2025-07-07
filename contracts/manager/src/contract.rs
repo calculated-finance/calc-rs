@@ -7,13 +7,13 @@ use calc_rs::{
         Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle,
         StrategyStatus,
     },
-    strategy::{StrategyExecuteMsg, StrategyInstantiateMsg},
+    strategy::StrategyExecuteMsg,
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
-    Order, Response, StdError, StdResult, WasmMsg,
+    to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order, Response, StdError,
+    StdResult,
 };
 use cw_storage_plus::Bound;
 
@@ -59,23 +59,6 @@ pub fn execute(
             strategy,
         } => {
             let config = CONFIG.load(deps.storage)?;
-            let strategy_id =
-                STRATEGY_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
-            let salt = to_json_binary(&(
-                owner.to_string().truncate(32),
-                strategy_id,
-                env.block.time.seconds(),
-            ))?;
-            let code_id = config.strategy_code_id;
-
-            let contract_address = deps.api.addr_humanize(&instantiate2_address(
-                deps.querier
-                    .query_wasm_code_info(code_id)?
-                    .checksum
-                    .as_slice(),
-                &deps.api.addr_canonicalize(env.contract.address.as_str())?,
-                &salt,
-            )?)?;
 
             let total_affiliate_bps = affiliates
                 .iter()
@@ -94,13 +77,19 @@ pub fn execute(
             ]
             .concat();
 
+            let strategy_with_affiliates = strategy
+                .to_new(config.strategy_code_id, env.contract.address, label.clone())
+                .with_affiliates(deps.as_ref(), &affiliates)?;
+
+            let id = STRATEGY_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
+
             strategy_store().save(
                 deps.storage,
-                contract_address.clone(),
+                strategy_with_affiliates.state.contract_address.clone(),
                 &StrategyHandle {
-                    id: strategy_id,
+                    id,
                     owner: owner.clone(),
-                    contract_address: contract_address.clone(),
+                    contract_address: strategy_with_affiliates.state.contract_address.clone(),
                     created_at: env.block.time.seconds(),
                     updated_at: env.block.time.seconds(),
                     label: label.clone(),
@@ -109,18 +98,7 @@ pub fn execute(
                 },
             )?;
 
-            let instantiate_strategy_msg = WasmMsg::Instantiate2 {
-                admin: Some(owner.to_string()),
-                code_id,
-                label,
-                msg: to_json_binary(&StrategyInstantiateMsg(
-                    strategy.with_affiliates(&affiliates),
-                ))?,
-                funds: info.funds,
-                salt,
-            };
-
-            messages.push(instantiate_strategy_msg.into());
+            messages.push(strategy_with_affiliates.instantiate_msg()?.into());
         }
         ManagerExecuteMsg::ExecuteStrategy { contract_address } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
@@ -155,9 +133,17 @@ pub fn execute(
                 return Err(ContractError::Unauthorized {});
             }
 
+            let config = CONFIG.load(deps.storage)?;
+
             let update_msg = Contract(contract_address.clone()).call(
                 to_json_binary(&StrategyExecuteMsg::Update(
-                    update.with_affiliates(&strategy.affiliates),
+                    update
+                        .to_new(
+                            config.strategy_code_id,
+                            env.contract.address,
+                            strategy.label.clone(),
+                        )
+                        .with_affiliates(deps.as_ref(), &strategy.affiliates)?,
                 ))?,
                 info.funds,
             );

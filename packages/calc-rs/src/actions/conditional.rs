@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use cosmwasm_std::{Coins, Deps, Env, Event, StdError, StdResult, SubMsg};
+use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
 
 use crate::{
     actions::{action::Action, operation::Operation},
@@ -8,8 +8,14 @@ use crate::{
 };
 
 impl Operation for (Conditions, Box<Action>) {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
-        Ok(Action::Conditional(self))
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        let (action, messages, events) = self.1.init(_deps, _env)?;
+
+        Ok((
+            Action::Conditional((self.0, Box::new(action))),
+            messages,
+            events,
+        ))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -25,34 +31,21 @@ impl Operation for (Conditions, Box<Action>) {
         }
     }
 
-    fn update(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Conditional(update) = update {
-            Ok((Action::Conditional(update), vec![], vec![]))
-        } else {
-            Err(StdError::generic_err("Invalid action type for update"))
-        }
+    fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        self.1.escrowed(deps, env)
     }
 
-    fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::new())
-    }
-
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &[String]) -> StdResult<Coins> {
-        Ok(Coins::default())
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+        self.1.balances(deps, env, denoms)
     }
 
     fn withdraw(
-        &self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &Coins,
-    ) -> StdResult<(Vec<SubMsg>, Coins)> {
-        Ok((vec![], Coins::default()))
+        self,
+        deps: Deps,
+        env: &Env,
+        desired: &HashSet<String>,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        self.1.withdraw(deps, env, desired)
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {

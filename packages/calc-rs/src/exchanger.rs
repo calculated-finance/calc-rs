@@ -25,7 +25,7 @@ pub enum ExchangerExecuteMsg {
     Swap {
         minimum_receive_amount: Coin,
         maximum_slippage_bps: u128,
-        routes: Vec<Route>,
+        route: Option<Route>,
         recipient: Option<Addr>,
         on_complete: Option<Callback>,
     },

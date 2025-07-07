@@ -1,9 +1,10 @@
-use std::{collections::HashSet, vec};
+use std::{collections::HashSet, hash::Hasher, vec};
 
+use ahash::AHasher;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    Addr, BankMsg, Coin, Coins, Decimal, Deps, DepsMut, Env, Event, Response, StdResult, Storage,
-    SubMsg, Uint128,
+    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env,
+    Event, Response, StdError, StdResult, Storage, SubMsg, Uint128, WasmMsg,
 };
 
 use crate::{
@@ -12,10 +13,9 @@ use crate::{
         distribution::{Destination, Distribution, Recipient},
         operation::Operation,
         schedule::Schedule,
-        swap::OptimalSwap,
+        swap::{OptimalSwap, SwapRoute},
         thor_swap::ThorSwap,
     },
-    exchanger::Route,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
 };
@@ -28,13 +28,13 @@ pub struct StrategyConfig {
 }
 
 #[cw_serde]
-pub struct StrategyInstantiateMsg(pub Strategy<WithAffiliates>);
+pub struct StrategyInstantiateMsg(pub Strategy<Instantiable>);
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
     Execute {},
-    Withdraw(Vec<Coin>),
-    Update(Strategy<WithAffiliates>),
+    Withdraw(HashSet<String>),
+    Update(Strategy<Instantiable>),
     UpdateStatus(StrategyStatus),
     Clear {},
 }
@@ -47,7 +47,7 @@ pub enum StrategyQueryMsg {
     #[returns(Statistics)]
     Statistics {},
     #[returns(Vec<Coin>)]
-    Balances { include: Vec<String> },
+    Balances(HashSet<String>),
 }
 
 #[cw_serde]
@@ -66,47 +66,108 @@ impl<S> Strategy<S> {
         self.action.escrowed(deps, env)
     }
 
-    pub fn balances(&self, deps: Deps, env: &Env, denoms: &[String]) -> StdResult<Coins> {
+    pub fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
         self.action.balances(deps, env, denoms)
     }
 }
 
 #[cw_serde]
-pub struct New;
+pub struct Json;
 
 #[cw_serde]
-pub struct WithAffiliates;
+pub struct New {
+    code_id: u64,
+    creator: Addr,
+    label: String,
+}
 
 #[cw_serde]
-pub struct Idle;
+pub struct Instantiable {
+    pub contract_address: Addr,
+    salt: Binary,
+    code_id: u64,
+    label: String,
+}
+
+#[cw_serde]
+pub struct Idle {
+    pub contract_address: Addr,
+}
 
 #[cw_serde]
 pub struct Executable {
+    pub contract_address: Addr,
     messages: Vec<SubMsg>,
     events: Vec<Event>,
 }
 
-impl Strategy<New> {
-    pub fn new(owner: Addr, action: Action) -> Self {
-        Self {
-            owner,
-            action,
-            state: New,
-        }
-    }
-
-    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> Strategy<WithAffiliates> {
-        let action_with_affiliates = Self::add_affiliates(self.action, affiliates);
-
+impl Strategy<Json> {
+    pub fn to_new(self, code_id: u64, creator: Addr, label: String) -> Strategy<New> {
         Strategy {
             owner: self.owner,
-            action: action_with_affiliates,
-            state: WithAffiliates,
+            action: self.action,
+            state: New {
+                code_id,
+                creator,
+                label,
+            },
         }
     }
+}
 
-    fn add_affiliates(action: Action, affiliates: &Vec<Affiliate>) -> Action {
-        match action {
+impl Strategy<New> {
+    // pub fn new(code_id: u64, creator: Addr, owner: Addr, action: Action) -> Self {
+    //     Self {
+    //         owner,
+    //         action,
+    //         state: New { code_id, creator, label },
+    //     }
+    // }
+
+    pub fn with_affiliates(
+        self,
+        deps: Deps,
+        affiliates: &Vec<Affiliate>,
+    ) -> StdResult<Strategy<Instantiable>> {
+        let action_with_affiliates = Self::add_affiliates(deps, self.action.clone(), affiliates)?;
+        let salt_data = to_json_binary(&(self.owner.to_string(), action_with_affiliates.clone()))?;
+
+        let mut hash = AHasher::default();
+        hash.write(salt_data.as_slice());
+        let salt = hash.finish().to_le_bytes();
+
+        let contract_address = deps.api.addr_humanize(
+            &instantiate2_address(
+                deps.querier
+                    .query_wasm_code_info(self.state.code_id)?
+                    .checksum
+                    .as_slice(),
+                &deps.api.addr_canonicalize(self.state.creator.as_str())?,
+                &salt,
+            )
+            .map_err(|e| {
+                StdError::generic_err(format!("Failed to instantiate contract address: {}", e))
+            })?,
+        )?;
+
+        Ok(Strategy {
+            owner: self.owner,
+            action: action_with_affiliates,
+            state: Instantiable {
+                code_id: self.state.code_id,
+                salt: Binary::from(salt),
+                label: self.state.label,
+                contract_address,
+            },
+        })
+    }
+
+    fn add_affiliates(
+        deps: Deps,
+        action: Action,
+        affiliates: &Vec<Affiliate>,
+    ) -> StdResult<Action> {
+        Ok(match action {
             Action::Distribute(Distribution {
                 denoms,
                 mutable_destinations,
@@ -150,64 +211,78 @@ impl Strategy<New> {
                 ..thor_swap
             }),
             Action::OptimalSwap(swap) => {
-                if let Some(Route::Thorchain {
-                    streaming_interval,
-                    max_streaming_quantity,
-                    ..
-                }) = swap.routes
-                {
-                    Action::OptimalSwap(OptimalSwap {
-                        routes: Some(Route::Thorchain {
-                            streaming_interval,
-                            max_streaming_quantity,
+                let routes_with_affiliates = swap
+                    .routes
+                    .into_iter()
+                    .map(|route| match route {
+                        SwapRoute::Thorchain(route) => SwapRoute::Thorchain(ThorSwap {
                             affiliate_code: Some("rj".to_string()),
                             affiliate_bps: Some(10),
+                            ..route
                         }),
-                        ..swap
+                        _ => route,
                     })
-                } else {
-                    Action::OptimalSwap(swap)
-                }
+                    .collect::<Vec<_>>();
+
+                Action::OptimalSwap(OptimalSwap {
+                    routes: routes_with_affiliates,
+                    ..swap
+                })
             }
             Action::Schedule(schedule) => Action::Schedule(Schedule {
-                action: Box::new(Self::add_affiliates(*schedule.action, affiliates)),
+                action: Box::new(Self::add_affiliates(deps, *schedule.action, affiliates)?),
                 ..schedule
             }),
             Action::Conditional((conditions, action)) => Action::Conditional((
                 conditions,
-                Box::new(Self::add_affiliates(*action, affiliates)),
+                Box::new(Self::add_affiliates(deps, *action, affiliates)?),
             )),
             Action::Many(actions) => {
                 let mut initialised_actions = vec![];
 
                 for action in actions {
-                    initialised_actions.push(Self::add_affiliates(action, affiliates));
+                    initialised_actions.push(Self::add_affiliates(deps, action, affiliates)?);
                 }
 
                 Action::Many(initialised_actions)
             }
             _ => action.clone(),
-        }
+        })
     }
 }
 
-impl Strategy<WithAffiliates> {
+impl Strategy<Instantiable> {
+    pub fn instantiate_msg(&self) -> StdResult<WasmMsg> {
+        Ok(WasmMsg::Instantiate2 {
+            admin: Some(self.owner.to_string()),
+            code_id: self.state.code_id,
+            label: self.state.label.clone(),
+            salt: self.state.salt.clone(),
+            msg: to_json_binary(&StrategyInstantiateMsg(self.clone()))?,
+            funds: vec![],
+        })
+    }
+
     pub fn init<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
     where
         F: FnOnce(&mut dyn Storage, Strategy<Idle>) -> StdResult<()>,
     {
-        let action = self.action.init(deps.as_ref(), env)?;
+        let (action, messages, events) = self.action.init(deps.as_ref(), env)?;
 
         save(
             deps.storage,
             Strategy {
                 owner: self.owner,
                 action,
-                state: Idle,
+                state: Idle {
+                    contract_address: self.state.contract_address.clone(),
+                },
             },
         )?;
 
-        Ok(Response::default()) // TODO: Add init messages?
+        Ok(Response::default()
+            .add_submessages(messages)
+            .add_events(events))
     }
 }
 
@@ -218,7 +293,11 @@ impl Strategy<Idle> {
         Ok(Strategy {
             owner: self.owner,
             action,
-            state: Executable { messages, events },
+            state: Executable {
+                contract_address: self.state.contract_address.clone(),
+                messages,
+                events,
+            },
         })
     }
 
@@ -226,23 +305,17 @@ impl Strategy<Idle> {
         self,
         deps: Deps,
         env: &Env,
-        desired: &Coins,
+        desired: &HashSet<String>,
     ) -> StdResult<Strategy<Executable>> {
-        let (mut messages, withdrawals) = self.action.withdraw(deps, env, desired)?;
-
-        // Add message to send withdrawn funds to the
-        // owner once withdrawal messages have executed
-        messages.push(SubMsg::reply_never(BankMsg::Send {
-            to_address: self.owner.to_string(),
-            amount: withdrawals.to_vec(),
-        }));
+        let (action, messages, events) = self.action.withdraw(deps, env, desired)?;
 
         Ok(Strategy {
             owner: self.owner,
-            action: self.action,
+            action,
             state: Executable {
+                contract_address: self.state.contract_address.clone(),
                 messages,
-                events: vec![],
+                events,
             },
         })
     }
@@ -253,7 +326,11 @@ impl Strategy<Idle> {
         Ok(Strategy {
             owner: self.owner,
             action,
-            state: Executable { messages, events },
+            state: Executable {
+                contract_address: self.state.contract_address.clone(),
+                messages,
+                events,
+            },
         })
     }
 }
@@ -268,7 +345,9 @@ impl Strategy<Executable> {
             Strategy {
                 owner: self.owner,
                 action: self.action,
-                state: Idle,
+                state: Idle {
+                    contract_address: self.state.contract_address.clone(),
+                },
             },
         )?;
 
