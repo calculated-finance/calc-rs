@@ -7,6 +7,7 @@ use crate::{
     actions::{action::Action, operation::Operation},
     cadence::Cadence,
     conditions::Threshold,
+    constants::LOG_ERRORS_REPLY_ID,
     core::Contract,
     manager::ManagerExecuteMsg,
     scheduler::{CreateTrigger, SchedulerExecuteMsg},
@@ -36,7 +37,7 @@ impl Operation for Schedule {
 
         Ok((
             Action::Schedule(self),
-            vec![SubMsg::reply_never(set_trigger_msg)],
+            vec![SubMsg::reply_always(set_trigger_msg, LOG_ERRORS_REPLY_ID)],
             vec![],
         ))
     }
@@ -66,7 +67,7 @@ impl Operation for Schedule {
                 self.execution_rebate.clone(),
             );
 
-            messages.push(SubMsg::reply_never(set_trigger_msg));
+            messages.push(SubMsg::reply_always(set_trigger_msg, LOG_ERRORS_REPLY_ID));
 
             Ok((
                 Action::Schedule(Schedule {

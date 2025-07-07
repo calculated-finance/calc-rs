@@ -5,6 +5,7 @@ use cosmwasm_std::{to_json_binary, BankMsg, Coins, Deps, Env, Event, StdError, S
 
 use crate::{
     actions::{action::Action, operation::Operation},
+    constants::UPDATE_STATS_REPLY_ID,
     statistics::Statistics,
 };
 
@@ -46,7 +47,7 @@ impl Operation for FundStrategy {
                 to_address: self.contract_address.clone(),
                 amount: funds.to_vec(),
             },
-            0,
+            UPDATE_STATS_REPLY_ID,
         )
         .with_payload(to_json_binary(&Statistics {
             swapped: funds.to_vec(),
