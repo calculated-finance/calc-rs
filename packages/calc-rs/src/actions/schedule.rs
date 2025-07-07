@@ -1,11 +1,12 @@
-use std::{collections::HashSet, iter::once};
+use std::collections::HashSet;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult, SubMsg};
 
 use crate::{
     actions::{action::Action, operation::Operation},
-    conditions::{Cadence, Condition, Threshold},
+    cadence::Cadence,
+    conditions::Threshold,
     core::Contract,
     manager::ManagerExecuteMsg,
     scheduler::{CreateTrigger, SchedulerExecuteMsg},
@@ -16,50 +17,57 @@ pub struct Schedule {
     pub scheduler: Addr,
     pub cadence: Cadence,
     pub execution_rebate: Vec<Coin>,
+    pub action: Box<Action>,
 }
 
-use cron::Schedule as CronSchedule;
-use std::str::FromStr;
-
 impl Operation for Schedule {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
-        if let Cadence::Cron(cron_str) = &self.cadence {
-            if CronSchedule::from_str(cron_str).is_err() {
-                return Err(cosmwasm_std::StdError::generic_err(format!(
-                    "Invalid cron string: {}",
-                    cron_str
-                )));
-            }
-        }
+    fn init(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        let set_trigger_msg = Contract(self.scheduler.clone()).call(
+            to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
+                condition: self.cadence.into_condition(env)?,
+                threshold: Threshold::All,
+                to: env.contract.address.clone(),
+                msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                    contract_address: env.contract.address.clone(),
+                })?,
+            }]))?,
+            self.execution_rebate.clone(),
+        );
 
-        Ok(Action::ExecuteStrategy(self))
-    }
+        let cadence = match &self.cadence {
+            Cadence::Cron {
+                expr,
+                previous: None,
+            } => Cadence::Cron {
+                expr: expr.clone(),
+                previous: Some(env.block.time),
+            },
+            _ => self.cadence.clone(),
+        };
 
-    fn condition(&self, env: &Env) -> Option<Condition> {
-        Some(Condition::Compound {
-            conditions: self
-                .execution_rebate
-                .iter()
-                .map(|rebate| Condition::BalanceAvailable {
-                    address: env.contract.address.clone(),
-                    amount: rebate.clone(),
-                })
-                .chain(once(self.cadence.into_condition(env)))
-                .collect(),
-            operator: Threshold::All,
-        })
+        Ok((
+            Action::Schedule(Schedule { cadence, ..self }),
+            vec![SubMsg::reply_never(set_trigger_msg)],
+            vec![],
+        ))
     }
 
     fn execute(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut messages = vec![];
-        let events = vec![];
+        let mut events = vec![];
 
-        if self.cadence.is_due(env) {
-            let next = self.cadence.next(env);
+        if self.cadence.is_due(env)? {
+            let next = self.cadence.next(env)?;
+
+            let (action, messages_from_action, events_from_action) =
+                self.action.execute(_deps, env)?;
+
+            messages.extend(messages_from_action);
+            events.extend(events_from_action);
 
             let set_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                    conditions: vec![next.into_condition(env)],
+                    condition: next.into_condition(env)?,
                     threshold: Threshold::All,
                     to: env.contract.address.clone(),
                     msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
@@ -72,32 +80,16 @@ impl Operation for Schedule {
             messages.push(SubMsg::reply_never(set_trigger_msg));
 
             Ok((
-                Action::ExecuteStrategy(Schedule {
+                Action::Schedule(Schedule {
                     cadence: next,
+                    action: Box::new(action),
                     ..self
                 }),
                 messages,
                 events,
             ))
         } else {
-            Err(cosmwasm_std::StdError::generic_err(
-                "Cadence is not due for execution",
-            ))
-        }
-    }
-
-    fn update(
-        self,
-        deps: Deps,
-        env: &Env,
-        update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::ExecuteStrategy(update) = update {
-            update.execute(deps, env)
-        } else {
-            Err(cosmwasm_std::StdError::generic_err(
-                "Cannot update Crank action with a different action type",
-            ))
+            Ok((Action::Schedule(self), messages, events))
         }
     }
 
@@ -105,20 +97,20 @@ impl Operation for Schedule {
         Ok(HashSet::new())
     }
 
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &[String]) -> StdResult<Coins> {
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
         Ok(Coins::default())
     }
 
     fn withdraw(
-        &self,
+        self,
         _deps: Deps,
         _env: &Env,
-        _desired: &Coins,
-    ) -> StdResult<(Vec<SubMsg>, Coins)> {
-        Ok((vec![], Coins::default()))
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        Ok((Action::Schedule(self), vec![], vec![]))
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::ExecuteStrategy(self), vec![], vec![]))
+        Ok((Action::Schedule(self), vec![], vec![]))
     }
 }

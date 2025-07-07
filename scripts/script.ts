@@ -14,6 +14,7 @@ import protobuf from "protobufjs";
 import { setTimeout } from "timers/promises";
 import {
   ManagerExecuteMsg,
+  Route,
   SchedulerQueryMsg,
   StrategyExecuteMsg,
 } from "../calc";
@@ -397,107 +398,107 @@ const executeDeposit = async (memo: string, funds: any[]) => {
   return response;
 };
 
-const createStrategy = async () => {
-  const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWalletWithMnemonic());
+// const createStrategy = async () => {
+//   const cosmWasmClient = await getSigner();
+//   const account = await getAccount(await getWalletWithMnemonic());
 
-  const response = await cosmWasmClient.execute(
-    account,
-    MANAGER_ADDRESS,
-    {
-      instantiate_strategy: {
-        action: {
-          exhibit: {
-            threshold: "any",
-            actions: [
-              {
-                exhibit: {
-                  threshold: "all",
-                  actions: [
-                    {
-                      crank: {
-                        cadence: {
-                          blocks: {
-                            interval: 10,
-                            previous: 0,
-                          },
-                        },
-                        execution_rebate: [],
-                        scheduler: SCHEDULER_ADDRESS,
-                      },
-                    },
-                    {
-                      perform: {
-                        adjustment: "fixed",
-                        exchange_contract: EXCHANGE_ADDRESS,
-                        maximum_slippage_bps: 200,
-                        minimum_receive_amount: {
-                          denom: "eth-usdt",
-                          amount: "1",
-                        },
-                        swap_amount: {
-                          denom: "rune",
-                          amount: "20000000",
-                        },
-                      },
-                    },
-                  ],
-                },
-              },
-              {
-                exhibit: {
-                  threshold: "all",
-                  actions: [
-                    {
-                      crank: {
-                        cadence: {
-                          blocks: {
-                            interval: 10,
-                            previous: 5,
-                          },
-                        },
-                        execution_rebate: [],
-                        scheduler: SCHEDULER_ADDRESS,
-                      },
-                    },
-                    {
-                      perform: {
-                        adjustment: "fixed",
-                        exchange_contract: EXCHANGE_ADDRESS,
-                        maximum_slippage_bps: 200,
-                        minimum_receive_amount: {
-                          denom: "rune",
-                          amount: "1",
-                        },
-                        swap_amount: {
-                          denom: "eth-usdt",
-                          amount: "20000000",
-                        },
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-        affiliates: [],
-        label: "Test",
-        owner: account,
-      },
-    } as ManagerExecuteMsg,
-    "auto",
-    "Create Strategy",
-    [
-      // {
-      //   denom: "rune",
-      //   amount: "200000000",
-      // },
-    ],
-  );
+//   const response = await cosmWasmClient.execute(
+//     account,
+//     MANAGER_ADDRESS,
+//     {
+//       instantiate_strategy: {
+//         action: {
+//           exhibit: {
+//             threshold: "any",
+//             actions: [
+//               {
+//                 exhibit: {
+//                   threshold: "all",
+//                   actions: [
+//                     {
+//                       crank: {
+//                         cadence: {
+//                           blocks: {
+//                             interval: 10,
+//                             previous: 0,
+//                           },
+//                         },
+//                         execution_rebate: [],
+//                         scheduler: SCHEDULER_ADDRESS,
+//                       },
+//                     },
+//                     {
+//                       perform: {
+//                         adjustment: "fixed",
+//                         exchange_contract: EXCHANGE_ADDRESS,
+//                         maximum_slippage_bps: 200,
+//                         minimum_receive_amount: {
+//                           denom: "eth-usdt",
+//                           amount: "1",
+//                         },
+//                         swap_amount: {
+//                           denom: "rune",
+//                           amount: "20000000",
+//                         },
+//                       },
+//                     },
+//                   ],
+//                 },
+//               },
+//               {
+//                 exhibit: {
+//                   threshold: "all",
+//                   actions: [
+//                     {
+//                       crank: {
+//                         cadence: {
+//                           blocks: {
+//                             interval: 10,
+//                             previous: 5,
+//                           },
+//                         },
+//                         execution_rebate: [],
+//                         scheduler: SCHEDULER_ADDRESS,
+//                       },
+//                     },
+//                     {
+//                       perform: {
+//                         adjustment: "fixed",
+//                         exchange_contract: EXCHANGE_ADDRESS,
+//                         maximum_slippage_bps: 200,
+//                         minimum_receive_amount: {
+//                           denom: "rune",
+//                           amount: "1",
+//                         },
+//                         swap_amount: {
+//                           denom: "eth-usdt",
+//                           amount: "20000000",
+//                         },
+//                       },
+//                     },
+//                   ],
+//                 },
+//               },
+//             ],
+//           },
+//         },
+//         affiliates: [],
+//         label: "Test",
+//         owner: account,
+//       },
+//     } as ManagerExecuteMsg,
+//     "auto",
+//     "Create Strategy",
+//     [
+//       // {
+//       //   denom: "rune",
+//       //   amount: "200000000",
+//       // },
+//     ],
+//   );
 
-  return response;
-};
+//   return response;
+// };
 
 const getStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
@@ -929,7 +930,7 @@ const PAIR_ADDRESS =
   "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";
 
 // uploadContractSuite();
-fetchBalances(STRATEGY_ADDRESS).then(console.log);
+// fetchBalances(STRATEGY_ADDRESS).then(console.log);
 // getMyBalances().then(console.log);
 // bankSend(
 //   {
@@ -1043,7 +1044,7 @@ fetchBalances(STRATEGY_ADDRESS).then(console.log);
 // executeTriggersWith(getTimeTriggers);
 // run();
 // getBlockTriggers().then(console.log);
-getAllTriggers().then((r) => console.log(JSON.stringify(r, null, 2)));
+// getAllTriggers().then((r) => console.log(JSON.stringify(r, null, 2)));
 // getOwnedTriggers(STRATEGY_ADDRESS).then(async (r) => {
 //   console.log(JSON.stringify(r, null, 2));
 //   console.log(await getBlock());
@@ -1077,12 +1078,15 @@ getAllTriggers().then((r) => console.log(JSON.stringify(r, null, 2)));
 // canSwap();
 const swapAmount = {
   denom: "gaia-atom",
-  amount: "10000000",
+  amount: "10000000000000",
 };
 const targetDenom = "rune";
-// getExpectedReceiveAmount(swapAmount, targetDenom, {
-//   fin: { address: PAIR_ADDRESS },
-// }).then(console.log);
+getExpectedReceiveAmount(swapAmount, targetDenom, {
+  thorchain: {
+    streaming_interval: 5,
+    max_streaming_quantity: 0,
+  },
+} as Route).then(console.log);
 // getSwapQuote({
 //   swapAmount,
 //   targetDenom,

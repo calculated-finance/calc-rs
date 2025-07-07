@@ -1,22 +1,18 @@
-use std::{
-    cmp::{max, min},
-    collections::HashSet,
-    u8, vec,
-};
+use std::{collections::HashSet, vec};
 
 use crate::{
-    actions::{action::Action, operation::Operation},
-    core::Contract,
-    exchanger::{ExchangerExecuteMsg, ExchangerQueryMsg, ExpectedReceiveAmount, Route},
-    statistics::Statistics,
+    actions::{
+        action::Action,
+        fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
+        operation::Operation,
+        thor_swap::{
+            get_expected_amount_out as get_expected_amount_out_thorchain, StreamingSwap, ThorSwap,
+        },
+    },
+    core::Callback,
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
-};
-use rujira_rs::fin::{ConfigResponse, QueryMsg};
-
-use crate::conditions::Condition;
+use cosmwasm_std::{Addr, Coin, Coins, Decimal, Deps, Env, Event, StdResult, SubMsg};
 
 #[cw_serde]
 pub enum SwapAmountAdjustment {
@@ -28,218 +24,205 @@ pub enum SwapAmountAdjustment {
     },
 }
 
+pub trait Exchange {
+    fn get_expected_amount_out(&self, deps: Deps, env: Env) -> StdResult<Coin>;
+}
+
 #[cw_serde]
-pub struct Swap {
-    pub exchange_contract: Addr,
+pub enum SwapRoute {
+    Fin(Addr),
+    Thorchain {
+        streaming_interval: Option<u64>,
+        max_streaming_quantity: Option<u64>,
+        affiliate_code: Option<String>,
+        affiliate_bps: Option<u64>,
+        previous_swap: Option<StreamingSwap>,
+        on_complete: Option<Callback>,
+        scheduler: Addr,
+    },
+}
+
+impl From<Action> for SwapRoute {
+    fn from(action: Action) -> Self {
+        match action {
+            Action::FinSwap(fin_swap) => SwapRoute::Fin(fin_swap.pair_address),
+            Action::ThorSwap(thor_swap) => SwapRoute::Thorchain {
+                streaming_interval: thor_swap.streaming_interval,
+                max_streaming_quantity: thor_swap.max_streaming_quantity,
+                affiliate_code: thor_swap.affiliate_code,
+                affiliate_bps: thor_swap.affiliate_bps,
+                previous_swap: thor_swap.previous_swap,
+                on_complete: thor_swap.on_complete,
+                scheduler: thor_swap.scheduler,
+            },
+            _ => panic!("Invalid action type for SwapRoute"),
+        }
+    }
+}
+
+impl SwapRoute {
+    pub fn to_action(&self, swap: OptimalSwap) -> Action {
+        match self {
+            SwapRoute::Fin(address) => Action::FinSwap(FinSwap {
+                pair_address: address.clone(),
+                swap_amount: swap.swap_amount,
+                minimum_receive_amount: swap.minimum_receive_amount,
+                maximum_slippage_bps: swap.maximum_slippage_bps,
+                adjustment: swap.adjustment,
+            }),
+            SwapRoute::Thorchain {
+                streaming_interval,
+                max_streaming_quantity,
+                affiliate_code,
+                affiliate_bps,
+                previous_swap,
+                on_complete,
+                scheduler,
+            } => Action::ThorSwap(ThorSwap {
+                swap_amount: swap.swap_amount,
+                minimum_receive_amount: swap.minimum_receive_amount,
+                maximum_slippage_bps: swap.maximum_slippage_bps,
+                adjustment: swap.adjustment,
+                streaming_interval: streaming_interval.clone(),
+                max_streaming_quantity: max_streaming_quantity.clone(),
+                affiliate_code: affiliate_code.clone(),
+                affiliate_bps: affiliate_bps.clone(),
+                previous_swap: previous_swap.clone(),
+                on_complete: on_complete.clone(),
+                scheduler: scheduler.clone(),
+            }),
+        }
+    }
+
+    pub fn get_expected_amount_out(
+        &self,
+        deps: Deps,
+        env: &Env,
+        swap: OptimalSwap,
+    ) -> StdResult<Coin> {
+        match self {
+            SwapRoute::Fin(address) => get_expected_amount_out_fin(
+                deps,
+                &FinSwap {
+                    pair_address: address.clone(),
+                    swap_amount: swap.swap_amount,
+                    minimum_receive_amount: swap.minimum_receive_amount,
+                    maximum_slippage_bps: swap.maximum_slippage_bps,
+                    adjustment: swap.adjustment,
+                },
+            ),
+            SwapRoute::Thorchain {
+                streaming_interval,
+                max_streaming_quantity,
+                affiliate_code,
+                affiliate_bps,
+                previous_swap,
+                on_complete,
+                scheduler,
+            } => get_expected_amount_out_thorchain(
+                deps,
+                env,
+                &ThorSwap {
+                    swap_amount: swap.swap_amount,
+                    minimum_receive_amount: swap.minimum_receive_amount,
+                    maximum_slippage_bps: swap.maximum_slippage_bps,
+                    adjustment: swap.adjustment,
+                    streaming_interval: streaming_interval.clone(),
+                    max_streaming_quantity: max_streaming_quantity.clone(),
+                    affiliate_code: affiliate_code.clone(),
+                    affiliate_bps: affiliate_bps.clone(),
+                    previous_swap: previous_swap.clone(),
+                    on_complete: on_complete.clone(),
+                    scheduler: scheduler.clone(),
+                },
+            ),
+        }
+    }
+}
+
+#[cw_serde]
+pub struct OptimalSwap {
     pub swap_amount: Coin,
     pub minimum_receive_amount: Coin,
     pub maximum_slippage_bps: u128,
     pub adjustment: SwapAmountAdjustment,
-    pub route: Option<Route>,
+    pub routes: Vec<SwapRoute>,
 }
 
-impl Operation for Swap {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<Action> {
-        if self.swap_amount.amount.is_zero() {
-            return Err(StdError::generic_err("Swap amount cannot be zero"));
+impl Operation for OptimalSwap {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        let mut messages = vec![];
+        let mut events = vec![];
+
+        for route in self.routes.iter() {
+            let (_, init_messages, init_events) = route.to_action(self.clone()).init(deps, env)?;
+
+            messages.extend(init_messages);
+            events.extend(init_events);
         }
 
-        if self.maximum_slippage_bps > 10_000 {
-            return Err(StdError::generic_err(
-                "Maximum slippage basis points cannot exceed 10,000",
-            ));
-        }
-
-        if let Some(route) = self.route.clone() {
-            match route {
-                Route::FinMarket { address } => {
-                    let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
-                        address.clone(),
-                        &QueryMsg::Config {},
-                    )?;
-
-                    let denoms = [pair.denoms.base(), pair.denoms.quote()];
-
-                    if !denoms.contains(&self.swap_amount.denom.as_str()) {
-                        return Err(StdError::generic_err(format!(
-                            "Pair at {} does not support swapping from {}",
-                            address, self.swap_amount.denom
-                        )));
-                    }
-
-                    if !denoms.contains(&self.minimum_receive_amount.denom.as_str()) {
-                        return Err(StdError::generic_err(format!(
-                            "Pair at {} does not support swapping into {}",
-                            address, self.minimum_receive_amount.denom
-                        )));
-                    }
-                }
-                Route::Thorchain {} => {}
-            }
-        }
-
-        Ok(Action::Swap(self))
-    }
-
-    fn condition(&self, env: &Env) -> Option<Condition> {
-        Some(Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
-            amount: Coin::new(1_000u128, self.swap_amount.denom.clone()),
-        })
+        Ok((Action::OptimalSwap(self), messages, events))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut messages: Vec<SubMsg> = vec![];
-        let events: Vec<Event> = vec![];
+        let best_route_index = self
+            .routes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                r.get_expected_amount_out(deps, env, self.clone())
+                    .ok()
+                    .map(|amount| (i, amount))
+            })
+            .max_by(|a, b| a.1.amount.cmp(&b.1.amount))
+            .map(|(i, _)| i);
 
-        let (new_swap_amount, new_minimum_receive_amount) = match self.adjustment.clone() {
-            SwapAmountAdjustment::Fixed => {
-                let swap_balance = deps
-                    .querier
-                    .query_balance(env.contract.address.clone(), self.swap_amount.denom.clone())?;
+        if let Some(best_route_index) = best_route_index {
+            let best_route = &self.routes[best_route_index];
+            let (action, swap_messages, swap_events) =
+                best_route.to_action(self.clone()).execute(deps, env)?;
 
-                let new_swap_amount = Coin::new(
-                    min(swap_balance.amount, self.swap_amount.amount),
-                    self.swap_amount.denom.clone(),
-                );
+            let mut updated_routes = self.routes.clone();
+            updated_routes[best_route_index] = action.into();
 
-                let new_minimum_receive_amount = Coin::new(
-                    self.minimum_receive_amount
-                        .amount
-                        .mul_floor(Decimal::from_ratio(
-                            new_swap_amount.amount,
-                            self.swap_amount.amount,
-                        )),
-                    self.minimum_receive_amount.denom.clone(),
-                );
-
-                (new_swap_amount, new_minimum_receive_amount)
-            }
-            SwapAmountAdjustment::LinearScalar {
-                base_receive_amount,
-                minimum_swap_amount,
-                scalar,
-            } => {
-                let expected_receive_amount =
-                    deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
-                        self.exchange_contract.clone(),
-                        &ExchangerQueryMsg::ExpectedReceiveAmount {
-                            swap_amount: self.swap_amount.clone(),
-                            target_denom: self.swap_amount.denom.clone(),
-                            route: None,
-                        },
-                    )?;
-
-                let base_price =
-                    Decimal::from_ratio(base_receive_amount.amount, self.swap_amount.amount);
-
-                let current_price = Decimal::from_ratio(
-                    self.swap_amount.amount,
-                    expected_receive_amount.receive_amount.amount,
-                );
-
-                let price_delta = base_price.abs_diff(current_price) / base_price;
-                let scaled_price_delta = price_delta * scalar;
-
-                let scaled_swap_amount = if current_price < base_price {
-                    self.swap_amount
-                        .amount
-                        .mul_floor(Decimal::one() + scaled_price_delta)
-                } else {
-                    self.swap_amount
-                        .amount
-                        .mul_floor(Decimal::one() - scaled_price_delta)
-                };
-
-                if scaled_swap_amount.is_zero() {
-                    return Ok((Action::Swap(self), messages, events));
-                }
-
-                let new_swap_amount = Coin::new(
-                    max(
-                        scaled_swap_amount,
-                        minimum_swap_amount
-                            .clone()
-                            .unwrap_or(Coin::new(0u128, self.swap_amount.denom.clone()))
-                            .amount,
-                    ),
-                    self.swap_amount.denom.clone(),
-                );
-
-                let new_minimum_receive_amount = Coin::new(
-                    self.minimum_receive_amount
-                        .amount
-                        .mul_ceil(Decimal::from_ratio(
-                            new_swap_amount.amount,
-                            self.swap_amount.amount,
-                        )),
-                    self.minimum_receive_amount.denom.clone(),
-                );
-
-                (new_swap_amount, new_minimum_receive_amount)
-            }
+            return Ok((
+                Action::OptimalSwap(OptimalSwap {
+                    routes: updated_routes,
+                    ..self
+                }),
+                swap_messages,
+                swap_events,
+            ));
         };
 
-        if new_swap_amount.amount.is_zero() {
-            return Ok((Action::Swap(self), messages, events));
-        }
-
-        let swap_msg = SubMsg::reply_always(
-            Contract(self.exchange_contract.clone()).call(
-                to_json_binary(&ExchangerExecuteMsg::Swap {
-                    minimum_receive_amount: new_minimum_receive_amount.clone(),
-                    maximum_slippage_bps: self.maximum_slippage_bps,
-                    route: self.route.clone(),
-                    recipient: None,
-                    on_complete: None,
-                })?,
-                vec![new_swap_amount.clone()],
-            ),
-            0,
-        )
-        .with_payload(to_json_binary(&Statistics {
-            swapped: vec![new_swap_amount],
-            ..Statistics::default()
-        })?);
-
-        messages.push(swap_msg);
-
-        Ok((Action::Swap(self), messages, events))
-    }
-
-    fn update(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        update: Action,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if let Action::Swap(update) = update {
-            return Ok((Action::Swap(update), vec![], vec![]));
-        } else {
-            return Err(StdError::generic_err(
-                "Cannot update swap action with non-swap action",
-            ));
-        }
+        Ok((Action::OptimalSwap(self), vec![], vec![]))
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
+        let mut escrowed = HashSet::new();
+
+        for route in &self.routes {
+            let route_escrowed = route.to_action(self.clone()).escrowed(_deps, _env)?;
+            escrowed.extend(route_escrowed);
+        }
+
+        Ok(escrowed)
     }
 
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &[String]) -> StdResult<Coins> {
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
         Ok(Coins::default())
     }
 
     fn withdraw(
-        &self,
+        self,
         _deps: Deps,
         _env: &Env,
-        _desired: &Coins,
-    ) -> StdResult<(Vec<SubMsg>, Coins)> {
-        Ok((vec![], Coins::default()))
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        Ok((Action::OptimalSwap(self), vec![], vec![]))
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Swap(self), vec![], vec![]))
+        Ok((Action::OptimalSwap(self), vec![], vec![]))
     }
 }

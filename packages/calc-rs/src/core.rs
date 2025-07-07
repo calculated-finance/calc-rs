@@ -1,13 +1,9 @@
-use std::u8;
-
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, Binary, CheckedFromRatioError,
-    CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
+    Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
     Instantiate2AddressError, OverflowError, Response, StdError, WasmMsg,
 };
 use thiserror::Error;
-
 
 #[derive(Error, Debug, PartialEq)]
 pub enum ContractError {

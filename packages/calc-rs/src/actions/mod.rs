@@ -1,9 +1,10 @@
 pub mod action;
-pub mod behaviour;
-pub mod condition;
+pub mod conditional;
 pub mod distribution;
 pub mod fin_swap;
+pub mod fund_strategy;
 pub mod limit_order;
+pub mod many;
 pub mod operation;
 pub mod schedule;
 pub mod swap;

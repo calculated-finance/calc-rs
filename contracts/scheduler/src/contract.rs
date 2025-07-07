@@ -1,6 +1,7 @@
 use std::vec;
 
 use calc_rs::{
+    conditions::Satisfiable,
     core::{Contract, ContractError, ContractResult},
     scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg},
 };
@@ -8,8 +9,8 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Reply, Response,
-    StdError, StdResult, SubMsg,
+    to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError,
+    StdResult, SubMsg,
 };
 
 use crate::state::{CONDITION_COUNTER, TRIGGERS, TRIGGER_COUNTER};
@@ -34,18 +35,6 @@ pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
-    let trigger_counter_result = TRIGGER_COUNTER.may_load(_deps.storage);
-
-    if trigger_counter_result.is_err() || trigger_counter_result?.is_none() {
-        TRIGGER_COUNTER.save(_deps.storage, &0)?;
-    }
-
-    let condition_counter_result = CONDITION_COUNTER.may_load(_deps.storage);
-
-    if condition_counter_result.is_err() || condition_counter_result?.is_none() {
-        CONDITION_COUNTER.save(_deps.storage, &0)?;
-    }
-
     Ok(Response::default())
 }
 
@@ -75,30 +64,6 @@ pub fn execute(
                 )));
             }
 
-            // let mut triggers_to_delete: Vec<Trigger> = Vec::new();
-
-            // loop {
-            //     let triggers = TRIGGERS.owner(
-            //         deps.as_ref().storage,
-            //         info.sender.clone(),
-            //         Some(30),
-            //         triggers_to_delete.last().map(|t| t.id),
-            //     );
-
-            //     triggers_to_delete.extend(triggers.clone());
-
-            //     if triggers.len() < 30 {
-            //         break;
-            //     }
-            // }
-
-            let rebates_to_refund: Vec<Coin> = vec![];
-
-            // for trigger in triggers_to_delete {
-            //     TRIGGERS.delete(deps.storage, trigger.id)?;
-            //     rebates_to_refund.extend(trigger.execution_rebate);
-            // }
-
             for (i, command) in commands.into_iter().enumerate() {
                 TRIGGERS.save(
                     deps.storage,
@@ -107,27 +72,16 @@ pub fn execute(
                     info.funds.get(i).map_or_else(Vec::new, |f| vec![f.clone()]),
                 )?;
             }
-
-            // if rebates_to_refund.is_empty() {
-            //     return Ok(Response::default());
-            // }
-
-            if !rebates_to_refund.is_empty() {
-                messages.push(BankMsg::Send {
-                    to_address: info.sender.to_string(),
-                    amount: rebates_to_refund.clone(),
-                });
-            }
         }
         SchedulerExecuteMsg::ExecuteTrigger(id) => {
             let trigger = TRIGGERS
                 .load(deps.storage, id)
                 .map_err(|e| ContractError::generic_err(format!("Failed to load trigger: {e}")))?;
 
-            if !trigger.can_execute(deps.as_ref(), &env)? {
+            if !trigger.condition.is_satisfied(deps.as_ref(), &env) {
                 return Err(ContractError::generic_err(format!(
-                    "Trigger conditions not met: {:?}",
-                    trigger.conditions
+                    "Trigger condition not met: {:?}",
+                    trigger.condition
                 )));
             }
 
@@ -169,9 +123,12 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
         SchedulerQueryMsg::Filtered { filter, limit } => {
             to_json_binary(&TRIGGERS.filter(deps.storage, filter, limit)?)
         }
-        SchedulerQueryMsg::CanExecute { id } => {
-            to_json_binary(&TRIGGERS.load(deps.storage, id)?.can_execute(deps, &env)?)
-        }
+        SchedulerQueryMsg::CanExecute { id } => to_json_binary(
+            &TRIGGERS
+                .load(deps.storage, id)?
+                .condition
+                .is_satisfied(deps, &env),
+        ),
     }
 }
 
@@ -185,9 +142,9 @@ pub fn reply(_deps: DepsMut, _env: Env, _reply: Reply) -> ContractResult {
 #[cfg(test)]
 fn default_create_trigger_command() -> calc_rs::scheduler::CreateTrigger {
     calc_rs::scheduler::CreateTrigger {
-        conditions: vec![calc_rs::conditions::Condition::BlocksCompleted(
+        condition: calc_rs::conditions::Condition::BlocksCompleted(
             cosmwasm_std::testing::mock_env().block.height + 10,
-        )],
+        ),
         threshold: calc_rs::conditions::Threshold::All,
         to: cosmwasm_std::Addr::unchecked("recipient"),
         msg: to_json_binary(&"test message").unwrap(),
@@ -232,7 +189,7 @@ mod create_trigger_tests {
             vec![Trigger {
                 id: 1,
                 owner: owner.clone(),
-                conditions: create_command.conditions.clone(),
+                condition: create_command.condition.clone(),
                 threshold: create_command.threshold.clone(),
                 to: create_command.to.clone(),
                 msg: create_command.msg.clone(),
@@ -248,12 +205,12 @@ mod set_triggers_tests {
 
     use super::*;
     use calc_rs::{
-        conditions::Condition,
+        conditions::{Condition, Conditions, Threshold},
         scheduler::{ConditionFilter, CreateTrigger, Trigger},
     };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr, Coin, Decimal, SubMsg, Timestamp,
+        Addr, Coin, Decimal, Timestamp,
     };
     use rujira_rs::fin::{Price, Side};
 
@@ -269,20 +226,25 @@ mod set_triggers_tests {
         let create_trigger_info = message_info(&owner.clone(), &[]);
 
         let create_command = CreateTrigger {
-            conditions: vec![
-                Condition::BlocksCompleted(env.block.height + 10),
-                Condition::TimestampElapsed(Timestamp::from_seconds(env.block.time.seconds() + 10)),
-                Condition::LimitOrderFilled {
-                    pair_address: Addr::unchecked("pair_address"),
-                    owner: Addr::unchecked("owner"),
-                    side: Side::Base,
-                    price: Price::Fixed(Decimal::one()),
-                },
-                Condition::BalanceAvailable {
-                    address: env.contract.address.clone(),
-                    amount: Coin::new(1000_u128, "rune"),
-                },
-            ],
+            condition: Condition::Compose(Conditions {
+                conditions: vec![
+                    Condition::BlocksCompleted(env.block.height + 10),
+                    Condition::TimestampElapsed(Timestamp::from_seconds(
+                        env.block.time.seconds() + 10,
+                    )),
+                    Condition::LimitOrderFilled {
+                        pair_address: Addr::unchecked("pair_address"),
+                        owner: Addr::unchecked("owner"),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::one()),
+                    },
+                    Condition::BalanceAvailable {
+                        address: env.contract.address.clone(),
+                        amount: Coin::new(1000_u128, "rune"),
+                    },
+                ],
+                threshold: Threshold::All,
+            }),
             ..default_create_trigger_command()
         };
 
@@ -490,7 +452,7 @@ mod set_triggers_tests {
     //         vec![Trigger {
     //             id: 3,
     //             owner,
-    //             conditions: create_command.conditions,
+    //             condition: create_command.condition,
     //             threshold: create_command.threshold,
     //             to: create_command.to,
     //             msg: create_command.msg,
@@ -609,13 +571,7 @@ mod execute_trigger_tests {
         )
         .unwrap_err();
 
-        assert_eq!(
-            err,
-            ContractError::Std(StdError::generic_err(format!(
-                "Trigger conditions not met: {:?}",
-                create_command.conditions
-            )))
-        );
+        assert!(err.to_string().contains("Trigger condition not met"));
     }
 
     #[test]
@@ -631,7 +587,7 @@ mod execute_trigger_tests {
         let create_trigger_info = message_info(&owner, &[Coin::new(235463u128, "rune")]);
 
         let create_command = CreateTrigger {
-            conditions: vec![Condition::BlocksCompleted(env.block.height - 10)],
+            condition: Condition::BlocksCompleted(env.block.height - 10),
             ..default_create_trigger_command()
         };
 
@@ -676,7 +632,7 @@ mod execute_trigger_tests {
         TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
         let create_command = CreateTrigger {
-            conditions: vec![Condition::BlocksCompleted(env.block.height - 10)],
+            condition: Condition::BlocksCompleted(env.block.height - 10),
             ..default_create_trigger_command()
         };
 
@@ -726,7 +682,7 @@ mod execute_trigger_tests {
         let create_trigger_info = message_info(&owner, &[Coin::new(235463u128, "rune")]);
 
         let create_command = CreateTrigger {
-            conditions: vec![Condition::BlocksCompleted(env.block.height - 10)],
+            condition: Condition::BlocksCompleted(env.block.height - 10),
             ..default_create_trigger_command()
         };
 
@@ -757,7 +713,7 @@ mod execute_trigger_tests {
 #[cfg(test)]
 mod owned_triggers_tests {
     use calc_rs::{
-        conditions::Threshold,
+        conditions::{Condition, Threshold},
         scheduler::{CreateTrigger, Trigger},
     };
     use cosmwasm_std::{
@@ -782,7 +738,7 @@ mod owned_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![],
+                        condition: Condition::BlocksCompleted(env.block.height),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -796,7 +752,7 @@ mod owned_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked(format!("other-owner-{i}")),
                     CreateTrigger {
-                        conditions: vec![],
+                        condition: Condition::BlocksCompleted(env.block.height),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -809,7 +765,7 @@ mod owned_triggers_tests {
         let response = from_json::<Vec<Trigger>>(
             query(
                 deps.as_ref(),
-                env,
+                env.clone(),
                 SchedulerQueryMsg::Owned {
                     owner: Addr::unchecked("owner"),
                     limit: None,
@@ -826,7 +782,7 @@ mod owned_triggers_tests {
                 .map(|i| Trigger {
                     id: i * 2 + 1, // odd ids for the owner
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![],
+                    condition: Condition::BlocksCompleted(env.block.height),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -850,7 +806,7 @@ mod owned_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![],
+                        condition: Condition::BlocksCompleted(env.block.height),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -863,7 +819,7 @@ mod owned_triggers_tests {
         let response = from_json::<Vec<Trigger>>(
             query(
                 deps.as_ref(),
-                env,
+                env.clone(),
                 SchedulerQueryMsg::Owned {
                     owner: Addr::unchecked("owner"),
                     limit: None,
@@ -880,7 +836,7 @@ mod owned_triggers_tests {
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![],
+                    condition: Condition::BlocksCompleted(env.block.height),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -904,7 +860,7 @@ mod owned_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![],
+                        condition: Condition::BlocksCompleted(env.block.height),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -917,7 +873,7 @@ mod owned_triggers_tests {
         let response = from_json::<Vec<Trigger>>(
             query(
                 deps.as_ref(),
-                env,
+                env.clone(),
                 SchedulerQueryMsg::Owned {
                     owner: Addr::unchecked("owner"),
                     limit: Some(3),
@@ -934,7 +890,7 @@ mod owned_triggers_tests {
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![],
+                    condition: Condition::BlocksCompleted(env.block.height),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -958,7 +914,7 @@ mod owned_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![],
+                        condition: Condition::BlocksCompleted(env.block.height),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -971,7 +927,7 @@ mod owned_triggers_tests {
         let response = from_json::<Vec<Trigger>>(
             query(
                 deps.as_ref(),
-                env,
+                env.clone(),
                 SchedulerQueryMsg::Owned {
                     owner: Addr::unchecked("owner"),
                     limit: Some(3),
@@ -988,7 +944,7 @@ mod owned_triggers_tests {
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![],
+                    condition: Condition::BlocksCompleted(env.block.height),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -1030,9 +986,7 @@ mod filtered_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![Condition::TimestampElapsed(
-                            env.block.time.plus_seconds(i * 10),
-                        )],
+                        condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1064,9 +1018,7 @@ mod filtered_triggers_tests {
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![Condition::TimestampElapsed(
-                        env.block.time.plus_seconds(i * 10),
-                    )],
+                    condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10),),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -1090,9 +1042,7 @@ mod filtered_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![Condition::TimestampElapsed(
-                            env.block.time.plus_seconds(i * 10),
-                        )],
+                        condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1124,9 +1074,7 @@ mod filtered_triggers_tests {
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![Condition::TimestampElapsed(
-                        env.block.time.plus_seconds(i * 10),
-                    )],
+                    condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10),),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -1150,7 +1098,7 @@ mod filtered_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10)],
+                        condition: Condition::BlocksCompleted(env.block.height + i * 10),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1182,7 +1130,7 @@ mod filtered_triggers_tests {
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10,)],
+                    condition: Condition::BlocksCompleted(env.block.height + i * 10,),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -1206,7 +1154,7 @@ mod filtered_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10)],
+                        condition: Condition::BlocksCompleted(env.block.height + i * 10),
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1238,7 +1186,7 @@ mod filtered_triggers_tests {
                 .map(|i| Trigger {
                     id: i,
                     owner: Addr::unchecked("owner"),
-                    conditions: vec![Condition::BlocksCompleted(env.block.height + i * 10,)],
+                    condition: Condition::BlocksCompleted(env.block.height + i * 10,),
                     threshold: Threshold::All,
                     to: Addr::unchecked("recipient"),
                     msg: to_json_binary(&"test message").unwrap(),
@@ -1262,12 +1210,12 @@ mod filtered_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![Condition::LimitOrderFilled {
+                        condition: Condition::LimitOrderFilled {
                             pair_address: Addr::unchecked("pair"),
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        }],
+                        },
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1299,12 +1247,12 @@ mod filtered_triggers_tests {
                     Trigger {
                         id: i,
                         owner: Addr::unchecked("owner"),
-                        conditions: vec![Condition::LimitOrderFilled {
+                        condition: Condition::LimitOrderFilled {
                             pair_address: Addr::unchecked("pair"),
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        }],
+                        },
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1329,12 +1277,12 @@ mod filtered_triggers_tests {
                     deps.as_mut().storage,
                     Addr::unchecked("owner"),
                     CreateTrigger {
-                        conditions: vec![Condition::LimitOrderFilled {
+                        condition: Condition::LimitOrderFilled {
                             pair_address: Addr::unchecked("pair"),
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        }],
+                        },
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),
@@ -1366,12 +1314,12 @@ mod filtered_triggers_tests {
                     Trigger {
                         id: i,
                         owner: Addr::unchecked("owner"),
-                        conditions: vec![Condition::LimitOrderFilled {
+                        condition: Condition::LimitOrderFilled {
                             pair_address: Addr::unchecked("pair"),
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        }],
+                        },
                         threshold: Threshold::All,
                         to: Addr::unchecked("recipient"),
                         msg: to_json_binary(&"test message").unwrap(),

@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod cadence;
 pub mod conditions;
 pub mod core;
 pub mod distributor;

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, u8};
+use std::collections::HashMap;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, Coins, StdResult};

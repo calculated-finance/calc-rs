@@ -20,8 +20,6 @@ export interface Coin {
 export type Addr = string;
 
 export interface ExchangerInstantiateMsg {
-  affiliate_bps?: number | null;
-  affiliate_code?: string | null;
   scheduler_address: Addr;
 }
 export type ExchangerQueryMsg = {
@@ -38,7 +36,10 @@ export type Route =
       };
     }
   | {
-      thorchain: {};
+      thorchain: {
+        max_streaming_quantity?: number | null;
+        streaming_interval?: number | null;
+      };
     };
 export type ExchangerExecuteMsg = {
   swap: {
@@ -150,9 +151,9 @@ export interface NewStrategy {
 }
 
 export type StrategyStatus = "active" | "paused" | "archived";
-export type ArrayOf_Strategy = Strategy[];
+export type ArrayOf_StrategyHandle = StrategyHandle[];
 
-export interface Strategy {
+export interface StrategyHandle {
   affiliates: Affiliate[];
   contract_address: Addr;
   created_at: number;
@@ -192,10 +193,10 @@ export type ManagerQueryMsg =
 export type ManagerExecuteMsg =
   | {
       instantiate_strategy: {
-        action: Action;
         affiliates: Affiliate[];
         label: string;
         owner: Addr;
+        strategy: StrategyFor_New;
       };
     }
   | {
@@ -212,58 +213,37 @@ export type ManagerExecuteMsg =
   | {
       update_strategy: {
         contract_address: Addr;
-        update: StrategyConfig;
+        update: StrategyFor_New;
       };
     };
 export type Action =
   | {
-      check: Condition;
+      fin_swap: FinSwap;
     }
   | {
-      crank: Schedule;
+      thor_swap: ThorSwap;
     }
   | {
-      perform: Swap;
+      swap: Swap;
     }
   | {
-      set: Order;
+      set_limit_order: LimitOrder;
     }
   | {
-      distribute_to: Recipients;
+      distribute: Distribution;
     }
   | {
-      exhibit: Behaviour;
-    };
-export type Price =
-  | {
-      fixed: Decimal;
+      schedule: Schedule;
     }
   | {
-      oracle: number;
-    };
-/**
- * A fixed-point decimal value with 18 fractional digits, i.e. Decimal(1_000_000_000_000_000_000) == 1.0
- *
- * The greatest possible value that can be represented is 340282366920938463463.374607431768211455 (which is (2^128 - 1) / 10^18)
- */
-export type Decimal = string;
-export type Side = "base" | "quote";
-export type Threshold = "all" | "any";
-export type Cadence =
-  | {
-      blocks: {
-        interval: number;
-        previous?: number | null;
-      };
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      conditional: [Conditions, Action];
     }
   | {
-      time: {
-        duration: Duration;
-        previous?: Timestamp | null;
-      };
-    }
-  | {
-      cron: string;
+      many: Action[];
     };
 export type SwapAmountAdjustment =
   | "fixed"
@@ -274,11 +254,26 @@ export type SwapAmountAdjustment =
         scalar: Decimal;
       };
     };
+/**
+ * A fixed-point decimal value with 18 fractional digits, i.e. Decimal(1_000_000_000_000_000_000) == 1.0
+ *
+ * The greatest possible value that can be represented is 340282366920938463463.374607431768211455 (which is (2^128 - 1) / 10^18)
+ */
+export type Decimal = string;
+export type Price =
+  | {
+      fixed: Decimal;
+    }
+  | {
+      oracle: number;
+    };
+export type Side = "base" | "quote";
 export type OrderPriceStrategy =
   | {
-      fixed: {
-        price: Decimal;
-      };
+      fixed: Decimal;
+    }
+  | {
+      oracle: number;
     }
   | {
       offset: {
@@ -312,11 +307,49 @@ export type Recipient =
         memo: string;
       };
     };
+export type Cadence =
+  | {
+      blocks: {
+        interval: number;
+        previous?: number | null;
+      };
+    }
+  | {
+      time: {
+        duration: Duration;
+        previous?: Timestamp | null;
+      };
+    }
+  | {
+      cron: string;
+    };
+export type Threshold = "all" | "any";
+export type New = null;
 
-export interface Schedule {
-  cadence: Cadence;
-  execution_rebate: Coin[];
+export interface StrategyFor_New {
+  action: Action;
+  owner: Addr;
+  state: New;
+}
+export interface FinSwap {
+  adjustment: SwapAmountAdjustment;
+  maximum_slippage_bps: number;
+  minimum_receive_amount: Coin;
+  pair_address: Addr;
+  swap_amount: Coin;
+}
+
+export interface ThorSwap {
+  adjustment: SwapAmountAdjustment;
+  affiliate_bps?: number | null;
+  affiliate_code?: string | null;
+  max_streaming_quantity?: number | null;
+  maximum_slippage_bps: number;
+  minimum_receive_amount: Coin;
+  on_complete?: Callback | null;
   scheduler: Addr;
+  streaming_interval?: number | null;
+  swap_amount: Coin;
 }
 
 export interface Swap {
@@ -327,7 +360,7 @@ export interface Swap {
   route?: Route | null;
   swap_amount: Coin;
 }
-export interface Order {
+export interface LimitOrder {
   bid_amount?: Uint128 | null;
   bid_denom: string;
   current_price?: Price | null;
@@ -335,22 +368,22 @@ export interface Order {
   side: Side;
   strategy: OrderPriceStrategy;
 }
-export interface Recipients {
+export interface Distribution {
   denoms: string[];
   immutable_destinations: Destination[];
   mutable_destinations: Destination[];
 }
 
-export interface Behaviour {
-  actions: Action[];
-  threshold: Threshold;
+export interface Schedule {
+  action: Action;
+  cadence: Cadence;
+  execution_rebate: Coin[];
+  scheduler: Addr;
 }
 
-export interface StrategyConfig {
-  action: Action;
-  escrowed: string[];
-  manager: Addr;
-  owner: Addr;
+export interface Conditions {
+  conditions: Condition[];
+  threshold: Threshold;
 }
 
 export type ArrayOf_Affiliate = Affiliate[];
@@ -363,7 +396,7 @@ export interface ManagerConfig {
 export type ArrayOf_Trigger = Trigger[];
 
 export interface Trigger {
-  conditions: Condition[];
+  condition: Condition;
   execution_rebate: Coin[];
   id: number;
   msg: Binary;
@@ -422,7 +455,7 @@ export type SchedulerExecuteMsg =
     };
 
 export interface CreateTrigger {
-  conditions: Condition[];
+  condition: Condition;
   msg: Binary;
   threshold: Threshold;
   to: Addr;
@@ -437,10 +470,13 @@ export interface Statistics {
   withdrawn: Coin[];
 }
 
-export interface StrategyInstantiateMsg {
+export type StrategyInstantiateMsg = StrategyFor_WithAffiliates;
+export type WithAffiliates = null;
+
+export interface StrategyFor_WithAffiliates {
   action: Action;
-  affiliates: Affiliate[];
   owner: Addr;
+  state: WithAffiliates;
 }
 
 export type StrategyQueryMsg =
@@ -463,7 +499,7 @@ export type StrategyExecuteMsg =
       withdraw: Coin[];
     }
   | {
-      update: StrategyConfig;
+      update: StrategyFor_WithAffiliates;
     }
   | {
       update_status: StrategyStatus;
@@ -472,3 +508,15 @@ export type StrategyExecuteMsg =
       clear: {};
     };
 export type ArrayOf_Coin = Coin[];
+export type Idle = null;
+
+export interface StrategyConfig {
+  escrowed: string[];
+  manager: Addr;
+  strategy: StrategyFor_Idle;
+}
+export interface StrategyFor_Idle {
+  action: Action;
+  owner: Addr;
+  state: Idle;
+}

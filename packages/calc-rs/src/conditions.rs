@@ -1,12 +1,16 @@
-use std::{str::FromStr, time::Duration, u8, vec};
+use std::vec;
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Deps, Env, StdError, StdResult, Timestamp};
+use cosmwasm_std::{Addr, Coin, Deps, Env, Timestamp};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
-    exchanger::{ExchangerQueryMsg, ExpectedReceiveAmount, Route},
-    manager::{ManagerQueryMsg, Strategy, StrategyStatus},
+    actions::{
+        fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
+        swap::{SwapAmountAdjustment, SwapRoute},
+        thor_swap::{get_expected_amount_out as get_expected_amount_out_thorchain, ThorSwap},
+    },
+    manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
 };
 
 #[cw_serde]
@@ -15,94 +19,35 @@ pub enum Threshold {
     Any,
 }
 
-use chrono::Utc;
-use cron::Schedule as CronSchedule;
-
-#[cw_serde]
-pub enum Cadence {
-    Blocks {
-        interval: u64,
-        previous: Option<u64>,
-    },
-    Time {
-        duration: Duration,
-        previous: Option<Timestamp>,
-    },
-    Cron(String),
+pub trait Satisfiable {
+    fn is_satisfied(&self, deps: Deps, env: &Env) -> bool;
 }
 
-impl Cadence {
-    pub fn is_due(&self, env: &Env) -> bool {
-        match self {
-            Cadence::Blocks { interval, previous } => {
-                previous.map_or(true, |previous| env.block.height > previous + interval)
+#[cw_serde]
+pub struct Conditions {
+    pub conditions: Vec<Condition>,
+    pub threshold: Threshold,
+}
+
+impl Satisfiable for Conditions {
+    fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
+        match self.threshold {
+            Threshold::All => {
+                for condition in &self.conditions {
+                    if !condition.is_satisfied(deps, env) {
+                        return false;
+                    }
+                }
+                true
             }
-            Cadence::Time { duration, previous } => previous.map_or(true, |previous| {
-                env.block.time.seconds() > previous.seconds() + duration.as_secs()
-            }),
-            Cadence::Cron(cron_str) => {
-                if let Ok(schedule) = CronSchedule::from_str(cron_str) {
-                    if let Some(next) = schedule.upcoming(Utc).next() {
-                        return env.block.time.seconds() >= next.timestamp() as u64;
+            Threshold::Any => {
+                for condition in &self.conditions {
+                    if condition.is_satisfied(deps, env) {
+                        return true;
                     }
                 }
                 false
             }
-        }
-    }
-
-    pub fn into_condition(&self, env: &Env) -> Condition {
-        match self {
-            Cadence::Blocks { interval, previous } => Condition::BlocksCompleted(
-                previous.map_or(env.block.height, |previous| previous + interval),
-            ),
-            Cadence::Time { duration, previous } => {
-                Condition::TimestampElapsed(previous.map_or(env.block.time, |previous| {
-                    previous.plus_seconds(duration.as_secs())
-                }))
-            }
-            Cadence::Cron(cron_str) => {
-                if let Ok(schedule) = CronSchedule::from_str(cron_str) {
-                    if let Some(next) = schedule.upcoming(Utc).next() {
-                        return Condition::TimestampElapsed(Timestamp::from_seconds(
-                            next.timestamp() as u64,
-                        ));
-                    }
-                }
-                // Return a condition that will never be met if cron is invalid
-                Condition::BlocksCompleted(u64::MAX)
-            }
-        }
-    }
-
-    pub fn next(self, env: &Env) -> Self {
-        match self {
-            Cadence::Blocks { interval, previous } => Cadence::Blocks {
-                interval: interval,
-                previous: Some(previous.map_or(env.block.height, |previous| {
-                    let next = previous + interval;
-                    if next < env.block.height {
-                        let blocks_completed = env.block.height - previous;
-                        env.block.height + blocks_completed % interval
-                    } else {
-                        next
-                    }
-                })),
-            },
-            Cadence::Time { duration, previous } => Cadence::Time {
-                duration: duration,
-                previous: Some(previous.map_or(env.block.time, |previous| {
-                    let duration = duration.as_secs();
-                    let next = previous.plus_seconds(duration);
-                    if next < env.block.time {
-                        let time_elapsed = env.block.time.seconds() - previous.seconds();
-                        env.block.time.plus_seconds(time_elapsed % duration)
-                    } else {
-                        next
-                    }
-                })),
-            },
-            Cadence::Cron(_) => self,
         }
     }
 }
@@ -112,11 +57,9 @@ pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
     CanSwap {
-        exchanger_contract: Addr,
         swap_amount: Coin,
         minimum_receive_amount: Coin,
-        maximum_slippage_bps: u128,
-        route: Option<Route>,
+        route: SwapRoute,
     },
     LimitOrderFilled {
         pair_address: Addr,
@@ -136,172 +79,144 @@ pub enum Condition {
         contract_address: Addr,
         status: StrategyStatus,
     },
-    Compound {
-        conditions: Vec<Condition>,
-        operator: Threshold,
-    },
+    Compose(Conditions),
 }
 
-impl Condition {
-    pub fn check(&self, deps: Deps, env: &Env) -> StdResult<()> {
+impl Satisfiable for Condition {
+    fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
         match self {
-            Condition::TimestampElapsed(timestamp) => {
-                if env.block.time >= *timestamp {
-                    return Ok(());
-                }
-
-                Err(StdError::generic_err(format!(
-                    "Timestamp not elapsed: current timestamp ({}) is before required timestamp ({})",
-                    env.block.time, timestamp
-                )))
-            }
-            Condition::BlocksCompleted(height) => {
-                if env.block.height >= *height {
-                    return Ok(());
-                }
-
-                Err(StdError::generic_err(format!(
-                    "Blocks not completed: current height ({}) is before required height ({})",
-                    env.block.height, height
-                )))
-            }
+            Condition::TimestampElapsed(timestamp) => env.block.time > *timestamp,
+            Condition::BlocksCompleted(height) => env.block.height > *height,
             Condition::LimitOrderFilled {
                 pair_address,
                 owner,
                 side,
                 price,
             } => {
-                let order = deps
-                    .querier
-                    .query_wasm_smart::<OrderResponse>(
-                        pair_address,
-                        &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
-                    )
-                    .map_err(|e| {
-                        StdError::generic_err(format!(
-                            "Failed to query order ({owner:?} {side:?} {price:?}): {e}"
-                        ))
-                    })?;
+                let order = deps.querier.query_wasm_smart::<OrderResponse>(
+                    pair_address,
+                    &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
+                );
 
-                if order.remaining.is_zero() {
-                    return Ok(());
+                if let Ok(order) = order {
+                    order.remaining.is_zero()
+                } else {
+                    false
                 }
-
-                Err(StdError::generic_err(format!(
-                    "Limit order not filled ({} remaining)",
-                    order.remaining
-                )))
             }
             Condition::CanSwap {
-                exchanger_contract,
                 swap_amount,
                 minimum_receive_amount,
-                maximum_slippage_bps,
                 route,
             } => {
-                let expected_receive_amount =
-                    deps.querier.query_wasm_smart::<ExpectedReceiveAmount>(
-                        exchanger_contract,
-                        &ExchangerQueryMsg::ExpectedReceiveAmount {
+                let expected_receive_amount = match route {
+                    SwapRoute::Fin(address) => get_expected_amount_out_fin(
+                        deps,
+                        &FinSwap {
                             swap_amount: swap_amount.clone(),
-                            target_denom: minimum_receive_amount.denom.clone(),
-                            route: route.clone(),
+                            minimum_receive_amount: minimum_receive_amount.clone(),
+                            maximum_slippage_bps: 10_000,
+                            pair_address: address.clone(),
+                            adjustment: SwapAmountAdjustment::Fixed,
                         },
-                    )?;
+                    ),
+                    SwapRoute::Thorchain {
+                        streaming_interval,
+                        max_streaming_quantity,
+                        affiliate_code,
+                        affiliate_bps,
+                        previous_swap,
+                        on_complete,
+                        scheduler,
+                    } => get_expected_amount_out_thorchain(
+                        deps,
+                        env,
+                        &ThorSwap {
+                            swap_amount: swap_amount.clone(),
+                            minimum_receive_amount: minimum_receive_amount.clone(),
+                            maximum_slippage_bps: 10_000,
+                            adjustment: SwapAmountAdjustment::Fixed,
+                            streaming_interval: streaming_interval.clone(),
+                            max_streaming_quantity: max_streaming_quantity.clone(),
+                            affiliate_code: affiliate_code.clone(),
+                            affiliate_bps: affiliate_bps.clone(),
+                            previous_swap: previous_swap.clone(),
+                            on_complete: on_complete.clone(),
+                            scheduler: scheduler.clone(),
+                        },
+                    ),
+                };
 
-                if expected_receive_amount.receive_amount.amount < minimum_receive_amount.amount {
-                    return Err(StdError::generic_err(format!(
-                        "Expected receive amount {} is less than minimum receive amount {}",
-                        expected_receive_amount.receive_amount.amount,
-                        minimum_receive_amount.amount
-                    )));
+                if let Ok(expected_receive_amount) = expected_receive_amount {
+                    expected_receive_amount.amount >= minimum_receive_amount.amount
+                } else {
+                    false
                 }
-
-                if expected_receive_amount.slippage_bps > *maximum_slippage_bps {
-                    return Err(StdError::generic_err(format!(
-                        "Slippage basis points {} exceeds maximum allowed slippage basis points {}",
-                        expected_receive_amount.slippage_bps, maximum_slippage_bps
-                    )));
-                }
-
-                Ok(())
             }
             Condition::BalanceAvailable { address, amount } => {
-                let balance = deps.querier.query_balance(address, amount.denom.clone())?;
+                let balance = deps.querier.query_balance(address, amount.denom.clone());
 
-                if balance.amount >= amount.amount {
-                    return Ok(());
+                if let Ok(balance) = balance {
+                    balance.amount >= amount.amount
+                } else {
+                    false
                 }
-
-                Err(StdError::generic_err(format!(
-                    "Balance available for {} ({}) is less than required ({})",
-                    address, balance.amount, amount.amount
-                )))
             }
             Condition::OwnBalanceAvailable { amount } => {
                 let balance = deps
                     .querier
-                    .query_balance(&env.contract.address, amount.denom.clone())?;
+                    .query_balance(&env.contract.address, amount.denom.clone());
 
-                if balance.amount >= amount.amount {
-                    return Ok(());
+                if let Ok(balance) = balance {
+                    balance.amount >= amount.amount
+                } else {
+                    false
                 }
-
-                Err(StdError::generic_err(format!(
-                    "Balance available for {} ({}) is less than required ({})",
-                    env.contract.address, balance.amount, amount.amount
-                )))
             }
             Condition::StrategyStatus {
                 manager_contract,
                 contract_address,
                 status,
             } => {
-                let strategy = deps.querier.query_wasm_smart::<Strategy>(
+                let strategy = deps.querier.query_wasm_smart::<StrategyHandle>(
                     manager_contract,
                     &ManagerQueryMsg::Strategy {
                         address: contract_address.clone(),
                     },
-                )?;
+                );
 
-                if strategy.status == *status {
-                    return Ok(());
+                if let Ok(strategy) = strategy {
+                    strategy.status == *status
+                } else {
+                    false
                 }
-
-                Err(StdError::generic_err(format!(
-                    "Strategy not in required status: expected {:?}, got {:?}",
-                    status, strategy.status
-                )))
             }
-            Condition::Compound {
+            Condition::Compose(Conditions {
                 conditions,
-                operator,
-            } => match operator {
+                threshold,
+            }) => match threshold {
                 Threshold::All => {
                     for condition in conditions {
-                        condition.check(deps, env)?;
+                        if !condition.is_satisfied(deps, env) {
+                            return false;
+                        }
                     }
-                    Ok(())
+                    true
                 }
                 Threshold::Any => {
                     for condition in conditions {
-                        if condition.check(deps, env).is_ok() {
-                            return Ok(());
+                        if condition.is_satisfied(deps, env) {
+                            return true;
                         }
                     }
-                    Err(StdError::generic_err(format!(
-                        "No compound conditions met in: {}",
-                        conditions
-                            .iter()
-                            .map(|c| c.description(env))
-                            .collect::<Vec<_>>()
-                            .join(",\n")
-                    )))
+                    false
                 }
             },
         }
     }
+}
 
+impl Condition {
     pub fn description(&self, env: &Env) -> String {
         match self {
             Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {timestamp}"),
@@ -309,10 +224,9 @@ impl Condition {
             Condition::CanSwap {
                 swap_amount,
                 minimum_receive_amount,
-                maximum_slippage_bps,
                 ..
             } => format!(
-                "exchange liquidity provided: swap_amount={swap_amount}, minimum_receive_amount={minimum_receive_amount}, maximum_slippage_bps={maximum_slippage_bps}"
+                "can perform swap: swap_amount={swap_amount}, minimum_receive_amount={minimum_receive_amount}"
             ),
             Condition::LimitOrderFilled {
                 pair_address,
@@ -335,7 +249,7 @@ impl Condition {
             } => format!(
                 "strategy ({contract_address}) is in status: {status:?}"
             ),
-            Condition::Compound { conditions, operator } => {
+            Condition::Compose (Conditions { conditions, threshold: operator }) => {
                 match operator {
                     Threshold::All => format!(
                         "All the following conditions are met: [\n\t{}\n]",
@@ -360,281 +274,30 @@ impl Condition {
 }
 
 #[cfg(test)]
-mod schedule_tests {
-    use super::*;
-
-    use std::time::Duration;
-
-    use cosmwasm_std::testing::mock_env;
-
-    #[test]
-    fn updates_to_next_scheduled_block() {
-        let env = mock_env();
-
-        assert_eq!(
-            Cadence::Blocks {
-                interval: 10,
-                previous: None
-            }
-            .next(&env),
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height)
-            }
-        );
-
-        assert_eq!(
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height - 5)
-            }
-            .next(&env),
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height - 5 + 10)
-            }
-        );
-
-        assert_eq!(
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height - 15)
-            }
-            .next(&env),
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height + 5)
-            }
-        );
-
-        assert_eq!(
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height - 155)
-            }
-            .next(&env),
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height + 5)
-            }
-        );
-    }
-
-    #[test]
-    fn updates_to_next_scheduled_time() {
-        let env = mock_env();
-
-        assert_eq!(
-            Cadence::Time {
-                duration: std::time::Duration::from_secs(10),
-                previous: None
-            }
-            .next(&env),
-            Cadence::Time {
-                duration: std::time::Duration::from_secs(10),
-                previous: Some(env.block.time)
-            }
-        );
-
-        assert_eq!(
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.minus_seconds(5))
-            }
-            .next(&env),
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.plus_seconds(5))
-            }
-        );
-
-        assert_eq!(
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.minus_seconds(15))
-            }
-            .next(&env),
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.plus_seconds(5))
-            }
-        );
-
-        assert_eq!(
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.minus_seconds(155))
-            }
-            .next(&env),
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.plus_seconds(5))
-            }
-        );
-    }
-
-    #[test]
-    fn gets_next_block_condition() {
-        let env = mock_env();
-
-        assert_eq!(
-            Cadence::Blocks {
-                interval: 10,
-                previous: None
-            }
-            .into_condition(&env),
-            Condition::BlocksCompleted(env.block.height)
-        );
-
-        assert_eq!(
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height)
-            }
-            .into_condition(&env),
-            Condition::BlocksCompleted(env.block.height + 10)
-        );
-
-        assert_eq!(
-            Cadence::Blocks {
-                interval: 10,
-                previous: Some(env.block.height - 5)
-            }
-            .into_condition(&env),
-            Condition::BlocksCompleted(env.block.height - 5 + 10)
-        );
-    }
-
-    #[test]
-    fn gets_next_time_condition() {
-        let env = mock_env();
-
-        assert_eq!(
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: None
-            }
-            .into_condition(&env),
-            Condition::TimestampElapsed(env.block.time)
-        );
-
-        assert_eq!(
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time)
-            }
-            .into_condition(&env),
-            Condition::TimestampElapsed(env.block.time.plus_seconds(10))
-        );
-
-        assert_eq!(
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.minus_seconds(5))
-            }
-            .into_condition(&env),
-            Condition::TimestampElapsed(env.block.time.plus_seconds(10 - 5))
-        );
-
-        assert_eq!(
-            Cadence::Time {
-                duration: Duration::from_secs(10),
-                previous: Some(env.block.time.minus_seconds(155))
-            }
-            .into_condition(&env),
-            Condition::TimestampElapsed(env.block.time.minus_seconds(155 - 10))
-        );
-    }
-
-    #[test]
-    fn block_schedule_is_due() {
-        let env = mock_env();
-
-        assert!(Cadence::Blocks {
-            interval: 10,
-            previous: None
-        }
-        .is_due(&env));
-
-        assert!(!Cadence::Blocks {
-            interval: 10,
-            previous: Some(env.block.height - 5)
-        }
-        .is_due(&env));
-
-        assert!(Cadence::Blocks {
-            interval: 5,
-            previous: Some(env.block.height - 6)
-        }
-        .is_due(&env));
-
-        assert!(!Cadence::Blocks {
-            interval: 5,
-            previous: Some(env.block.height - 5)
-        }
-        .is_due(&env));
-    }
-
-    #[test]
-    fn time_schedule_is_due() {
-        let env = mock_env();
-
-        assert!(Cadence::Time {
-            duration: Duration::from_secs(10),
-            previous: None
-        }
-        .is_due(&env));
-
-        assert!(!Cadence::Time {
-            duration: Duration::from_secs(10),
-            previous: Some(env.block.time.minus_seconds(5))
-        }
-        .is_due(&env));
-
-        assert!(Cadence::Time {
-            duration: Duration::from_secs(5),
-            previous: Some(env.block.time.minus_seconds(6))
-        }
-        .is_due(&env));
-
-        assert!(!Cadence::Time {
-            duration: Duration::from_secs(5),
-            previous: Some(env.block.time.minus_seconds(5))
-        }
-        .is_due(&env));
-    }
-}
-
-#[cfg(test)]
 mod conditions_tests {
     use super::*;
     use std::str::FromStr;
 
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
-        to_json_binary, Addr, Coin, ContractResult, Decimal, StdError, SystemResult, Timestamp,
-        Uint128,
+        to_json_binary, Addr, Coin, ContractResult, Decimal, SystemResult, Timestamp, Uint128,
     };
-    use rujira_rs::fin::{OrderResponse, Price, Side};
+    use rujira_rs::fin::{OrderResponse, Price, Side, SimulationResponse};
 
-    use crate::{exchanger::ExpectedReceiveAmount, manager::Strategy, manager::StrategyStatus};
+    use crate::{manager::StrategyHandle, manager::StrategyStatus};
 
     #[test]
     fn timestamp_elapsed_check() {
         let deps = mock_dependencies();
         let env = mock_env();
 
-        assert!(Condition::TimestampElapsed(Timestamp::from_seconds(0))
-            .check(deps.as_ref(), &env)
-            .is_ok());
+        assert!(Condition::TimestampElapsed(env.block.time.minus_seconds(1))
+            .is_satisfied(deps.as_ref(), &env));
 
-        assert!(Condition::TimestampElapsed(env.block.time)
-            .check(deps.as_ref(), &env)
-            .is_ok());
+        assert!(!Condition::TimestampElapsed(env.block.time).is_satisfied(deps.as_ref(), &env));
 
-        assert!(Condition::TimestampElapsed(env.block.time.plus_seconds(1))
-            .check(deps.as_ref(), &env)
-            .is_err());
+        assert!(!Condition::TimestampElapsed(env.block.time.plus_seconds(1))
+            .is_satisfied(deps.as_ref(), &env));
     }
 
     #[test]
@@ -642,17 +305,13 @@ mod conditions_tests {
         let deps = mock_dependencies();
         let env = mock_env();
 
-        assert!(Condition::BlocksCompleted(0)
-            .check(deps.as_ref(), &env)
-            .is_ok());
+        assert!(Condition::BlocksCompleted(0).is_satisfied(deps.as_ref(), &env));
 
-        assert!(Condition::BlocksCompleted(env.block.height)
-            .check(deps.as_ref(), &env)
-            .is_ok());
+        assert!(Condition::BlocksCompleted(env.block.height - 1).is_satisfied(deps.as_ref(), &env));
 
-        assert!(Condition::BlocksCompleted(env.block.height + 1)
-            .check(deps.as_ref(), &env)
-            .is_err());
+        assert!(!Condition::BlocksCompleted(env.block.height).is_satisfied(deps.as_ref(), &env));
+
+        assert!(!Condition::BlocksCompleted(env.block.height + 1).is_satisfied(deps.as_ref(), &env));
     }
 
     #[test]
@@ -664,15 +323,13 @@ mod conditions_tests {
             address: env.contract.address.clone(),
             amount: Coin::new(0u128, "rune"),
         }
-        .check(deps.as_ref(), &env)
-        .is_ok());
+        .is_satisfied(deps.as_ref(), &env));
 
-        assert!(Condition::BalanceAvailable {
+        assert!(!Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(1u128, "rune"),
         }
-        .check(deps.as_ref(), &env)
-        .is_err());
+        .is_satisfied(deps.as_ref(), &env));
 
         deps.querier.bank.update_balance(
             env.contract.address.clone(),
@@ -683,68 +340,56 @@ mod conditions_tests {
             address: env.contract.address.clone(),
             amount: Coin::new(99u128, "rune"),
         }
-        .check(deps.as_ref(), &env)
-        .is_ok());
+        .is_satisfied(deps.as_ref(), &env));
 
         assert!(Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(100u128, "rune"),
         }
-        .check(deps.as_ref(), &env)
-        .is_ok());
+        .is_satisfied(deps.as_ref(), &env));
 
-        assert!(Condition::BalanceAvailable {
+        assert!(!Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(101u128, "rune"),
         }
-        .check(deps.as_ref(), &env)
-        .is_err());
+        .is_satisfied(deps.as_ref(), &env));
     }
 
     #[test]
-    fn exchange_liquidity_provided_check() {
+    fn can_swap_check() {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
         deps.querier.update_wasm(|_| {
             SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&ExpectedReceiveAmount {
-                    receive_amount: Coin::new(100u128, "rune"),
-                    slippage_bps: 10,
+                to_json_binary(&SimulationResponse {
+                    returned: Uint128::new(100),
+                    fee: Uint128::new(1),
                 })
                 .unwrap(),
             ))
         });
 
-        assert!(Condition::CanSwap {
-            exchanger_contract: env.contract.address.clone(),
+        assert!(!Condition::CanSwap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(101u128, "rune"),
-            maximum_slippage_bps: 10,
-            route: None,
+            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
         }
-        .check(deps.as_ref(), &env)
-        .is_err());
+        .is_satisfied(deps.as_ref(), &env));
 
         assert!(Condition::CanSwap {
-            exchanger_contract: env.contract.address.clone(),
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(100u128, "rune"),
-            maximum_slippage_bps: 9,
-            route: None,
+            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
         }
-        .check(deps.as_ref(), &env)
-        .is_err());
+        .is_satisfied(deps.as_ref(), &env));
 
         assert!(Condition::CanSwap {
-            exchanger_contract: env.contract.address.clone(),
             swap_amount: Coin::new(100u128, "rune"),
-            minimum_receive_amount: Coin::new(100u128, "rune"),
-            maximum_slippage_bps: 10,
-            route: None,
+            minimum_receive_amount: Coin::new(99u128, "rune"),
+            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
         }
-        .check(deps.as_ref(), &env)
-        .is_ok());
+        .is_satisfied(deps.as_ref(), &env));
     }
 
     #[test]
@@ -768,17 +413,13 @@ mod conditions_tests {
             ))
         });
 
-        assert_eq!(
-            Condition::LimitOrderFilled {
-                owner: Addr::unchecked("owner"),
-                pair_address: Addr::unchecked("pair"),
-                side: Side::Base,
-                price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            }
-            .check(deps.as_ref(), &env)
-            .unwrap_err(),
-            StdError::generic_err("Limit order not filled (100 remaining)",)
-        );
+        assert!(!Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+        }
+        .is_satisfied(deps.as_ref(), &env));
 
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
@@ -802,8 +443,7 @@ mod conditions_tests {
             side: Side::Base,
             price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
         }
-        .check(deps.as_ref(), &env)
-        .is_ok());
+        .is_satisfied(deps.as_ref(), &env));
     }
 
     #[test]
@@ -813,7 +453,7 @@ mod conditions_tests {
 
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&Strategy {
+                to_json_binary(&StrategyHandle {
                     id: 1,
                     contract_address: Addr::unchecked("strategy"),
                     status: StrategyStatus::Active,
@@ -821,6 +461,7 @@ mod conditions_tests {
                     created_at: 0,
                     updated_at: 0,
                     label: "label".to_string(),
+                    affiliates: vec![],
                 })
                 .unwrap(),
             ))
@@ -833,15 +474,13 @@ mod conditions_tests {
             contract_address: strategy_address.clone(),
             status: StrategyStatus::Active,
         }
-        .check(deps.as_ref(), &env)
-        .is_ok());
+        .is_satisfied(deps.as_ref(), &env));
 
-        assert!(Condition::StrategyStatus {
+        assert!(!Condition::StrategyStatus {
             manager_contract: Addr::unchecked("manager"),
             contract_address: strategy_address.clone(),
             status: StrategyStatus::Paused,
         }
-        .check(deps.as_ref(), &env)
-        .is_err());
+        .is_satisfied(deps.as_ref(), &env));
     }
 }

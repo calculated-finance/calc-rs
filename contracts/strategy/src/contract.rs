@@ -1,63 +1,53 @@
-use std::{cmp::min, collections::HashSet};
+use std::collections::HashSet;
 
 use calc_rs::{
-    actions::{
-        action::Action,
-        behaviour::Behaviour,
-        distribution::{Destination, Distribution, Recipient},
-        operation::Operation,
-    },
     core::{Contract, ContractError, ContractResult},
-    manager::{Affiliate, StrategyStatus},
+    manager::StrategyStatus,
     statistics::Statistics,
     strategy::{StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    from_json, to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env, Event,
-    MessageInfo, Reply, Response, StdResult, SubMsg, SubMsgResult, Uint128,
+    from_json, to_json_binary, BankMsg, Binary, Coins, Deps, DepsMut, Env, MessageInfo, Reply,
+    Response, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{STATE, STATS, STRATEGY};
+use crate::state::{CONFIG, ESCROWED, STATE, STATS};
 
 const MAX_BEHAVIOUR_ACTIONS: usize = 10;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
-    if msg.action.size() > MAX_BEHAVIOUR_ACTIONS {
+    if msg.0.size() > MAX_BEHAVIOUR_ACTIONS {
         return Err(ContractError::generic_err(format!(
             "Behaviour cannot exceed {} actions",
             MAX_BEHAVIOUR_ACTIONS
         )));
     }
 
-    let action = with_affiliates(msg.action, &msg.affiliates).init(deps.as_ref(), &env)?;
-    let escrowed = action.escrowed(deps.as_ref(), &env)?;
+    let escrowed = msg.0.escrowed(deps.as_ref(), &env)?;
 
-    STRATEGY.save(
-        deps.storage,
-        StrategyConfig {
-            manager: info.sender.clone(),
-            owner: msg.owner,
-            action,
-            escrowed,
-        },
-    )?;
-
-    STATS.save(deps.storage, &Statistics::default())?;
-
-    Ok(Response::default())
+    Ok(msg.0.init(&mut deps, &env, |storage, strategy| {
+        CONFIG.init(
+            storage,
+            StrategyConfig {
+                manager: info.sender.clone(),
+                strategy,
+                escrowed,
+            },
+        )
+    })?)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: StrategyExecuteMsg,
@@ -77,149 +67,125 @@ pub fn execute(
         return Ok(Response::default());
     }
 
-    let strategy = STRATEGY.load(deps.storage)?;
+    let config = CONFIG.load(deps.storage)?;
 
-    let mut all_messages: Vec<SubMsg> = vec![];
-    let mut all_events: Vec<Event> = vec![];
-
-    match msg {
+    let response = match msg {
         StrategyExecuteMsg::Update(update) => {
-            if info.sender != strategy.manager {
+            if info.sender != config.manager {
                 return Err(ContractError::Unauthorized {});
             }
 
-            let (cancelled_action, cancel_messages, cancel_events) =
-                strategy.action.cancel(deps.as_ref(), &env)?;
+            let cancel_response = config
+                .strategy
+                .prepare_to_cancel(deps.as_ref(), &env)?
+                .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?;
 
-            all_events.extend(cancel_events);
-
-            if cancel_messages.is_empty() {
-                let (action, messages, events) = update
-                    .init(deps.as_ref(), &env)?
-                    .execute(deps.as_ref(), &env)?;
-
-                let escrowed = strategy
-                    .escrowed
-                    .union(&action.escrowed(deps.as_ref(), &env)?)
+            // If no stateful actions to unwind, we can proceed with the update
+            if cancel_response.messages.is_empty() {
+                // Can only add escrowed denoms
+                let escrowed = update
+                    .escrowed(deps.as_ref(), &env)?
+                    .union(&config.escrowed)
                     .cloned()
                     .collect::<HashSet<String>>();
 
-                STRATEGY.save(
-                    deps.storage,
-                    StrategyConfig {
-                        action,
-                        escrowed,
-                        ..strategy
-                    },
-                )?;
+                ESCROWED.save(deps.storage, &escrowed)?;
 
-                all_messages.extend(messages);
-                all_events.extend(events);
+                let init_response = update.init(&mut deps, &env, |storage, strategy| {
+                    CONFIG.save(storage, strategy)
+                })?;
+
+                let execute_msg = SubMsg::reply_always(
+                    Contract(env.contract.address.clone())
+                        .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]),
+                    0,
+                );
+
+                // Execute the new strategy after any init messages have completed
+                init_response.add_submessage(execute_msg)
             } else {
-                STRATEGY.save(
-                    deps.storage,
-                    StrategyConfig {
-                        action: cancelled_action,
-                        ..strategy
-                    },
-                )?;
+                let clear_state_msg = SubMsg::reply_never(
+                    Contract(env.contract.address.clone())
+                        .call(to_json_binary(&StrategyExecuteMsg::Clear {})?, vec![]),
+                );
 
-                let update_msg = Contract(env.contract.address.clone())
-                    .call(to_json_binary(&StrategyExecuteMsg::Update(update))?, vec![]);
+                let update_again_msg = SubMsg::reply_never(
+                    Contract(env.contract.address.clone())
+                        .call(to_json_binary(&StrategyExecuteMsg::Update(update))?, vec![]),
+                );
 
-                all_messages.extend(cancel_messages);
-                all_messages.push(SubMsg::reply_never(update_msg));
+                cancel_response // Unwind any stateful actions before we overwrite them
+                    .add_submessage(clear_state_msg) // Clear the state so we can run update again
+                    .add_submessage(update_again_msg) // Run update to setup the new strategy
             }
         }
         StrategyExecuteMsg::Execute {} => {
-            if info.sender != strategy.manager && info.sender != env.contract.address {
+            if info.sender != config.manager && info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
             }
 
-            let (action, messages, event) = strategy.action.execute(deps.as_ref(), &env)?;
-
-            STRATEGY.save(deps.storage, StrategyConfig { action, ..strategy })?;
-
-            all_messages.extend(messages);
-            all_events.extend(event);
+            config
+                .strategy
+                .prepare_to_execute(deps.as_ref(), &env)?
+                .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?
         }
-        StrategyExecuteMsg::Withdraw(amounts) => {
-            if info.sender != strategy.owner {
+        StrategyExecuteMsg::Withdraw(desired) => {
+            if info.sender != config.strategy.owner {
                 return Err(ContractError::Unauthorized {});
             }
 
-            let mut remaining_desired = Coins::try_from(amounts.clone())?;
             let mut withdrawals = Coins::default();
 
-            for amount in amounts.iter() {
-                if strategy.escrowed.contains(&amount.denom) {
+            for denom in desired.iter() {
+                if config.escrowed.contains(denom) {
                     return Err(ContractError::generic_err(format!(
                         "Cannot withdraw escrowed denom: {}",
-                        amount.denom
+                        denom
                     )));
                 }
 
                 let balance = deps
                     .querier
-                    .query_balance(env.contract.address.clone(), amount.denom.clone())?;
+                    .query_balance(env.contract.address.clone(), denom.clone())?;
 
-                let withdrawal =
-                    Coin::new(min(balance.amount, amount.amount), amount.denom.clone());
-
-                withdrawals.add(withdrawal.clone())?;
-                remaining_desired.sub(withdrawal)?;
+                withdrawals.add(balance.clone())?;
             }
 
-            if !remaining_desired.is_empty() {
-                let (messages, behaviour_withdrawals) =
-                    strategy
-                        .action
-                        .withdraw(deps.as_ref(), &env, &remaining_desired)?;
-
-                all_messages.extend(messages);
-
-                for withdrawal in behaviour_withdrawals.into_iter() {
-                    withdrawals.add(withdrawal)?;
-                }
-            }
-
-            let bank_msg = BankMsg::Send {
-                to_address: strategy.owner.to_string(),
+            let contract_withdrawal_msg = SubMsg::reply_never(BankMsg::Send {
+                to_address: config.strategy.owner.to_string(),
                 amount: withdrawals.to_vec(),
-            };
+            });
 
-            all_messages.push(SubMsg::reply_never(bank_msg));
+            config
+                .strategy
+                .prepare_to_withdraw(deps.as_ref(), &env, &desired)?
+                .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?
+                .add_submessage(contract_withdrawal_msg)
         }
         StrategyExecuteMsg::UpdateStatus(status) => {
-            if info.sender != strategy.manager {
+            if info.sender != config.manager {
                 return Err(ContractError::Unauthorized {});
             }
 
-            match status {
+            let executable_strategy = match status {
                 StrategyStatus::Active => {
-                    let (action, messages, event) = strategy.action.execute(deps.as_ref(), &env)?;
-
-                    STRATEGY.save(deps.storage, StrategyConfig { action, ..strategy })?;
-
-                    all_messages.extend(messages);
-                    all_events.extend(event);
+                    config.strategy.prepare_to_execute(deps.as_ref(), &env)?
                 }
                 StrategyStatus::Paused | StrategyStatus::Archived => {
-                    let (action, messages, event) = strategy.action.cancel(deps.as_ref(), &env)?;
-
-                    STRATEGY.save(deps.storage, StrategyConfig { action, ..strategy })?;
-
-                    all_messages.extend(messages);
-                    all_events.extend(event);
+                    config.strategy.prepare_to_cancel(deps.as_ref(), &env)?
                 }
-            }
+            };
+
+            executable_strategy
+                .execute(&mut deps, |store, strategy| CONFIG.save(store, strategy))?
         }
         StrategyExecuteMsg::Clear {} => {
-            if info.sender != env.contract.address && info.sender != strategy.owner {
+            if info.sender != env.contract.address && info.sender != config.strategy.owner {
                 return Err(ContractError::Unauthorized {});
             }
 
             STATE.remove(deps.storage);
+            Response::default()
         }
     };
 
@@ -228,11 +194,7 @@ pub fn execute(
             .call(to_json_binary(&StrategyExecuteMsg::Clear {})?, vec![]),
     );
 
-    all_messages.push(clear_state_msg);
-
-    Ok(Response::default()
-        .add_submessages(all_messages)
-        .add_events(all_events))
+    Ok(response.add_submessage(clear_state_msg))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -249,12 +211,13 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
-    let strategy = STRATEGY.load(deps.storage)?;
+    let config = CONFIG.load(deps.storage)?;
+
     match msg {
-        StrategyQueryMsg::Config {} => to_json_binary(&strategy),
+        StrategyQueryMsg::Config {} => to_json_binary(&config),
         StrategyQueryMsg::Statistics {} => to_json_binary(&STATS.load(deps.storage)?),
-        StrategyQueryMsg::Balances { include } => {
-            let mut balances = strategy.action.balances(deps, &env, &include)?;
+        StrategyQueryMsg::Balances(include) => {
+            let mut balances = config.strategy.balances(deps, &env, &include)?;
 
             for denom in include {
                 let balance = deps
@@ -266,54 +229,5 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
 
             to_json_binary(&balances.to_vec())
         }
-    }
-}
-
-fn with_affiliates(action: Action, affiliates: &[Affiliate]) -> Action {
-    match action {
-        Action::Distribute(Distribution {
-            denoms,
-            mutable_destinations,
-            immutable_destinations,
-        }) => {
-            let total_affiliate_bps = affiliates
-                .iter()
-                .fold(0, |acc, affiliate| acc + affiliate.bps);
-
-            let total_shares = mutable_destinations
-                .iter()
-                .chain(immutable_destinations.iter())
-                .fold(Uint128::zero(), |acc, d| acc + d.shares);
-
-            let total_shares_with_fees =
-                total_shares.mul_ceil(Decimal::bps(10_000 + total_affiliate_bps));
-
-            Action::Distribute(Distribution {
-                denoms: denoms.clone(),
-                mutable_destinations: mutable_destinations.clone(),
-                immutable_destinations: [
-                    immutable_destinations.clone(),
-                    affiliates
-                        .iter()
-                        .map(|affiliate| Destination {
-                            recipient: Recipient::Bank {
-                                address: affiliate.address.clone(),
-                            },
-                            shares: total_shares_with_fees.mul_floor(Decimal::bps(affiliate.bps)),
-                            label: Some(affiliate.label.clone()),
-                        })
-                        .collect::<Vec<_>>(),
-                ]
-                .concat(),
-            })
-        }
-        Action::Compose(Behaviour { actions, threshold }) => Action::Compose(Behaviour {
-            actions: actions
-                .into_iter()
-                .map(|action| with_affiliates(action, affiliates))
-                .collect(),
-            threshold,
-        }),
-        _ => action,
     }
 }
