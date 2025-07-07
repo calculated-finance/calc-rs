@@ -11,6 +11,7 @@ use rujira_rs::fin::{
 
 use crate::{
     actions::{action::Action, operation::Operation},
+    constants::UPDATE_STATS_REPLY_ID,
     core::Contract,
     statistics::Statistics,
 };
@@ -256,7 +257,7 @@ impl Operation for LimitOrder {
                 to_json_binary(&ExecuteMsg::Order((orders, None)))?,
                 vec![Coin::new(new_bid_amount, self.bid_denom.clone())],
             ),
-            0,
+            UPDATE_STATS_REPLY_ID,
         )
         .with_payload(to_json_binary(
             &if let Some(existing_order) = existing_order {
@@ -340,7 +341,7 @@ impl Operation for LimitOrder {
                     )))?,
                     vec![],
                 ),
-                0,
+                UPDATE_STATS_REPLY_ID,
             )
             .with_payload(to_json_binary(&self.statistics(deps, &existing_order)?)?);
 
@@ -381,7 +382,7 @@ impl Operation for LimitOrder {
                     )))?,
                     vec![],
                 ),
-                0,
+                UPDATE_STATS_REPLY_ID,
             )
             .with_payload(to_json_binary(&self.statistics(deps, &existing_order)?)?);
 

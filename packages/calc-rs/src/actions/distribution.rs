@@ -8,6 +8,7 @@ use cosmwasm_std::{
 
 use crate::actions::action::Action;
 use crate::actions::operation::Operation;
+use crate::constants::UPDATE_STATS_REPLY_ID;
 use crate::statistics::Statistics;
 use crate::thorchain::MsgDeposit;
 
@@ -138,10 +139,12 @@ impl Operation for Distribution {
                 };
 
                 messages.push(
-                    SubMsg::reply_always(message, 0).with_payload(to_json_binary(&Statistics {
-                        distributed: vec![(destination.recipient.clone(), amount)],
-                        ..Statistics::default()
-                    })?),
+                    SubMsg::reply_always(message, UPDATE_STATS_REPLY_ID).with_payload(
+                        to_json_binary(&Statistics {
+                            distributed: vec![(destination.recipient.clone(), amount)],
+                            ..Statistics::default()
+                        })?,
+                    ),
                 );
             }
         }

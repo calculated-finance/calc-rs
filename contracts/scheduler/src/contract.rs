@@ -511,6 +511,7 @@ mod set_triggers_tests {
 mod execute_trigger_tests {
     use super::*;
     use calc_rs::conditions::Condition;
+    use calc_rs::constants::LOG_ERRORS_REPLY_ID;
     use calc_rs::scheduler::CreateTrigger;
     use cosmwasm_std::testing::message_info;
     use cosmwasm_std::WasmMsg;
@@ -661,12 +662,13 @@ mod execute_trigger_tests {
             EXECUTE_REPLY_ID
         )));
 
-        assert!(response
-            .messages
-            .contains(&SubMsg::reply_never(BankMsg::Send {
+        assert!(response.messages.contains(&SubMsg::reply_always(
+            BankMsg::Send {
                 to_address: executor.to_string(),
                 amount: create_trigger_info.funds.clone(),
-            })));
+            },
+            LOG_ERRORS_REPLY_ID
+        )));
     }
 
     #[test]

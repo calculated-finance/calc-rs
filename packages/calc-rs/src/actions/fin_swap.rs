@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     actions::{action::Action, operation::Operation, swap::SwapAmountAdjustment},
+    constants::UPDATE_STATS_REPLY_ID,
     core::Contract,
     statistics::Statistics,
 };
@@ -196,7 +197,7 @@ impl Operation for FinSwap {
                 }))?,
                 vec![new_swap_amount.clone()],
             ),
-            0,
+            UPDATE_STATS_REPLY_ID,
         )
         .with_payload(to_json_binary(&Statistics {
             swapped: vec![new_swap_amount],

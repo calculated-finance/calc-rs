@@ -7,6 +7,7 @@ use std::{
 use crate::{
     actions::{action::Action, operation::Operation, swap::SwapAmountAdjustment},
     conditions::{Condition, Threshold},
+    constants::{LOG_ERRORS_REPLY_ID, UPDATE_STATS_REPLY_ID},
     core::{Callback, Contract},
     scheduler::{CreateTrigger, SchedulerExecuteMsg},
     statistics::Statistics,
@@ -254,7 +255,7 @@ impl Operation for ThorSwap {
                 signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
             }
             .into_cosmos_msg()?,
-            0,
+            UPDATE_STATS_REPLY_ID,
         )
         .with_payload(to_json_binary(&Statistics {
             swapped: vec![new_swap_amount],
@@ -269,17 +270,20 @@ impl Operation for ThorSwap {
             execution_rebate,
         }) = self.on_complete.clone()
         {
-            let create_trigger_msg = SubMsg::reply_never(Contract(self.scheduler.clone()).call(
-                to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                    condition: Condition::BlocksCompleted(
-                        env.block.height + adjusted_quote.streaming_swap_blocks,
-                    ),
-                    threshold: Threshold::Any,
-                    to: contract,
-                    msg: msg,
-                }))?,
-                execution_rebate,
-            ));
+            let create_trigger_msg = SubMsg::reply_always(
+                Contract(self.scheduler.clone()).call(
+                    to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
+                        condition: Condition::BlocksCompleted(
+                            env.block.height + adjusted_quote.streaming_swap_blocks,
+                        ),
+                        threshold: Threshold::Any,
+                        to: contract,
+                        msg: msg,
+                    }))?,
+                    execution_rebate,
+                ),
+                LOG_ERRORS_REPLY_ID,
+            );
 
             messages.push(create_trigger_msg);
         }
