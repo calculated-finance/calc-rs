@@ -34,8 +34,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 calc-rs-test = { workspace = true }
-cw-multi-test = { workspace = true }
-manager = { workspace = true }
 rstest = { workspace = true }
-scheduler = { workspace = true }
-rujira_fin = { git = "https://gitlab.com/thorchain/rujira.git", rev = "ad78b65b2913f8bf6e9f2c3c9f67ade10991ff11", package = "rujira-fin" }

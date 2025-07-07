@@ -26,7 +26,7 @@ mod integration_tests {
     use calc_rs::actions::limit_order::{LimitOrder, OrderPriceStrategy};
     use calc_rs::manager::StrategyStatus;
 
-    use crate::contract::{execute, instantiate, query, reply};
+    use strategy::contract::{execute, instantiate, query, reply};
 
     pub struct CalcTestApp {
         pub app: App,
@@ -682,7 +682,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_execute_strategy_with_schedule_executes_and_schedules_next() {
+    fn test_schedule_action_with_blocks_cadence_schedules_correctly() {
         let mut harness = CalcTestApp::setup();
         let keeper = harness.app.api().addr_make("keeper");
 

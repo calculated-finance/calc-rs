@@ -279,8 +279,15 @@ dependencies = [
 name = "calc-rs-test"
 version = "0.0.1"
 dependencies = [
+ "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
+ "cw-multi-test",
+ "manager",
+ "rujira-fin",
+ "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
+ "scheduler",
+ "strategy",
 ]
 
 [[package]]
@@ -1640,15 +1647,11 @@ dependencies = [
  "calc-rs-test",
  "cosmwasm-schema",
  "cosmwasm-std",
- "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
  "cw2",
- "manager",
  "rstest",
- "rujira-fin",
  "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
- "scheduler",
  "schemars",
  "serde",
 ]

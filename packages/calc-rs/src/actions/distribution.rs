@@ -42,8 +42,7 @@ pub struct Destination {
 #[cw_serde]
 pub struct Distribution {
     pub denoms: Vec<String>,
-    pub mutable_destinations: Vec<Destination>,
-    pub immutable_destinations: Vec<Destination>,
+    pub destinations: Vec<Destination>,
 }
 
 impl Operation for Distribution {
@@ -52,16 +51,10 @@ impl Operation for Distribution {
             return Err(StdError::generic_err("Denoms cannot be empty"));
         }
 
-        let destinations = self
-            .mutable_destinations
-            .iter()
-            .chain(self.immutable_destinations.iter())
-            .collect::<Vec<_>>();
-
         let has_native_denoms = self.denoms.iter().any(|d| !d.contains('-'));
         let mut total_shares = Uint128::zero();
 
-        for destination in destinations {
+        for destination in self.destinations.iter() {
             if destination.shares.is_zero() {
                 return Err(StdError::generic_err("Destination shares cannot be zero"));
             }
@@ -101,13 +94,10 @@ impl Operation for Distribution {
         let mut messages: Vec<SubMsg> = vec![];
         let events: Vec<Event> = vec![];
 
-        let destinations = self
-            .mutable_destinations
-            .iter()
-            .chain(self.immutable_destinations.iter());
-
-        let total_shares = destinations
+        let total_shares = self
+            .destinations
             .clone()
+            .into_iter()
             .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
         for denom in self.denoms.clone() {
@@ -117,7 +107,7 @@ impl Operation for Distribution {
                 continue;
             }
 
-            for destination in destinations.clone() {
+            for destination in self.destinations.clone() {
                 let amount = vec![Coin::new(
                     balance
                         .amount
