@@ -6,7 +6,7 @@ use crate::actions::{action::Action, operation::Operation};
 
 impl Operation for Vec<Action> {
     fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut actions = vec![];
+        let mut actions = Vec::with_capacity(self.len());
         let mut messages = vec![];
         let mut events = vec![];
 
@@ -22,9 +22,9 @@ impl Operation for Vec<Action> {
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut all_messages = vec![];
-        let mut all_events = vec![];
-        let mut new_actions = vec![];
+        let mut all_messages = Vec::with_capacity(self.len());
+        let mut all_events = Vec::with_capacity(self.len());
+        let mut new_actions = Vec::with_capacity(self.len());
 
         for action in self.into_iter() {
             let (action, messages, events) = action.execute(deps, env)?;
@@ -70,7 +70,7 @@ impl Operation for Vec<Action> {
     ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut actions = vec![];
         let mut messages = vec![];
-        let mut events = vec![];
+        let mut events = Vec::with_capacity(self.len());
 
         for action in self.clone().into_iter() {
             let (action, action_messages, action_events) = action.withdraw(deps, env, desired)?;
@@ -86,7 +86,7 @@ impl Operation for Vec<Action> {
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
         let mut all_messages = vec![];
         let mut all_events = vec![];
-        let mut new_actions = vec![];
+        let mut new_actions = Vec::with_capacity(self.len());
 
         for action in self.into_iter() {
             let (action, messages, events) = action.cancel(deps, env)?;

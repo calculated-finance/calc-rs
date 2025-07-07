@@ -1,7 +1,7 @@
 use std::{
     cmp::{max, min},
     collections::HashSet,
-    u8, vec,
+    vec,
 };
 
 use crate::{
@@ -150,8 +150,7 @@ impl Operation for ThorSwap {
 
                     let quote = SwapQuote::get(deps.querier, &swap_quote_request).map_err(|e| {
                         StdError::generic_err(format!(
-                            "Failed to get L1 swap quote with {:#?}: {e}",
-                            swap_quote_request
+                            "Failed to get L1 swap quote with {swap_quote_request:#?}: {e}"
                         ))
                     })?;
 
@@ -278,7 +277,7 @@ impl Operation for ThorSwap {
                         ),
                         threshold: Threshold::Any,
                         to: contract,
-                        msg: msg,
+                        msg,
                     }))?,
                     execution_rebate,
                 ),
@@ -340,8 +339,7 @@ pub fn get_quote(deps: Deps, env: &Env, swap: &ThorSwap) -> StdResult<SwapQuote>
 
     let quote = SwapQuote::get(deps.querier, &swap_quote_request).map_err(|e| {
         StdError::generic_err(format!(
-            "Failed to get L1 swap quote with {:#?}: {e}",
-            swap_quote_request
+            "Failed to get L1 swap quote with {swap_quote_request:#?}: {e}"
         ))
     })?;
 

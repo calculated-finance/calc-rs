@@ -19,8 +19,8 @@ mod integration_tests {
     use cosmwasm_std::{Addr, Coin, Decimal, StdError, StdResult, Uint128};
     use cw_multi_test::{error::AnyResult, App, AppResponse, ContractWrapper, Executor};
     use rujira_rs::fin::{
-        BookResponse, ConfigResponse, Denoms, ExecuteMsg, InstantiateMsg, OrdersResponse, Price,
-        QueryMsg, Side, Tick,
+        ConfigResponse, Denoms, ExecuteMsg, InstantiateMsg, OrdersResponse, Price, QueryMsg, Side,
+        Tick,
     };
 
     use calc_rs::actions::limit_order::{LimitOrder, OrderPriceStrategy};
@@ -162,31 +162,31 @@ mod integration_tests {
             }
         }
 
-        pub fn place_fin_limit_orders(
-            &mut self,
-            sender: &Addr,
-            pair_address: &Addr,
-            orders: Vec<(Side, Price, Option<Uint128>)>,
-        ) -> AppResponse {
-            let pair = self.query_fin_config(pair_address);
+        // pub fn place_fin_limit_orders(
+        //     &mut self,
+        //     sender: &Addr,
+        //     pair_address: &Addr,
+        //     orders: Vec<(Side, Price, Option<Uint128>)>,
+        // ) -> AppResponse {
+        //     let pair = self.query_fin_config(pair_address);
 
-            let funds = orders
-                .iter()
-                .filter_map(|(side, _, amount)| {
-                    let order_denom = pair.denoms.ask(side);
-                    amount.map(|amount| Coin::new(amount, order_denom))
-                })
-                .collect::<Vec<_>>();
+        //     let funds = orders
+        //         .iter()
+        //         .filter_map(|(side, _, amount)| {
+        //             let order_denom = pair.denoms.ask(side);
+        //             amount.map(|amount| Coin::new(amount, order_denom))
+        //         })
+        //         .collect::<Vec<_>>();
 
-            self.app
-                .execute_contract(
-                    sender.clone(),
-                    pair_address.clone(),
-                    &ExecuteMsg::Order((orders, None)),
-                    &funds,
-                )
-                .unwrap()
-        }
+        //     self.app
+        //         .execute_contract(
+        //             sender.clone(),
+        //             pair_address.clone(),
+        //             &ExecuteMsg::Order((orders, None)),
+        //             &funds,
+        //         )
+        //         .unwrap()
+        // }
 
         pub fn query_fin_config(&self, pair_address: &Addr) -> ConfigResponse {
             self.app
@@ -195,17 +195,17 @@ mod integration_tests {
                 .unwrap()
         }
 
-        pub fn query_fin_book(
-            &self,
-            pair_address: &Addr,
-            offset: Option<u8>,
-            limit: Option<u8>,
-        ) -> BookResponse {
-            self.app
-                .wrap()
-                .query_wasm_smart::<BookResponse>(pair_address, &QueryMsg::Book { limit, offset })
-                .unwrap()
-        }
+        // pub fn query_fin_book(
+        //     &self,
+        //     pair_address: &Addr,
+        //     offset: Option<u8>,
+        //     limit: Option<u8>,
+        // ) -> BookResponse {
+        //     self.app
+        //         .wrap()
+        //         .query_wasm_smart::<BookResponse>(pair_address, &QueryMsg::Book { limit, offset })
+        //         .unwrap()
+        // }
 
         pub fn get_fin_orders(
             &self,

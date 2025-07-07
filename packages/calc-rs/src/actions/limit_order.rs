@@ -113,7 +113,7 @@ impl LimitOrder {
             statistics.filled = vec![Coin::new(order.filled, pair.denoms.ask(&order.side))];
         }
 
-        return Ok(statistics);
+        Ok(statistics)
     }
 }
 

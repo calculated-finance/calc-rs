@@ -15,7 +15,7 @@ pub struct Statistics {
 }
 
 impl Statistics {
-    pub fn add(self, other: Statistics) -> StdResult<Statistics> {
+    pub fn update(self, other: Statistics) -> StdResult<Statistics> {
         let mut swapped = Coins::try_from(self.swapped.clone())?;
         let mut filled = Coins::try_from(self.filled.clone())?;
         let mut withdrawn = Coins::try_from(self.withdrawn.clone())?;

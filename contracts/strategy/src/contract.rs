@@ -27,8 +27,7 @@ pub fn instantiate(
 ) -> ContractResult {
     if msg.0.size() > MAX_BEHAVIOUR_ACTIONS {
         return Err(ContractError::generic_err(format!(
-            "Behaviour cannot exceed {} actions",
-            MAX_BEHAVIOUR_ACTIONS
+            "Behaviour cannot exceed {MAX_BEHAVIOUR_ACTIONS} actions"
         )));
     }
 
@@ -61,8 +60,7 @@ pub fn execute(
     if let Some(state) = state {
         if msg == state {
             return Err(ContractError::generic_err(format!(
-                "Contract is already in the {:?} state, cannot execute again",
-                state
+                "Contract is already in the {state:?} state, cannot execute again"
             )));
         }
     }
@@ -137,8 +135,7 @@ pub fn execute(
             for denom in desired.iter() {
                 if config.escrowed.contains(denom) {
                     return Err(ContractError::generic_err(format!(
-                        "Cannot withdraw escrowed denom: {}",
-                        denom
+                        "Cannot withdraw escrowed denom: {denom}"
                     )));
                 }
 
@@ -211,7 +208,7 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
             if let SubMsgResult::Ok(_) = reply.result {
                 let stats = from_json::<Statistics>(reply.payload);
                 if let Ok(stats) = stats {
-                    STATS.update(_deps.storage, |s| s.add(stats))?;
+                    STATS.update(_deps.storage, |s| s.update(stats))?;
                 }
             }
             Ok(Response::default())

@@ -56,7 +56,7 @@ impl Operation for FundStrategy {
 
         Ok((
             Action::FundStrategy(self),
-            vec![SubMsg::from(bank_msg)],
+            vec![bank_msg],
             vec![],
         ))
     }
