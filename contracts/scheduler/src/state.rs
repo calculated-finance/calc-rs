@@ -99,7 +99,7 @@ fn save_condition(
                 &ConditionStore {
                     id: condition_id,
                     trigger_id,
-                    condition: Condition::from(condition.clone()),
+                    condition: condition.clone(),
                 },
             )
         }
@@ -123,12 +123,12 @@ impl TriggerStore<'_> {
             trigger_id,
             &Trigger {
                 id: trigger_id,
-                owner: owner,
+                owner,
                 condition: command.condition,
                 threshold: command.threshold,
                 msg: command.msg,
                 to: command.to,
-                execution_rebate: execution_rebate,
+                execution_rebate,
             },
         )
     }

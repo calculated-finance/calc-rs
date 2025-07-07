@@ -146,7 +146,7 @@ impl Strategy<New> {
                 &salt,
             )
             .map_err(|e| {
-                StdError::generic_err(format!("Failed to instantiate contract address: {}", e))
+                StdError::generic_err(format!("Failed to instantiate contract address: {e}"))
             })?,
         )?;
 

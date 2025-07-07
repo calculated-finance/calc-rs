@@ -27,9 +27,9 @@ impl Cadence {
     pub fn is_due(&self, env: &Env) -> StdResult<bool> {
         Ok(match self {
             Cadence::Blocks { interval, previous } => {
-                previous.map_or(true, |previous| env.block.height > previous + interval)
+                previous.is_none_or(|previous| env.block.height > previous + interval)
             }
-            Cadence::Time { duration, previous } => previous.map_or(true, |previous| {
+            Cadence::Time { duration, previous } => previous.is_none_or(|previous| {
                 env.block.time.seconds() > previous.seconds() + duration.as_secs()
             }),
             Cadence::Cron { expr, previous } => {
