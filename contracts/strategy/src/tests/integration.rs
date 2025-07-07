@@ -10,7 +10,6 @@ mod integration_tests {
             swap::{OptimalSwap, SwapAmountAdjustment, SwapRoute},
         },
         conditions::{Cadence, Condition, Conditions, Threshold},
-        exchanger::ExchangerInstantiateMsg,
         manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle},
         scheduler::SchedulerInstantiateMsg,
         statistics::Statistics,
@@ -336,21 +335,17 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_route = FinSwap {
-            pair_address: harness.fin_addr.clone(),
+        let swap_action = OptimalSwap {
+            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 50,
             adjustment: SwapAmountAdjustment::Fixed,
         };
 
-        let swap_action = Action::OptimalSwap(OptimalSwap {
-            routes: vec![SwapRoute::Fin(swap_route.clone())],
-        });
-
         let strategy = Strategy {
             owner: harness.owner.clone(),
-            action: swap_action.clone(),
+            action: Action::OptimalSwap(swap_action.clone()),
             state: Json,
         };
 
@@ -369,10 +364,10 @@ mod integration_tests {
             config,
             StrategyConfig {
                 manager: harness.manager_addr.clone(),
-                escrowed: HashSet::from([swap_route.minimum_receive_amount.denom.clone()]),
+                escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
                 strategy: Strategy {
                     owner: harness.owner.clone(),
-                    action: swap_action,
+                    action: Action::OptimalSwap(swap_action),
                     state: Idle {
                         contract_address: strategy_addr.clone(),
                     }
@@ -388,12 +383,12 @@ mod integration_tests {
 
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_route = FinSwap {
-            pair_address: harness.fin_addr.clone(),
+        let swap_route = OptimalSwap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
+            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
         };
 
         let strategy_addr = harness
@@ -403,9 +398,7 @@ mod integration_tests {
                 "Simple ATOM->OSMO Swap",
                 Strategy {
                     owner: harness.owner.clone(),
-                    action: Action::OptimalSwap(OptimalSwap {
-                        routes: vec![SwapRoute::Fin(swap_route.clone())],
-                    }),
+                    action: Action::OptimalSwap(swap_route.clone()),
                     state: Json,
                 },
             )
@@ -448,16 +441,12 @@ mod integration_tests {
 
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_route = FinSwap {
-            pair_address: harness.fin_addr.clone(),
+        let swap_action = OptimalSwap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-        };
-
-        let swap_action = OptimalSwap {
-            routes: vec![SwapRoute::Fin(swap_route.clone())],
+            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
         };
 
         let strategy_addr = harness
@@ -470,7 +459,7 @@ mod integration_tests {
                     action: Action::Conditional((
                         Conditions {
                             conditions: vec![Condition::OwnBalanceAvailable {
-                                amount: swap_route.swap_amount.clone(),
+                                amount: swap_action.swap_amount.clone(),
                             }],
                             threshold: Threshold::All,
                         },
@@ -485,7 +474,7 @@ mod integration_tests {
             &strategy_addr,
             &harness.owner.clone(),
             &[Coin::new(
-                swap_route.swap_amount.amount - Uint128::one(),
+                swap_action.swap_amount.amount - Uint128::one(),
                 fin_pair.denoms.base(),
             )],
         );

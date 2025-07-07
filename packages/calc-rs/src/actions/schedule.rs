@@ -5,7 +5,8 @@ use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResul
 
 use crate::{
     actions::{action::Action, operation::Operation},
-    conditions::{Cadence, Threshold},
+    cadence::Cadence,
+    conditions::Threshold,
     core::Contract,
     manager::ManagerExecuteMsg,
     scheduler::{CreateTrigger, SchedulerExecuteMsg},

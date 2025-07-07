@@ -169,7 +169,7 @@ impl Operation for ThorSwap {
                     minimum_swap_amount,
                     scalar,
                 } => {
-                    let quote = self.get_quote(deps, env)?;
+                    let quote = get_quote(deps, env, &self)?;
 
                     let base_price =
                         Decimal::from_ratio(base_receive_amount.amount, self.swap_amount.amount);
@@ -227,16 +227,17 @@ impl Operation for ThorSwap {
             return Ok((Action::ThorSwap(self), vec![], vec![]));
         }
 
-        let adjusted_quote = ThorSwap {
-            swap_amount: new_swap_amount.clone(),
-            minimum_receive_amount: new_minimum_receive_amount.clone(),
-            max_streaming_quantity: Some(max_streaming_quantity),
-            ..self.clone()
-        }
-        .get_quote(deps, env)?;
+        let adjusted_quote = get_quote(
+            deps,
+            env,
+            &ThorSwap {
+                swap_amount: new_swap_amount.clone(),
+                minimum_receive_amount: new_minimum_receive_amount.clone(),
+                max_streaming_quantity: Some(max_streaming_quantity),
+                ..self.clone()
+            },
+        )?;
 
-        // Unlike for atomic swaps, we avoid fire and forget
-        // L1 swaps as failures are unable to be detected
         if adjusted_quote.expected_amount_out < new_minimum_receive_amount.amount
             || adjusted_quote.recommended_min_amount_in > new_swap_amount.amount
         {
@@ -308,48 +309,46 @@ impl Operation for ThorSwap {
     }
 }
 
-impl ThorSwap {
-    pub fn get_quote(&self, deps: Deps, env: &Env) -> StdResult<SwapQuote> {
-        let swap_quote_request = SwapQuoteRequest {
-            from_asset: self.swap_amount.denom.clone(),
-            to_asset: self.minimum_receive_amount.denom.clone(),
-            amount: self.swap_amount.amount,
-            streaming_interval: Uint128::new(
-                // Default to swapping every 3 blocks
-                self.streaming_interval.unwrap_or(3) as u128,
-            ),
-            streaming_quantity: Uint128::new(
-                // Setting this to 0 allows the chain to
-                // calculate the maximum streaming quantity
-                self.max_streaming_quantity.unwrap_or(0) as u128,
-            ),
-            destination: env.contract.address.to_string(),
-            refund_address: env.contract.address.to_string(),
-            affiliate: self
-                .affiliate_code
-                .clone()
-                .map_or_else(std::vec::Vec::new, |c| vec![c]),
-            affiliate_bps: self
-                .affiliate_bps
-                .map_or_else(std::vec::Vec::new, |b| vec![b]),
-        };
+pub fn get_quote(deps: Deps, env: &Env, swap: &ThorSwap) -> StdResult<SwapQuote> {
+    let swap_quote_request = SwapQuoteRequest {
+        from_asset: swap.swap_amount.denom.clone(),
+        to_asset: swap.minimum_receive_amount.denom.clone(),
+        amount: swap.swap_amount.amount,
+        streaming_interval: Uint128::new(
+            // Default to swapping every 3 blocks
+            swap.streaming_interval.unwrap_or(3) as u128,
+        ),
+        streaming_quantity: Uint128::new(
+            // Setting this to 0 allows the chain to
+            // calculate the maximum streaming quantity
+            swap.max_streaming_quantity.unwrap_or(0) as u128,
+        ),
+        destination: env.contract.address.to_string(),
+        refund_address: env.contract.address.to_string(),
+        affiliate: swap
+            .affiliate_code
+            .clone()
+            .map_or_else(std::vec::Vec::new, |c| vec![c]),
+        affiliate_bps: swap
+            .affiliate_bps
+            .map_or_else(std::vec::Vec::new, |b| vec![b]),
+    };
 
-        let quote = SwapQuote::get(deps.querier, &swap_quote_request).map_err(|e| {
-            StdError::generic_err(format!(
-                "Failed to get L1 swap quote with {:#?}: {e}",
-                swap_quote_request
-            ))
-        })?;
-
-        Ok(quote)
-    }
-
-    pub fn get_expected_amount_out(&self, deps: Deps, env: &Env) -> StdResult<Coin> {
-        let swap_quote = self.get_quote(deps, env)?;
-
-        Ok(Coin::new(
-            swap_quote.expected_amount_out,
-            self.minimum_receive_amount.denom.clone(),
+    let quote = SwapQuote::get(deps.querier, &swap_quote_request).map_err(|e| {
+        StdError::generic_err(format!(
+            "Failed to get L1 swap quote with {:#?}: {e}",
+            swap_quote_request
         ))
-    }
+    })?;
+
+    Ok(quote)
+}
+
+pub fn get_expected_amount_out(deps: Deps, env: &Env, swap: &ThorSwap) -> StdResult<Coin> {
+    let swap_quote = get_quote(deps, env, swap)?;
+
+    Ok(Coin::new(
+        swap_quote.expected_amount_out,
+        swap.minimum_receive_amount.denom.clone(),
+    ))
 }

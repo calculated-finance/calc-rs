@@ -206,6 +206,7 @@ impl Strategy<New> {
                 })
             }
             Action::ThorSwap(thor_swap) => Action::ThorSwap(ThorSwap {
+                // As per agreement with Rujira
                 affiliate_code: Some("rj".to_string()),
                 affiliate_bps: Some(10),
                 ..thor_swap
@@ -215,11 +216,24 @@ impl Strategy<New> {
                     .routes
                     .into_iter()
                     .map(|route| match route {
-                        SwapRoute::Thorchain(route) => SwapRoute::Thorchain(ThorSwap {
+                        SwapRoute::Thorchain {
+                            streaming_interval,
+                            max_streaming_quantity,
+                            previous_swap,
+                            on_complete,
+                            scheduler,
+                            affiliate_code: _,
+                            affiliate_bps: _,
+                        } => SwapRoute::Thorchain {
+                            streaming_interval,
+                            max_streaming_quantity,
+                            previous_swap,
+                            on_complete,
+                            scheduler,
+                            // As per agreement with Rujira
                             affiliate_code: Some("rj".to_string()),
                             affiliate_bps: Some(10),
-                            ..route
-                        }),
+                        },
                         _ => route,
                     })
                     .collect::<Vec<_>>();

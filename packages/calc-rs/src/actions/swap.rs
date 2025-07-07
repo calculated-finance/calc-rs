@@ -1,10 +1,18 @@
 use std::{collections::HashSet, vec};
 
-use crate::actions::{
-    action::Action, fin_swap::FinSwap, operation::Operation, thor_swap::ThorSwap,
+use crate::{
+    actions::{
+        action::Action,
+        fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
+        operation::Operation,
+        thor_swap::{
+            get_expected_amount_out as get_expected_amount_out_thorchain, StreamingSwap, ThorSwap,
+        },
+    },
+    core::Callback,
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg};
+use cosmwasm_std::{Addr, Coin, Coins, Decimal, Deps, Env, Event, StdResult, SubMsg};
 
 #[cw_serde]
 pub enum SwapAmountAdjustment {
@@ -22,130 +30,135 @@ pub trait Exchange {
 
 #[cw_serde]
 pub enum SwapRoute {
-    Fin(FinSwap),
-    Thorchain(ThorSwap),
-}
-
-impl SwapRoute {
-    pub fn denoms(&self) -> HashSet<String> {
-        match self {
-            SwapRoute::Fin(swap) => HashSet::from([
-                swap.swap_amount.denom.clone(),
-                swap.minimum_receive_amount.denom.clone(),
-            ]),
-            SwapRoute::Thorchain(swap) => HashSet::from([
-                swap.swap_amount.denom.clone(),
-                swap.minimum_receive_amount.denom.clone(),
-            ]),
-        }
-    }
-
-    pub fn get_expected_amount_out(&self, deps: Deps, env: &Env) -> StdResult<Coin> {
-        match self {
-            SwapRoute::Fin(swap) => swap.get_expected_amount_out(deps),
-            SwapRoute::Thorchain(swap) => swap.get_expected_amount_out(deps, env),
-        }
-    }
+    Fin(Addr),
+    Thorchain {
+        streaming_interval: Option<u64>,
+        max_streaming_quantity: Option<u64>,
+        affiliate_code: Option<String>,
+        affiliate_bps: Option<u64>,
+        previous_swap: Option<StreamingSwap>,
+        on_complete: Option<Callback>,
+        scheduler: Addr,
+    },
 }
 
 impl From<Action> for SwapRoute {
     fn from(action: Action) -> Self {
         match action {
-            Action::FinSwap(fin_swap) => SwapRoute::Fin(fin_swap),
-            Action::ThorSwap(thor_swap) => SwapRoute::Thorchain(thor_swap),
-            _ => panic!("Cannot convert non-swap action to SwapRoute"),
+            Action::FinSwap(fin_swap) => SwapRoute::Fin(fin_swap.pair_address),
+            Action::ThorSwap(thor_swap) => SwapRoute::Thorchain {
+                streaming_interval: thor_swap.streaming_interval,
+                max_streaming_quantity: thor_swap.max_streaming_quantity,
+                affiliate_code: thor_swap.affiliate_code,
+                affiliate_bps: thor_swap.affiliate_bps,
+                previous_swap: thor_swap.previous_swap,
+                on_complete: thor_swap.on_complete,
+                scheduler: thor_swap.scheduler,
+            },
+            _ => panic!("Invalid action type for SwapRoute"),
         }
     }
 }
 
-impl Operation for SwapRoute {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+impl SwapRoute {
+    pub fn to_action(&self, swap: OptimalSwap) -> Action {
         match self {
-            SwapRoute::Fin(swap) => swap.init(deps, env),
-            SwapRoute::Thorchain(swap) => swap.init(deps, env),
+            SwapRoute::Fin(address) => Action::FinSwap(FinSwap {
+                pair_address: address.clone(),
+                swap_amount: swap.swap_amount,
+                minimum_receive_amount: swap.minimum_receive_amount,
+                maximum_slippage_bps: swap.maximum_slippage_bps,
+                adjustment: swap.adjustment,
+            }),
+            SwapRoute::Thorchain {
+                streaming_interval,
+                max_streaming_quantity,
+                affiliate_code,
+                affiliate_bps,
+                previous_swap,
+                on_complete,
+                scheduler,
+            } => Action::ThorSwap(ThorSwap {
+                swap_amount: swap.swap_amount,
+                minimum_receive_amount: swap.minimum_receive_amount,
+                maximum_slippage_bps: swap.maximum_slippage_bps,
+                adjustment: swap.adjustment,
+                streaming_interval: streaming_interval.clone(),
+                max_streaming_quantity: max_streaming_quantity.clone(),
+                affiliate_code: affiliate_code.clone(),
+                affiliate_bps: affiliate_bps.clone(),
+                previous_swap: previous_swap.clone(),
+                on_complete: on_complete.clone(),
+                scheduler: scheduler.clone(),
+            }),
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        match self {
-            SwapRoute::Fin(swap) => swap.execute(deps, env),
-            SwapRoute::Thorchain(swap) => swap.execute(deps, env),
-        }
-    }
-
-    fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        match self {
-            SwapRoute::Fin(swap) => swap.escrowed(deps, env),
-            SwapRoute::Thorchain(swap) => swap.escrowed(deps, env),
-        }
-    }
-
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
-        match self {
-            SwapRoute::Fin(swap) => swap.balances(deps, env, denoms),
-            SwapRoute::Thorchain(swap) => swap.balances(deps, env, denoms),
-        }
-    }
-
-    fn withdraw(
-        self,
+    pub fn get_expected_amount_out(
+        &self,
         deps: Deps,
         env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+        swap: OptimalSwap,
+    ) -> StdResult<Coin> {
         match self {
-            SwapRoute::Fin(swap) => swap.withdraw(deps, env, desired),
-            SwapRoute::Thorchain(swap) => swap.withdraw(deps, env, desired),
-        }
-    }
-
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        match self {
-            SwapRoute::Fin(swap) => swap.cancel(deps, env),
-            SwapRoute::Thorchain(swap) => swap.cancel(deps, env),
+            SwapRoute::Fin(address) => get_expected_amount_out_fin(
+                deps,
+                &FinSwap {
+                    pair_address: address.clone(),
+                    swap_amount: swap.swap_amount,
+                    minimum_receive_amount: swap.minimum_receive_amount,
+                    maximum_slippage_bps: swap.maximum_slippage_bps,
+                    adjustment: swap.adjustment,
+                },
+            ),
+            SwapRoute::Thorchain {
+                streaming_interval,
+                max_streaming_quantity,
+                affiliate_code,
+                affiliate_bps,
+                previous_swap,
+                on_complete,
+                scheduler,
+            } => get_expected_amount_out_thorchain(
+                deps,
+                env,
+                &ThorSwap {
+                    swap_amount: swap.swap_amount,
+                    minimum_receive_amount: swap.minimum_receive_amount,
+                    maximum_slippage_bps: swap.maximum_slippage_bps,
+                    adjustment: swap.adjustment,
+                    streaming_interval: streaming_interval.clone(),
+                    max_streaming_quantity: max_streaming_quantity.clone(),
+                    affiliate_code: affiliate_code.clone(),
+                    affiliate_bps: affiliate_bps.clone(),
+                    previous_swap: previous_swap.clone(),
+                    on_complete: on_complete.clone(),
+                    scheduler: scheduler.clone(),
+                },
+            ),
         }
     }
 }
 
 #[cw_serde]
 pub struct OptimalSwap {
+    pub swap_amount: Coin,
+    pub minimum_receive_amount: Coin,
+    pub maximum_slippage_bps: u128,
+    pub adjustment: SwapAmountAdjustment,
     pub routes: Vec<SwapRoute>,
 }
 
 impl Operation for OptimalSwap {
     fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut initialised_routes = vec![];
         let mut messages = vec![];
         let mut events = vec![];
 
-        let first_route = self.routes.first().ok_or_else(|| {
-            StdError::generic_err("An optimal swap action must contain at least one route")
-        })?;
-
         for route in self.routes.iter() {
-            if route.denoms() != first_route.denoms() {
-                return Err(StdError::generic_err(
-                    "All routes in an optimal swap action must have the same denoms",
-                ));
-            }
+            let (_, init_messages, init_events) = route.to_action(self.clone()).init(deps, env)?;
 
-            let (initialised_route, route_messages, route_events) =
-                route.clone().init(deps, env)?;
-
-            messages.extend(route_messages);
-            events.extend(route_events);
-
-            match initialised_route {
-                Action::FinSwap(fin_swap) => initialised_routes.push(SwapRoute::Fin(fin_swap)),
-                Action::ThorSwap(thor_swap) => {
-                    initialised_routes.push(SwapRoute::Thorchain(thor_swap))
-                }
-                _ => {
-                    return Err(StdError::generic_err(
-                        "OptimalSwap can only contain FinSwap or ThorSwap routes",
-                    ));
-                }
-            }
+            messages.extend(init_messages);
+            events.extend(init_events);
         }
 
         Ok((Action::OptimalSwap(self), messages, events))
@@ -157,7 +170,7 @@ impl Operation for OptimalSwap {
             .iter()
             .enumerate()
             .filter_map(|(i, r)| {
-                r.get_expected_amount_out(deps, env)
+                r.get_expected_amount_out(deps, env, self.clone())
                     .ok()
                     .map(|amount| (i, amount))
             })
@@ -166,7 +179,8 @@ impl Operation for OptimalSwap {
 
         if let Some(best_route_index) = best_route_index {
             let best_route = &self.routes[best_route_index];
-            let (action, swap_messages, swap_events) = best_route.clone().execute(deps, env)?;
+            let (action, swap_messages, swap_events) =
+                best_route.to_action(self.clone()).execute(deps, env)?;
 
             let mut updated_routes = self.routes.clone();
             updated_routes[best_route_index] = action.into();
@@ -188,7 +202,7 @@ impl Operation for OptimalSwap {
         let mut escrowed = HashSet::new();
 
         for route in &self.routes {
-            let route_escrowed = route.escrowed(_deps, _env)?;
+            let route_escrowed = route.to_action(self.clone()).escrowed(_deps, _env)?;
             escrowed.extend(route_escrowed);
         }
 

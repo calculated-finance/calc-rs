@@ -571,13 +571,7 @@ mod execute_trigger_tests {
         )
         .unwrap_err();
 
-        assert_eq!(
-            err,
-            ContractError::Std(StdError::generic_err(format!(
-                "Trigger conditions not met: {:?}",
-                create_command.condition
-            )))
-        );
+        assert!(err.to_string().contains("Trigger condition not met"));
     }
 
     #[test]

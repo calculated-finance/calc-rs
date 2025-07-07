@@ -12,8 +12,11 @@ use crate::{
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
+    Uint128,
 };
-use rujira_rs::fin::{ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest};
+use rujira_rs::fin::{
+    BookResponse, ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
+};
 
 #[cw_serde]
 pub struct FinSwap {
@@ -89,16 +92,13 @@ impl Operation for FinSwap {
                 minimum_swap_amount,
                 scalar,
             } => {
-                let simulation = deps.querier.query_wasm_smart::<SimulationResponse>(
-                    self.pair_address.clone(),
-                    &QueryMsg::Simulate(self.swap_amount.clone()),
-                )?;
+                let expected_receive_amount = get_expected_amount_out(deps, &self)?;
 
                 let base_price =
                     Decimal::from_ratio(base_receive_amount.amount, self.swap_amount.amount);
 
                 let current_price =
-                    Decimal::from_ratio(self.swap_amount.amount, simulation.returned);
+                    Decimal::from_ratio(self.swap_amount.amount, expected_receive_amount.amount);
 
                 let price_delta = base_price.abs_diff(current_price) / base_price;
                 let scaled_price_delta = price_delta * scalar;
@@ -144,6 +144,49 @@ impl Operation for FinSwap {
             return Ok((Action::FinSwap(self), messages, events));
         }
 
+        let book_response = deps.querier.query_wasm_smart::<BookResponse>(
+            self.pair_address.clone(),
+            &QueryMsg::Book {
+                limit: Some(1),
+                offset: None,
+            },
+        )?;
+
+        let mid_price = (book_response.base[0].price + book_response.quote[0].price)
+            / Decimal::from_ratio(2u128, 1u128);
+
+        let pair = deps
+            .querier
+            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
+
+        let spot_price = if new_swap_amount.denom == pair.denoms.base() {
+            Decimal::one() / mid_price
+        } else {
+            mid_price
+        };
+
+        let expected_amount_out = get_expected_amount_out(deps, &self)?;
+
+        let optimal_return_amount = max(
+            expected_amount_out.amount,
+            new_swap_amount
+                .amount
+                .mul_floor(Decimal::one() / spot_price),
+        );
+
+        let slippage_bps = Uint128::new(10_000).mul_ceil(
+            Decimal::one()
+                .checked_sub(Decimal::from_ratio(
+                    expected_amount_out.amount,
+                    optimal_return_amount,
+                ))
+                .unwrap_or(Decimal::one()),
+        );
+
+        if slippage_bps.gt(&Uint128::new(self.maximum_slippage_bps)) {
+            return Ok((Action::FinSwap(self), vec![], vec![]));
+        }
+
         let swap_msg = SubMsg::reply_always(
             Contract(self.pair_address.clone()).call(
                 to_json_binary(&ExecuteMsg::Swap(SwapRequest {
@@ -187,16 +230,14 @@ impl Operation for FinSwap {
     }
 }
 
-impl FinSwap {
-    pub fn get_expected_amount_out(&self, deps: Deps) -> StdResult<Coin> {
-        let simulation = deps.querier.query_wasm_smart::<SimulationResponse>(
-            self.pair_address.clone(),
-            &QueryMsg::Simulate(self.swap_amount.clone()),
-        )?;
+pub fn get_expected_amount_out(deps: Deps, swap: &FinSwap) -> StdResult<Coin> {
+    let simulation = deps.querier.query_wasm_smart::<SimulationResponse>(
+        swap.pair_address.clone(),
+        &QueryMsg::Simulate(swap.swap_amount.clone()),
+    )?;
 
-        Ok(Coin::new(
-            simulation.returned,
-            self.swap_amount.denom.clone(),
-        ))
-    }
+    Ok(Coin::new(
+        simulation.returned,
+        swap.swap_amount.denom.clone(),
+    ))
 }
