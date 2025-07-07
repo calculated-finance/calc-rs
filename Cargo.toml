@@ -4,7 +4,6 @@ members = [
   "contracts/*",
 ]
 resolver = "1"
-exclude = ["contracts/twap"]
 
 [profile.release]
 opt-level = 3
@@ -36,6 +35,7 @@ rand = "0.9.1"
 rstest = "0.25.0"
 rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "2c66fcbd88f4287132987362ca18ecd17649d4c7" }
 scheduler = { path = "contracts/scheduler" }
+strategy = { path = "contracts/strategy" }
 schemars = "0.8.16"
 serde = { version = "1.0.197", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.58" }

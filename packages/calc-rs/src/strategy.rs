@@ -170,16 +170,21 @@ impl Strategy<New> {
         Ok(match action {
             Action::Distribute(Distribution {
                 denoms,
-                mutable_destinations,
-                immutable_destinations,
+                destinations,
             }) => {
                 let total_affiliate_bps = affiliates
                     .iter()
                     .fold(0, |acc, affiliate| acc + affiliate.bps);
 
-                let total_shares = mutable_destinations
+                let total_shares = destinations
                     .iter()
-                    .chain(immutable_destinations.iter())
+                    .filter(|d| match d.recipient {
+                        Recipient::Bank { .. }
+                        | Recipient::Wasm { .. }
+                        | Recipient::Deposit { .. } => true,
+                        // We don't take fees on transfers between strategies
+                        Recipient::Strategy { .. } => false,
+                    })
                     .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
                 let total_shares_with_fees =
@@ -187,9 +192,8 @@ impl Strategy<New> {
 
                 Action::Distribute(Distribution {
                     denoms: denoms.clone(),
-                    mutable_destinations: mutable_destinations.clone(),
-                    immutable_destinations: [
-                        immutable_destinations.clone(),
+                    destinations: [
+                        destinations.clone(),
                         affiliates
                             .iter()
                             .map(|affiliate| Destination {

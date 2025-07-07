@@ -34,19 +34,8 @@ impl Operation for Schedule {
             self.execution_rebate.clone(),
         );
 
-        let cadence = match &self.cadence {
-            Cadence::Cron {
-                expr,
-                previous: None,
-            } => Cadence::Cron {
-                expr: expr.clone(),
-                previous: Some(env.block.time),
-            },
-            _ => self.cadence.clone(),
-        };
-
         Ok((
-            Action::Schedule(Schedule { cadence, ..self }),
+            Action::Schedule(self),
             vec![SubMsg::reply_never(set_trigger_msg)],
             vec![],
         ))
