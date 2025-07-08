@@ -279,14 +279,19 @@ dependencies = [
 name = "calc-rs-test"
 version = "0.0.1"
 dependencies = [
+ "anybuf 1.0.0",
+ "anyhow",
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-multi-test",
+ "cw-storage-plus",
  "manager",
+ "prost",
  "rujira-fin",
  "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
  "scheduler",
+ "serde",
  "strategy",
 ]
 

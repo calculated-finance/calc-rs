@@ -22,15 +22,15 @@ enum DistributionEvent {
     },
 }
 
-impl Into<Event> for DistributionEvent {
-    fn into(self) -> Event {
-        match self {
+impl From<DistributionEvent> for Event {
+    fn from(val: DistributionEvent) -> Self {
+        match val {
             DistributionEvent::DistributionSkipped { reason } => {
                 Event::new("distribution_skipped").add_attribute("reason", reason)
             }
             DistributionEvent::Distribute { recipient, amount } => Event::new("distribute")
                 .add_attribute("recipient", recipient)
-                .add_attribute("amount", format!("{:?}", amount)),
+                .add_attribute("amount", format!("{amount:?}")),
         }
     }
 }
@@ -69,52 +69,12 @@ pub struct Distribution {
     pub destinations: Vec<Destination>,
 }
 
-impl Operation for Distribution {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        if self.denoms.is_empty() {
-            return Err(StdError::generic_err("Denoms cannot be empty"));
-        }
-
-        let has_native_denoms = self.denoms.iter().any(|d| !d.contains('-'));
-        let mut total_shares = Uint128::zero();
-
-        for destination in self.destinations.iter() {
-            if destination.shares.is_zero() {
-                return Err(StdError::generic_err("Destination shares cannot be zero"));
-            }
-
-            match &destination.recipient {
-                Recipient::Bank { address, .. }
-                | Recipient::Wasm { address, .. }
-                | Recipient::Strategy {
-                    contract_address: address,
-                } => {
-                    deps.api.addr_validate(address.as_ref()).map_err(|_| {
-                        StdError::generic_err(format!("Invalid destination address: {address}"))
-                    })?;
-                }
-                Recipient::Deposit { memo } => {
-                    if has_native_denoms {
-                        return Err(StdError::generic_err(format!(
-                            "Only secured assets can be deposited with memo {memo}"
-                        )));
-                    }
-                }
-            }
-
-            total_shares += destination.shares;
-        }
-
-        if total_shares < Uint128::new(10_000) {
-            return Err(StdError::generic_err(
-                "Total shares must be at least 10,000",
-            ));
-        }
-
-        Ok((Action::Distribute(self), vec![], vec![]))
-    }
-
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+impl Distribution {
+    pub fn execute_unsafe(
+        self,
+        deps: Deps,
+        env: &Env,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         let total_shares = self
             .destinations
             .clone()
@@ -129,12 +89,12 @@ impl Operation for Distribution {
 
         if balances.is_empty() {
             return Ok((
-                Action::Distribute(self),
                 vec![],
                 vec![DistributionEvent::DistributionSkipped {
                     reason: "No balances available for distribution".to_string(),
                 }
                 .into()],
+                Action::Distribute(self),
             ));
         }
 
@@ -193,7 +153,71 @@ impl Operation for Distribution {
             messages.push(distribute_message);
         }
 
-        Ok((Action::Distribute(self), messages, vec![]))
+        Ok((messages, vec![], Action::Distribute(self)))
+    }
+}
+
+impl Operation for Distribution {
+    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if self.denoms.is_empty() {
+            return Err(StdError::generic_err("Denoms cannot be empty"));
+        }
+
+        if self.destinations.is_empty() {
+            return Err(StdError::generic_err("Destinations cannot be empty"));
+        }
+
+        let has_native_denoms = self.denoms.iter().any(|d| !d.contains('-'));
+        let mut total_shares = Uint128::zero();
+
+        for destination in self.destinations.iter() {
+            if destination.shares.is_zero() {
+                return Err(StdError::generic_err("Destination shares cannot be zero"));
+            }
+
+            match &destination.recipient {
+                Recipient::Bank { address, .. }
+                | Recipient::Wasm { address, .. }
+                | Recipient::Strategy {
+                    contract_address: address,
+                } => {
+                    deps.api.addr_validate(address.as_ref()).map_err(|_| {
+                        StdError::generic_err(format!("Invalid destination address: {address}"))
+                    })?;
+                }
+                Recipient::Deposit { memo } => {
+                    if has_native_denoms {
+                        return Err(StdError::generic_err(format!(
+                            "Only secured assets can be deposited with memo {memo}"
+                        )));
+                    }
+                }
+            }
+
+            total_shares += destination.shares;
+        }
+
+        if total_shares < Uint128::new(10_000) {
+            return Err(StdError::generic_err(
+                "Total shares must be at least 10,000",
+            ));
+        }
+
+        Ok((vec![], vec![], Action::Distribute(self)))
+    }
+
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+        match self.clone().execute_unsafe(deps, env) {
+            Ok((action, messages, events)) => (action, messages, events),
+            Err(err) => (
+                vec![],
+                vec![DistributionEvent::DistributionSkipped {
+                    reason: err.to_string(),
+                }
+                .into()],
+                Action::Distribute(self),
+            ),
+        }
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -209,11 +233,11 @@ impl Operation for Distribution {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        Ok((Action::Distribute(self), vec![], vec![]))
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Distribute(self)))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        Ok((Action::Distribute(self), vec![], vec![]))
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Distribute(self)))
     }
 }

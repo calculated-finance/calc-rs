@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, str::FromStr};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult};
+use cron::Schedule as CronSchedule;
 
 use crate::{
     actions::{action::Action, operation::Operation},
@@ -17,14 +18,14 @@ enum ScheduleEvent {
     CreateTrigger { condition: Condition },
 }
 
-impl Into<Event> for ScheduleEvent {
-    fn into(self) -> Event {
-        match self {
+impl From<ScheduleEvent> for Event {
+    fn from(val: ScheduleEvent) -> Self {
+        match val {
             ScheduleEvent::ExecutionSkipped { reason } => {
                 Event::new("schedule_skipped").add_attribute("reason", reason)
             }
             ScheduleEvent::CreateTrigger { condition } => {
-                Event::new("trigger_created").add_attribute("condition", format!("{:?}", condition))
+                Event::new("trigger_created").add_attribute("condition", format!("{condition:?}"))
             }
         }
     }
@@ -38,14 +39,14 @@ pub struct Schedule {
     pub action: Box<Action>,
 }
 
-impl Operation for Schedule {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        Ok((Action::Schedule(self), vec![], vec![]))
-    }
-
-    fn execute(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+impl Schedule {
+    pub fn execute_unsafe(
+        self,
+        deps: Deps,
+        env: &Env,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.cadence.is_due(env)? {
-            let (action, mut messages, events) = self.action.execute(_deps, env)?;
+            let (mut messages, events, action) = self.action.execute(deps, env);
             let next = self.cadence.next(env)?;
             let condition = next.into_condition(env)?;
 
@@ -63,13 +64,13 @@ impl Operation for Schedule {
             ));
 
             Ok((
+                messages,
+                events,
                 Action::Schedule(Schedule {
                     cadence: next,
                     action: Box::new(action),
                     ..self
                 }),
-                messages,
-                events,
             ))
         } else {
             let condition = self.cadence.into_condition(env)?;
@@ -84,7 +85,6 @@ impl Operation for Schedule {
             };
 
             Ok((
-                Action::Schedule(self),
                 vec![StrategyMsg::with_payload(
                     create_trigger_msg,
                     StrategyMsgPayload {
@@ -93,7 +93,34 @@ impl Operation for Schedule {
                     },
                 )],
                 vec![skipped_event.into()],
+                Action::Schedule(self),
             ))
+        }
+    }
+}
+
+impl Operation for Schedule {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if let Cadence::Cron { expr, .. } = self.cadence.clone() {
+            CronSchedule::from_str(&expr).map_err(|e| {
+                cosmwasm_std::StdError::generic_err(format!("Invalid cron string: {e}"))
+            })?;
+        }
+
+        Ok((vec![], vec![], Action::Schedule(self)))
+    }
+
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+        match self.clone().execute_unsafe(deps, env) {
+            Ok((action, messages, events)) => (action, messages, events),
+            Err(err) => (
+                vec![],
+                vec![ScheduleEvent::ExecutionSkipped {
+                    reason: err.to_string(),
+                }
+                .into()],
+                Action::Schedule(self),
+            ),
         }
     }
 
@@ -110,11 +137,11 @@ impl Operation for Schedule {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        Ok((Action::Schedule(self), vec![], vec![]))
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Schedule(self)))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        Ok((Action::Schedule(self), vec![], vec![]))
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Schedule(self)))
     }
 }

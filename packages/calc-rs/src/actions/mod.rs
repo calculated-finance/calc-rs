@@ -6,6 +6,6 @@ pub mod fund_strategy;
 pub mod limit_order;
 pub mod many;
 pub mod operation;
+pub mod optimal_swap;
 pub mod schedule;
-pub mod swap;
 pub mod thor_swap;

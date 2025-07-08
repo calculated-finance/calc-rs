@@ -40,9 +40,9 @@ enum LimitOrderEvent {
     WithdrawOrder(LimitOrderEventData),
 }
 
-impl Into<Event> for LimitOrderEvent {
-    fn into(self) -> Event {
-        match self {
+impl From<LimitOrderEvent> for Event {
+    fn from(val: LimitOrderEvent) -> Self {
+        match val {
             LimitOrderEvent::SetOrderSkipped { reason } => {
                 Event::new("set_order_skipped").add_attribute("reason", reason)
             }
@@ -149,28 +149,12 @@ impl LimitOrder {
 
         Ok(statistics)
     }
-}
 
-impl Operation for LimitOrder {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        if let Some(amount) = self.bid_amount {
-            if amount.lt(&Uint128::new(1_000)) {
-                return Err(StdError::generic_err(
-                    "Bid amount cannot be less than 1,000",
-                ));
-            }
-        }
-
-        if self.current_price.is_some() {
-            return Err(StdError::generic_err(
-                "Cannot create limit order with a current price set.",
-            ));
-        }
-
-        Ok((Action::SetLimitOrder(self), vec![], vec![]))
-    }
-
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+    fn execute_unsafe(
+        self,
+        deps: Deps,
+        env: &Env,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         let existing_order = self.strategy.existing_order(
             deps,
             env,
@@ -219,15 +203,15 @@ impl Operation for LimitOrder {
         };
 
         if bid_denom_balance.amount.is_zero() {
-            if let Some(current_price) = self.current_price.clone() {
+            if let Some(current_price) = self.current_price {
                 if new_price == current_price {
                     return Ok((
-                        Action::SetLimitOrder(self),
                         vec![],
                         vec![LimitOrderEvent::SetOrderSkipped {
                             reason: "No balance available to deposit".to_string(),
                         }
                         .into()],
+                        Action::SetLimitOrder(self),
                     ));
                 }
 
@@ -243,12 +227,12 @@ impl Operation for LimitOrder {
 
                     if price_delta <= tolerance_threshold {
                         return Ok((
-                            Action::SetLimitOrder(self),
                             vec![],
                             vec![LimitOrderEvent::SetOrderSkipped {
                                 reason: "Current price is within deviation tolerance".to_string(),
                             }
                             .into()],
+                            Action::SetLimitOrder(self),
                         ));
                     }
                 }
@@ -311,13 +295,47 @@ impl Operation for LimitOrder {
             ));
 
         Ok((
+            vec![set_order_msg, create_trigger_msg],
+            vec![],
             Action::SetLimitOrder(LimitOrder {
                 current_price: Some(new_price),
                 ..self
             }),
-            vec![set_order_msg, create_trigger_msg],
-            vec![],
         ))
+    }
+}
+
+impl Operation for LimitOrder {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if let Some(amount) = self.bid_amount {
+            if amount.lt(&Uint128::new(1_000)) {
+                return Err(StdError::generic_err(
+                    "Bid amount cannot be less than 1,000",
+                ));
+            }
+        }
+
+        if self.current_price.is_some() {
+            return Err(StdError::generic_err(
+                "Cannot create limit order with a current price set.",
+            ));
+        }
+
+        Ok((vec![], vec![], Action::SetLimitOrder(self)))
+    }
+
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+        match self.clone().execute_unsafe(deps, env) {
+            Ok((action, messages, events)) => (action, messages, events),
+            Err(err) => (
+                vec![],
+                vec![LimitOrderEvent::SetOrderSkipped {
+                    reason: err.to_string(),
+                }
+                .into()],
+                Action::SetLimitOrder(self),
+            ),
+        }
     }
 
     fn escrowed(&self, deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -358,9 +376,9 @@ impl Operation for LimitOrder {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if !desired.contains(&self.bid_denom) {
-            return Ok((Action::SetLimitOrder(self), vec![], vec![]));
+            return Ok((vec![], vec![], Action::SetLimitOrder(self)));
         }
 
         let existing_order = self.strategy.existing_order(
@@ -398,26 +416,26 @@ impl Operation for LimitOrder {
             );
 
             return Ok((
+                vec![withdraw_order_msg],
+                vec![],
                 Action::SetLimitOrder(LimitOrder {
                     current_price: None,
                     ..self
                 }),
-                vec![withdraw_order_msg],
-                vec![],
             ));
         }
 
         Ok((
+            vec![],
+            vec![],
             Action::SetLimitOrder(LimitOrder {
                 current_price: None,
                 ..self
             }),
-            vec![],
-            vec![],
         ))
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         let existing_order = self.strategy.existing_order(
             deps,
             env,
@@ -458,12 +476,12 @@ impl Operation for LimitOrder {
         }
 
         Ok((
+            messages,
+            vec![],
             Action::SetLimitOrder(LimitOrder {
                 current_price: None,
                 ..self
             }),
-            messages,
-            vec![],
         ))
     }
 }

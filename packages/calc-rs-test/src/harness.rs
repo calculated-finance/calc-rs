@@ -6,10 +6,10 @@ use calc_rs::{
         ConditionFilter, SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger,
     },
     statistics::Statistics,
-    strategy::{Json, Strategy, StrategyConfig, StrategyQueryMsg},
+    strategy::{Json, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
 };
-use cosmwasm_std::{Addr, Coin, Decimal, StdError, StdResult, Uint128};
-use cw_multi_test::{error::AnyResult, App, AppResponse, ContractWrapper, Executor};
+use cosmwasm_std::{Addr, Coin, Decimal, StdError, Uint128};
+use cw_multi_test::{error::AnyResult, AppResponse, BasicAppBuilder, ContractWrapper, Executor};
 use rujira_rs::fin::{
     ConfigResponse, Denoms, ExecuteMsg, InstantiateMsg, OrdersResponse, Price, QueryMsg, Side, Tick,
 };
@@ -18,8 +18,10 @@ use calc_rs::manager::StrategyStatus;
 
 use strategy::contract::{execute, instantiate, query, reply};
 
+use crate::stargate::{RujiraApp, RujiraStargate};
+
 pub struct CalcTestApp {
-    pub app: App,
+    pub app: RujiraApp,
     pub fin_addr: Addr,
     pub manager_addr: Addr,
     pub scheduler_addr: Addr,
@@ -28,7 +30,9 @@ pub struct CalcTestApp {
 
 impl CalcTestApp {
     pub fn setup() -> Self {
-        let mut app = App::default();
+        let mut app = BasicAppBuilder::new()
+            .with_stargate(RujiraStargate::default())
+            .build(|_, _, _| {});
 
         let fin_code_id = app.store_code(Box::new(ContractWrapper::new(
             rujira_fin::contract::execute,
@@ -59,7 +63,7 @@ impl CalcTestApp {
         let owner = app.api().addr_make("owner");
 
         let base_denom = "rune";
-        let quote_denom = "x/ruji";
+        let quote_denom = "eth-usdc";
 
         let fin_addr = app
             .instantiate_contract(
@@ -190,7 +194,7 @@ impl CalcTestApp {
         label: &str,
         strategy: Strategy<Json>,
         funds: &[Coin],
-    ) -> StdResult<Addr> {
+    ) -> AnyResult<Addr> {
         let msg = ManagerExecuteMsg::InstantiateStrategy {
             owner: owner.clone(),
             label: label.to_string(),
@@ -198,10 +202,9 @@ impl CalcTestApp {
             strategy,
         };
 
-        let response = self
-            .app
-            .execute_contract(sender.clone(), self.manager_addr.clone(), &msg, &funds)
-            .unwrap();
+        let response =
+            self.app
+                .execute_contract(sender.clone(), self.manager_addr.clone(), &msg, funds)?;
 
         let wasm_event = response
             .events
@@ -362,6 +365,20 @@ impl CalcTestApp {
                 contract_address: strategy_addr.clone(),
                 status,
             },
+            &[],
+        )
+    }
+
+    pub fn withdraw(
+        &mut self,
+        sender: &Addr,
+        strategy_addr: &Addr,
+        funds: &[Coin],
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            strategy_addr.clone(),
+            &StrategyExecuteMsg::Withdraw(funds.iter().map(|c| c.denom.clone()).collect()),
             &[],
         )
     }

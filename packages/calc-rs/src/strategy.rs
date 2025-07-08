@@ -13,14 +13,16 @@ use crate::{
         conditional::Conditional,
         distribution::{Destination, Distribution, Recipient},
         operation::Operation,
+        optimal_swap::{OptimalSwap, SwapRoute},
         schedule::Schedule,
-        swap::{OptimalSwap, SwapRoute},
         thor_swap::ThorSwap,
     },
-    constants::PROCESS_REPLY_PAYLOAD_REPLY_ID,
+    constants::PROCESS_PAYLOAD_REPLY_ID,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
 };
+
+pub const MAX_STRATEGY_ACTIONS: usize = 10;
 
 #[cw_serde]
 pub struct StrategyConfig {
@@ -29,8 +31,7 @@ pub struct StrategyConfig {
     pub escrowed: HashSet<String>,
 }
 
-#[cw_serde]
-pub struct StrategyInstantiateMsg(pub Strategy<Instantiable>);
+pub type StrategyInstantiateMsg = Strategy<Instantiable>;
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
@@ -74,6 +75,7 @@ impl<S> Strategy<S> {
 }
 
 #[cw_serde]
+#[derive(Default)]
 pub struct StrategyMsgPayload {
     pub statistics: Statistics,
     pub events: Vec<Event>,
@@ -85,19 +87,10 @@ impl StrategyMsgPayload {
             .clone()
             .into_iter()
             .map(|mut event| {
-                event.ty = format!("{}_{}", event.ty, decorator);
+                event.ty = format!("calc_event:{}_{}", event.ty, decorator);
                 event
             })
             .collect()
-    }
-}
-
-impl Default for StrategyMsgPayload {
-    fn default() -> Self {
-        Self {
-            statistics: Statistics::default(),
-            events: vec![],
-        }
     }
 }
 
@@ -122,7 +115,7 @@ impl StrategyMsg {
 
 impl From<StrategyMsg> for SubMsg {
     fn from(msg: StrategyMsg) -> Self {
-        SubMsg::reply_always(msg.msg, PROCESS_REPLY_PAYLOAD_REPLY_ID)
+        SubMsg::reply_always(msg.msg, PROCESS_PAYLOAD_REPLY_ID)
             .with_payload(to_json_binary(&msg.payload).unwrap())
     }
 }
@@ -314,22 +307,29 @@ impl Strategy<New> {
 }
 
 impl Strategy<Instantiable> {
-    pub fn instantiate_msg(&self, funds: &[Coin]) -> StdResult<WasmMsg> {
+    pub fn instantiate_msg(&self, funds: &[Coin]) -> StdResult<CosmosMsg> {
         Ok(WasmMsg::Instantiate2 {
             admin: Some(self.owner.to_string()),
             code_id: self.state.code_id,
             label: self.state.label.clone(),
             salt: self.state.salt.clone(),
-            msg: to_json_binary(&StrategyInstantiateMsg(self.clone()))?,
+            msg: to_json_binary(&self.clone())?,
             funds: funds.to_vec(),
-        })
+        }
+        .into())
     }
 
     pub fn init<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
     where
         F: FnOnce(&mut dyn Storage, Strategy<Idle>) -> StdResult<()>,
     {
-        let (action, messages, events) = self.action.init(deps.as_ref(), env)?;
+        if self.size() > MAX_STRATEGY_ACTIONS {
+            return Err(StdError::generic_err(format!(
+                "Strategy size exceeds maximum limit of {MAX_STRATEGY_ACTIONS} actions"
+            )));
+        }
+
+        let (messages, events, action) = self.action.init(deps.as_ref(), env)?;
 
         save(
             deps.storage,
@@ -350,7 +350,7 @@ impl Strategy<Instantiable> {
 
 impl Strategy<Idle> {
     pub fn prepare_to_execute(self, deps: Deps, env: &Env) -> StdResult<Strategy<Executable>> {
-        let (action, messages, events) = self.action.execute(deps, env)?;
+        let (messages, events, action) = self.action.execute(deps, env);
 
         Ok(Strategy {
             owner: self.owner,
@@ -369,7 +369,7 @@ impl Strategy<Idle> {
         env: &Env,
         desired: &HashSet<String>,
     ) -> StdResult<Strategy<Executable>> {
-        let (action, messages, events) = self.action.withdraw(deps, env, desired)?;
+        let (messages, events, action) = self.action.withdraw(deps, env, desired)?;
 
         Ok(Strategy {
             owner: self.owner,
@@ -383,7 +383,7 @@ impl Strategy<Idle> {
     }
 
     pub fn prepare_to_cancel(self, deps: Deps, env: &Env) -> StdResult<Strategy<Executable>> {
-        let (action, messages, events) = self.action.cancel(deps, env)?;
+        let (messages, events, action) = self.action.cancel(deps, env)?;
 
         Ok(Strategy {
             owner: self.owner,

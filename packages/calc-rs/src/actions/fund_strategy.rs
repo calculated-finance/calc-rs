@@ -17,9 +17,9 @@ enum FundStrategyEvent {
     },
 }
 
-impl Into<Event> for FundStrategyEvent {
-    fn into(self) -> Event {
-        match self {
+impl From<FundStrategyEvent> for Event {
+    fn from(val: FundStrategyEvent) -> Self {
+        match val {
             FundStrategyEvent::Fund {
                 contract_address,
                 denoms,
@@ -38,33 +38,12 @@ pub struct FundStrategy {
     denoms: HashSet<String>,
 }
 
-impl Operation for FundStrategy {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        if self.denoms.is_empty() {
-            return Err(StdError::generic_err(
-                "Fund strategy denoms cannot be empty",
-            ));
-        }
-
-        let source_contract_info = deps
-            .querier
-            .query_wasm_contract_info(env.contract.address.clone())?;
-
-        let funded_contract_code_id = deps
-            .querier
-            .query_wasm_contract_info(self.contract_address.clone())?
-            .code_id;
-
-        if source_contract_info.code_id != funded_contract_code_id {
-            return Err(StdError::generic_err(
-                "Funded strategy contract must be a CALC strategy contract",
-            ));
-        }
-
-        Ok((Action::FundStrategy(self), vec![], vec![]))
-    }
-
-    fn execute(self, deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+impl FundStrategy {
+    pub fn execute_unsafe(
+        self,
+        deps: Deps,
+        _env: &Env,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         let mut funds = Coins::default();
 
         for denom in &self.denoms {
@@ -92,7 +71,45 @@ impl Operation for FundStrategy {
             },
         );
 
-        Ok((Action::FundStrategy(self), vec![bank_msg], vec![]))
+        Ok((vec![bank_msg], vec![], Action::FundStrategy(self)))
+    }
+}
+
+impl Operation for FundStrategy {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if self.denoms.is_empty() {
+            return Err(StdError::generic_err(
+                "Fund strategy denoms cannot be empty",
+            ));
+        }
+
+        let source_contract_info = deps
+            .querier
+            .query_wasm_contract_info(env.contract.address.clone())?;
+
+        let funded_contract_code_id = deps
+            .querier
+            .query_wasm_contract_info(self.contract_address.clone())?
+            .code_id;
+
+        if source_contract_info.code_id != funded_contract_code_id {
+            return Err(StdError::generic_err(
+                "Funded strategy contract must be a CALC strategy contract",
+            ));
+        }
+
+        Ok((vec![], vec![], Action::FundStrategy(self)))
+    }
+
+    fn execute(self, deps: Deps, _env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+        match self.clone().execute_unsafe(deps, _env) {
+            Ok(result) => result,
+            Err(err) => {
+                let error_event =
+                    Event::new("fund_strategy_error").add_attribute("error", err.to_string());
+                (vec![], vec![error_event], Action::FundStrategy(self))
+            }
+        }
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -108,11 +125,11 @@ impl Operation for FundStrategy {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        Ok((Action::FundStrategy(self), vec![], vec![]))
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::FundStrategy(self)))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
-        Ok((Action::FundStrategy(self), vec![], vec![]))
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::FundStrategy(self)))
     }
 }

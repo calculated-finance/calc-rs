@@ -7,7 +7,7 @@ use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 use crate::{
     actions::{
         fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
-        swap::{SwapAmountAdjustment, SwapRoute},
+        optimal_swap::{SwapAmountAdjustment, SwapRoute},
         thor_swap::{get_expected_amount_out as get_expected_amount_out_thorchain, ThorSwap},
     },
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},

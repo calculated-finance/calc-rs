@@ -5,8 +5,8 @@ use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
 use crate::{actions::action::Action, strategy::StrategyMsg};
 
 pub trait Operation {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)>;
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)>;
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)>;
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action);
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
     fn withdraw(
@@ -14,6 +14,6 @@ pub trait Operation {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)>;
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)>;
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)>;
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)>;
 }

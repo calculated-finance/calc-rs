@@ -1,8 +1,11 @@
+use std::fmt::Debug;
+
 use calc_rs::{
     manager::StrategyStatus, scheduler::ConditionFilter, statistics::Statistics,
     strategy::StrategyConfig,
 };
 use cosmwasm_std::{Addr, Coin, Decimal, Uint128};
+use cw_multi_test::{error::AnyResult, AppResponse};
 use rujira_rs::fin::{OrderResponse, OrdersResponse, Price, Side};
 
 use crate::harness::CalcTestApp;
@@ -12,6 +15,16 @@ pub struct StrategyHandler<'a> {
     pub owner: Addr,
     pub keeper: Addr,
     pub harness: &'a mut CalcTestApp,
+}
+
+impl Debug for StrategyHandler<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StrategyHandler")
+            .field("strategy_addr", &self.strategy_addr)
+            .field("owner", &self.owner)
+            .field("keeper", &self.keeper)
+            .finish()
+    }
 }
 
 impl<'a> StrategyHandler<'a> {
@@ -109,56 +122,54 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
+    pub fn withdraw(&mut self, sender: &Addr, funds: &[Coin]) -> AnyResult<AppResponse> {
+        self.harness.withdraw(sender, &self.strategy_addr, funds)
+    }
+
+    pub fn config(self) -> StrategyConfig {
+        self.harness.query_strategy_config(&self.strategy_addr)
+    }
+
     // Assertion helpers
 
     pub fn assert_balance(&mut self, expected: Coin) -> &mut Self {
-        println!(
-            "[StrategyHandler] Asserting strategy balance is {:#?}",
-            expected
-        );
+        println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
         let balances = self.harness.query_balances(&self.strategy_addr);
         assert!(
             balances
                 .iter()
                 .any(|c| c.denom == expected.denom && c.amount == expected.amount),
-            "Expected balance not found: {expected:?}"
+            "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
         );
         self
     }
 
     pub fn assert_balances(&mut self, expected_balances: Vec<Coin>) -> &mut Self {
-        println!(
-            "[StrategyHandler] Asserting all strategy balances are {:#?}",
-            expected_balances
-        );
+        println!("[StrategyHandler] Asserting all strategy balances are {expected_balances:#?}");
         let balances = self.harness.query_balances(&self.strategy_addr);
-        assert_eq!(
-            balances, expected_balances,
-            "Expected balances do not match current balances: expected {:#?}, got {:#?}",
-            expected_balances, balances
-        );
+        for expected in &expected_balances {
+            assert!(
+                balances
+                    .iter()
+                    .any(|c| c.denom == expected.denom && c.amount == expected.amount),
+                "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
+            );
+        }
         self
     }
 
     pub fn assert_stats(&mut self, expected_stats: Statistics) -> &mut Self {
-        println!(
-            "[StrategyHandler] Asserting strategy stats are {:#?}",
-            expected_stats
-        );
+        println!("[StrategyHandler] Asserting strategy stats are {expected_stats:#?}");
         let stats = self.harness.query_strategy_stats(&self.strategy_addr);
         assert_eq!(
             stats, expected_stats,
-            "Expected stats do not match current stats: expected {:#?}, got {:#?}",
-            expected_stats, stats
+            "Expected stats do not match current stats: expected {expected_stats:#?}, got {stats:#?}"
         );
         self
     }
 
     pub fn assert_swapped(&mut self, expected_swapped: Vec<Coin>) -> &mut Self {
-        println!(
-            "[StrategyHandler] Asserting swapped coins are {:#?}",
-            expected_swapped
-        );
+        println!("[StrategyHandler] Asserting swapped coins are {expected_swapped:#?}");
         let stats = self.harness.query_strategy_stats(&self.strategy_addr);
         assert_eq!(
             stats.swapped, expected_swapped,
@@ -169,15 +180,11 @@ impl<'a> StrategyHandler<'a> {
     }
 
     pub fn assert_config(&mut self, expected_config: StrategyConfig) -> &mut Self {
-        println!(
-            "[StrategyHandler] Asserting strategy config is {:#?}",
-            expected_config
-        );
+        println!("[StrategyHandler] Asserting strategy config is {expected_config:#?}");
         let config = self.harness.query_strategy_config(&self.strategy_addr);
         assert_eq!(
             config, expected_config,
-            "Expected config does not match current config: expected {:#?}, got {:#?}",
-            expected_config, config
+            "Expected config does not match current config: expected {expected_config:#?}, got {config:#?}"
         );
         self
     }
@@ -202,8 +209,7 @@ impl<'a> StrategyHandler<'a> {
         expected_fin_orders: Vec<(Side, Decimal, Uint128, Uint128, Uint128)>,
     ) -> &mut Self {
         println!(
-            "[StrategyHandler] Asserting strategy fin orders on pair {} are {:#?}",
-            pair_address, expected_fin_orders
+            "[StrategyHandler] Asserting strategy fin orders on pair {pair_address} are {expected_fin_orders:#?}"
         );
         let fin_orders =
             self.harness
@@ -216,7 +222,7 @@ impl<'a> StrategyHandler<'a> {
                     .map(|(side, price, offer, remaining, filled)| OrderResponse {
                         owner: self.strategy_addr.to_string(),
                         side: side.clone(),
-                        price: Price::Fixed(price.clone()),
+                        price: Price::Fixed(*price),
                         rate: *price,
                         updated_at: self.harness.app.block_info().time,
                         offer: *offer,

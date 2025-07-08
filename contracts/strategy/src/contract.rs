@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use calc_rs::{
-    constants::{LOG_ERRORS_REPLY_ID, PROCESS_REPLY_PAYLOAD_REPLY_ID},
+    constants::{LOG_ERRORS_REPLY_ID, PROCESS_PAYLOAD_REPLY_ID},
     core::{Contract, ContractError, ContractResult},
     manager::StrategyStatus,
     strategy::{
@@ -27,15 +27,15 @@ pub fn instantiate(
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
-    if msg.0.size() > MAX_BEHAVIOUR_ACTIONS {
+    if msg.size() > MAX_BEHAVIOUR_ACTIONS {
         return Err(ContractError::generic_err(format!(
             "Behaviour cannot exceed {MAX_BEHAVIOUR_ACTIONS} actions"
         )));
     }
 
     // Collate escrowed denoms & initialise the strategy
-    let escrowed = msg.0.escrowed(deps.as_ref(), &env)?;
-    let response = msg.0.init(&mut deps, &env, |storage, strategy| {
+    let escrowed = msg.escrowed(deps.as_ref(), &env)?;
+    let response = msg.init(&mut deps, &env, |storage, strategy| {
         CONFIG.init(
             storage,
             StrategyConfig {
@@ -215,7 +215,7 @@ pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     let response = Response::new().add_attribute("reply_id", reply.id.to_string());
 
     match reply.id {
-        PROCESS_REPLY_PAYLOAD_REPLY_ID => {
+        PROCESS_PAYLOAD_REPLY_ID => {
             let payload = from_json::<StrategyMsgPayload>(reply.payload.clone());
             if let Ok(payload) = payload {
                 STATS.update(deps.storage, |s| s.update(payload.statistics.clone()))?;
