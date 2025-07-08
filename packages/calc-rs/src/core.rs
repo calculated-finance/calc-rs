@@ -1,4 +1,3 @@
-use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
     Instantiate2AddressError, OverflowError, Response, StdError, WasmMsg,
@@ -55,11 +54,4 @@ impl Contract {
         }
         .into()
     }
-}
-
-#[cw_serde]
-pub struct Callback {
-    pub contract: Addr,
-    pub msg: Binary,
-    pub execution_rebate: Vec<Coin>,
 }

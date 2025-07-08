@@ -1,73 +1,30 @@
-use std::collections::HashSet;
-
 use calc_rs::{
-    conditions::{Condition, Conditions},
-    scheduler::{ConditionFilter, CreateTrigger, Trigger},
+    conditions::Condition,
+    scheduler::{ConditionFilter, Trigger},
 };
-use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Order, StdError, StdResult, Storage};
-use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex, UniqueIndex};
+use cosmwasm_std::{Addr, Coin, Decimal, Order, StdError, StdResult, Storage};
+use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 
+pub const MANAGER: Item<Addr> = Item::new("manager");
 pub const TRIGGER_COUNTER: Item<u64> = Item::new("trigger_counter");
-pub const CONDITION_COUNTER: Item<u64> = Item::new("condition_counter");
-
-#[cw_serde]
-pub struct ConditionStore {
-    id: u64,
-    trigger_id: u64,
-    condition: Condition,
-}
-
-pub struct ConditionIndexes<'a> {
-    pub trigger_id: MultiIndex<'a, u64, ConditionStore, u64>,
-    pub timestamp: MultiIndex<'a, u64, ConditionStore, u64>,
-    pub block_height: MultiIndex<'a, u64, ConditionStore, u64>,
-    pub limit_order: UniqueIndex<'a, u64, ConditionStore, u64>,
-}
-
-impl<'a> IndexList<ConditionStore> for ConditionIndexes<'a> {
-    fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<ConditionStore>> + '_> {
-        let v: Vec<&dyn Index<ConditionStore>> = vec![
-            &self.limit_order,
-            &self.trigger_id,
-            &self.timestamp,
-            &self.block_height,
-        ];
-        Box::new(v.into_iter())
-    }
-}
-
-pub const CONDITIONS: IndexedMap<u64, ConditionStore, ConditionIndexes<'static>> = IndexedMap::new(
-    "conditions",
-    ConditionIndexes {
-        trigger_id: MultiIndex::new(|_, c| c.trigger_id, "conditions", "conditions__trigger_id"),
-        timestamp: MultiIndex::new(
-            |_, c| match c.condition {
-                Condition::TimestampElapsed(timestamp) => timestamp.seconds(),
-                _ => u64::MAX,
-            },
-            "conditions",
-            "conditions__timestamp",
-        ),
-        block_height: MultiIndex::new(
-            |_, c| match c.condition {
-                Condition::BlocksCompleted(height) => height,
-                _ => u64::MAX,
-            },
-            "conditions",
-            "conditions__block_height",
-        ),
-        limit_order: UniqueIndex::new(|c| c.id, "conditions__limit_order"),
-    },
-);
 
 pub struct TriggerIndexes<'a> {
     pub owner: MultiIndex<'a, Addr, Trigger, u64>,
+    pub timestamp: MultiIndex<'a, u64, Trigger, u64>,
+    pub block_height: MultiIndex<'a, u64, Trigger, u64>,
+    pub limit_order_pair: MultiIndex<'a, Addr, Trigger, u64>,
+    pub limit_order_pair_rate: MultiIndex<'a, (Addr, String), Trigger, u64>,
 }
 
 impl<'a> IndexList<Trigger> for TriggerIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Trigger>> + '_> {
-        let v: Vec<&dyn Index<Trigger>> = vec![&self.owner];
+        let v: Vec<&dyn Index<Trigger>> = vec![
+            &self.owner,
+            &self.timestamp,
+            &self.block_height,
+            &self.limit_order_pair,
+            &self.limit_order_pair_rate,
+        ];
         Box::new(v.into_iter())
     }
 }
@@ -76,58 +33,22 @@ pub struct TriggerStore<'a> {
     triggers: IndexedMap<u64, Trigger, TriggerIndexes<'a>>,
 }
 
-fn save_condition(
-    storage: &mut dyn Storage,
-    trigger_id: u64,
-    condition: &Condition,
-) -> StdResult<()> {
-    match condition {
-        Condition::Compose(Conditions { conditions, .. }) => {
-            for cond in conditions {
-                save_condition(storage, trigger_id, cond)?;
-            }
-
-            Ok(())
-        }
-        _ => {
-            let condition_id =
-                CONDITION_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
-
-            CONDITIONS.save(
-                storage,
-                condition_id,
-                &ConditionStore {
-                    id: condition_id,
-                    trigger_id,
-                    condition: condition.clone(),
-                },
-            )
-        }
-    }
-}
-
 impl TriggerStore<'_> {
     pub fn save(
         &self,
         storage: &mut dyn Storage,
         owner: Addr,
-        command: CreateTrigger,
+        condition: Condition,
         execution_rebate: Vec<Coin>,
     ) -> StdResult<()> {
-        let trigger_id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
-
-        save_condition(storage, trigger_id, &command.condition)?;
-
+        let id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
         self.triggers.save(
             storage,
-            trigger_id,
+            id,
             &Trigger {
-                id: trigger_id,
+                id,
                 owner,
-                condition: command.condition,
-                threshold: command.threshold,
-                msg: command.msg,
-                to: command.to,
+                condition,
                 execution_rebate,
             },
         )
@@ -137,7 +58,7 @@ impl TriggerStore<'_> {
         self.triggers.load(storage, id)
     }
 
-    pub fn owner(
+    pub fn owned(
         &self,
         storage: &dyn Storage,
         owner: Addr,
@@ -159,79 +80,65 @@ impl TriggerStore<'_> {
             .collect::<Vec<_>>()
     }
 
-    pub fn filter(
+    pub fn filtered(
         &self,
         storage: &dyn Storage,
         filter: ConditionFilter,
         limit: Option<usize>,
     ) -> StdResult<Vec<Trigger>> {
-        let conditions = match filter {
-            ConditionFilter::BlockHeight { start, end } => CONDITIONS
-                .idx
-                .block_height
-                .range(
-                    storage,
-                    start.map(|s| Bound::inclusive((s, u64::MAX))),
-                    end.map(|e| Bound::inclusive((e, u64::MAX))),
-                    Order::Ascending,
-                )
-                .take(limit.unwrap_or(30))
-                .flat_map(|r| r.map(|(_, v)| v))
-                .collect::<Vec<_>>(),
-            ConditionFilter::Timestamp { start, end } => CONDITIONS
-                .idx
-                .timestamp
-                .range(
-                    storage,
-                    start.map(|s| Bound::inclusive((s.seconds(), u64::MAX))),
-                    end.map(|e| Bound::inclusive((e.seconds(), u64::MAX))),
-                    Order::Ascending,
-                )
-                .take(limit.unwrap_or(30))
-                .flat_map(|r| r.map(|(_, v)| v))
-                .collect::<Vec<_>>(),
-            ConditionFilter::LimitOrder { start_after } => CONDITIONS
-                .idx
-                .limit_order
-                .range(
-                    storage,
-                    start_after.map(Bound::exclusive),
-                    None,
-                    Order::Ascending,
-                )
-                .take(limit.unwrap_or(30))
-                .flat_map(|r| r.map(|(_, v)| v))
-                .collect::<Vec<_>>(),
-        };
-
-        let mut trigger_ids: HashSet<u64> = HashSet::new();
-        let mut triggers: Vec<Trigger> = Vec::new();
-
-        for condition in conditions {
-            if trigger_ids.contains(&condition.trigger_id) {
-                continue;
-            }
-
-            let trigger = TRIGGERS.load(storage, condition.trigger_id)?;
-            trigger_ids.insert(condition.trigger_id);
-            triggers.push(trigger);
+        let triggers = match filter {
+            ConditionFilter::BlockHeight { start, end } => self.triggers.idx.block_height.range(
+                storage,
+                start.map(|s| Bound::inclusive((s, u64::MAX))),
+                end.map(|e| Bound::inclusive((e, u64::MAX))),
+                Order::Ascending,
+            ),
+            ConditionFilter::Timestamp { start, end } => self.triggers.idx.timestamp.range(
+                storage,
+                start.map(|s| Bound::inclusive((s.seconds(), u64::MAX))),
+                end.map(|e| Bound::inclusive((e.seconds(), u64::MAX))),
+                Order::Ascending,
+            ),
+            ConditionFilter::LimitOrder {
+                pair_address,
+                price_range,
+                start_after,
+            } => match price_range {
+                None => self
+                    .triggers
+                    .idx
+                    .limit_order_pair
+                    .prefix(pair_address)
+                    .range(
+                        storage,
+                        start_after.map(Bound::exclusive),
+                        None,
+                        Order::Ascending,
+                    ),
+                Some((above, below)) => self
+                    .triggers
+                    .idx
+                    .limit_order_pair_rate
+                    .sub_prefix(pair_address)
+                    .range(
+                        storage,
+                        Some(Bound::exclusive((
+                            above.to_string(),
+                            start_after.unwrap_or(0),
+                        ))),
+                        Some(Bound::exclusive((below.to_string(), u64::MAX))),
+                        Order::Ascending,
+                    ),
+            },
         }
+        .take(limit.unwrap_or(30))
+        .flat_map(|r| r.map(|(_, v)| v))
+        .collect::<Vec<_>>();
 
         Ok(triggers)
     }
 
     pub fn delete(&self, storage: &mut dyn Storage, id: u64) -> StdResult<()> {
-        let conditions_to_remove = CONDITIONS
-            .idx
-            .trigger_id
-            .prefix(id)
-            .keys(storage, None, None, Order::Ascending)
-            .collect::<StdResult<Vec<_>>>()?;
-
-        for condition_id in conditions_to_remove {
-            CONDITIONS.remove(storage, condition_id)?;
-        }
-
         self.triggers.remove(storage, id)
     }
 }
@@ -241,6 +148,40 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
         "triggers",
         TriggerIndexes {
             owner: MultiIndex::new(|_, t| t.owner.clone(), "triggers", "triggers__owner"),
+            timestamp: MultiIndex::new(
+                |_, t| match t.condition {
+                    Condition::TimestampElapsed(timestamp) => timestamp.seconds(),
+                    _ => u64::MAX,
+                },
+                "triggers",
+                "triggers__timestamp",
+            ),
+            block_height: MultiIndex::new(
+                |_, t| match t.condition {
+                    Condition::BlocksCompleted(height) => height,
+                    _ => u64::MAX,
+                },
+                "triggers",
+                "triggers__block_height",
+            ),
+            limit_order_pair: MultiIndex::new(
+                |_, t| match t.condition.clone() {
+                    Condition::LimitOrderFilled { pair_address, .. } => pair_address,
+                    _ => Addr::unchecked(""),
+                },
+                "triggers",
+                "triggers__limit_order_pair",
+            ),
+            limit_order_pair_rate: MultiIndex::new(
+                |_, t| match t.condition.clone() {
+                    Condition::LimitOrderFilled {
+                        pair_address, rate, ..
+                    } => (pair_address, rate.to_string()),
+                    _ => (Addr::unchecked(""), Decimal::zero().to_string()),
+                },
+                "triggers",
+                "triggers__limit_order_pair_rate",
+            ),
         },
     ),
 };

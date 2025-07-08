@@ -1,13 +1,13 @@
 use std::vec;
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Deps, Env, Timestamp};
+use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, Timestamp};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
     actions::{
         fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
-        swap::{SwapAmountAdjustment, SwapRoute},
+        optimal_swap::{SwapAmountAdjustment, SwapRoute},
         thor_swap::{get_expected_amount_out as get_expected_amount_out_thorchain, ThorSwap},
     },
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
@@ -17,39 +17,6 @@ use crate::{
 pub enum Threshold {
     All,
     Any,
-}
-
-pub trait Satisfiable {
-    fn is_satisfied(&self, deps: Deps, env: &Env) -> bool;
-}
-
-#[cw_serde]
-pub struct Conditions {
-    pub conditions: Vec<Condition>,
-    pub threshold: Threshold,
-}
-
-impl Satisfiable for Conditions {
-    fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
-        match self.threshold {
-            Threshold::All => {
-                for condition in &self.conditions {
-                    if !condition.is_satisfied(deps, env) {
-                        return false;
-                    }
-                }
-                true
-            }
-            Threshold::Any => {
-                for condition in &self.conditions {
-                    if condition.is_satisfied(deps, env) {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-    }
 }
 
 #[cw_serde]
@@ -66,12 +33,13 @@ pub enum Condition {
         owner: Addr,
         side: Side,
         price: Price,
+        rate: Decimal,
     },
     BalanceAvailable {
         address: Addr,
         amount: Coin,
     },
-    OwnBalanceAvailable {
+    StrategyBalanceAvailable {
         amount: Coin,
     },
     StrategyStatus {
@@ -79,11 +47,10 @@ pub enum Condition {
         contract_address: Addr,
         status: StrategyStatus,
     },
-    Compose(Conditions),
 }
 
-impl Satisfiable for Condition {
-    fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
+impl Condition {
+    pub fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
         match self {
             Condition::TimestampElapsed(timestamp) => env.block.time > *timestamp,
             Condition::BlocksCompleted(height) => env.block.height > *height,
@@ -92,6 +59,7 @@ impl Satisfiable for Condition {
                 owner,
                 side,
                 price,
+                ..
             } => {
                 let order = deps.querier.query_wasm_smart::<OrderResponse>(
                     pair_address,
@@ -126,8 +94,6 @@ impl Satisfiable for Condition {
                         affiliate_code,
                         affiliate_bps,
                         previous_swap,
-                        on_complete,
-                        scheduler,
                     } => get_expected_amount_out_thorchain(
                         deps,
                         env,
@@ -141,8 +107,6 @@ impl Satisfiable for Condition {
                             affiliate_code: affiliate_code.clone(),
                             affiliate_bps: *affiliate_bps,
                             previous_swap: previous_swap.clone(),
-                            on_complete: on_complete.clone(),
-                            scheduler: scheduler.clone(),
                         },
                     ),
                 };
@@ -162,7 +126,7 @@ impl Satisfiable for Condition {
                     false
                 }
             }
-            Condition::OwnBalanceAvailable { amount } => {
+            Condition::StrategyBalanceAvailable { amount } => {
                 let balance = deps
                     .querier
                     .query_balance(&env.contract.address, amount.denom.clone());
@@ -191,36 +155,13 @@ impl Satisfiable for Condition {
                     false
                 }
             }
-            Condition::Compose(Conditions {
-                conditions,
-                threshold,
-            }) => match threshold {
-                Threshold::All => {
-                    for condition in conditions {
-                        if !condition.is_satisfied(deps, env) {
-                            return false;
-                        }
-                    }
-                    true
-                }
-                Threshold::Any => {
-                    for condition in conditions {
-                        if condition.is_satisfied(deps, env) {
-                            return true;
-                        }
-                    }
-                    false
-                }
-            },
         }
     }
-}
 
-impl Condition {
     pub fn description(&self, env: &Env) -> String {
         match self {
-            Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {timestamp}"),
-            Condition::BlocksCompleted(height) => format!("blocks completed: {height}"),
+            Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {timestamp}, current time: {}", env.block.time),
+            Condition::BlocksCompleted(height) => format!("blocks completed: {height}, current height: {}", env.block.height),
             Condition::CanSwap {
                 swap_amount,
                 minimum_receive_amount,
@@ -233,13 +174,14 @@ impl Condition {
                 owner,
                 side,
                 price,
+                ..
             } => format!(
                 "limit order filled: pair_address={pair_address}, owner={owner}, side={side:?}, price={price}"
             ),
             Condition::BalanceAvailable { address, amount } => format!(
                 "balance available: address={address}, amount={amount}"
             ),
-            Condition::OwnBalanceAvailable { amount } => {
+            Condition::StrategyBalanceAvailable { amount } => {
                 format!("balance available: address={}, amount={}", env.contract.address, amount)
             }
             Condition::StrategyStatus {
@@ -249,26 +191,6 @@ impl Condition {
             } => format!(
                 "strategy ({contract_address}) is in status: {status:?}"
             ),
-            Condition::Compose (Conditions { conditions, threshold: operator }) => {
-                match operator {
-                    Threshold::All => format!(
-                        "All the following conditions are met: [\n\t{}\n]",
-                        conditions
-                            .iter()
-                            .map(|c| c.description(env))
-                            .collect::<Vec<_>>()
-                            .join(",\n\t")
-                    ),
-                    Threshold::Any => format!(
-                        "Any of the following conditions are met: [\n\t{}\n]",
-                        conditions
-                            .iter()
-                            .map(|c| c.description(env))
-                            .collect::<Vec<_>>()
-                            .join(",\n\t")
-                    ),
-                }
-            }
         }
     }
 }
@@ -418,6 +340,7 @@ mod conditions_tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+            rate: Decimal::from_str("1.0").unwrap(),
         }
         .is_satisfied(deps.as_ref(), &env));
 
@@ -442,6 +365,7 @@ mod conditions_tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+            rate: Decimal::from_str("1.0").unwrap(),
         }
         .is_satisfied(deps.as_ref(), &env));
     }

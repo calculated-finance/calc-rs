@@ -2,15 +2,38 @@ use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, Env, Event,
-    StdError, StdResult, SubMsg, Uint128, WasmMsg,
+    Addr, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, Env, Event, StdError, StdResult,
+    Uint128, WasmMsg,
 };
 
 use crate::actions::action::Action;
 use crate::actions::operation::Operation;
-use crate::constants::UPDATE_STATS_REPLY_ID;
 use crate::statistics::Statistics;
+use crate::strategy::{StrategyMsg, StrategyMsgPayload};
 use crate::thorchain::MsgDeposit;
+
+enum DistributionEvent {
+    DistributionSkipped {
+        reason: String,
+    },
+    Distribute {
+        recipient: String,
+        amount: Vec<Coin>,
+    },
+}
+
+impl From<DistributionEvent> for Event {
+    fn from(val: DistributionEvent) -> Self {
+        match val {
+            DistributionEvent::DistributionSkipped { reason } => {
+                Event::new("distribution_skipped").add_attribute("reason", reason)
+            }
+            DistributionEvent::Distribute { recipient, amount } => Event::new("distribute")
+                .add_attribute("recipient", recipient)
+                .add_attribute("amount", format!("{amount:?}")),
+        }
+    }
+}
 
 #[cw_serde]
 pub enum Recipient {
@@ -46,10 +69,102 @@ pub struct Distribution {
     pub destinations: Vec<Destination>,
 }
 
+impl Distribution {
+    pub fn execute_unsafe(
+        self,
+        deps: Deps,
+        env: &Env,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let total_shares = self
+            .destinations
+            .clone()
+            .into_iter()
+            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
+        let mut balances = Coins::default();
+
+        for denom in &self.denoms {
+            balances.add(deps.querier.query_balance(&env.contract.address, denom)?)?;
+        }
+
+        if balances.is_empty() {
+            return Ok((
+                vec![],
+                vec![DistributionEvent::DistributionSkipped {
+                    reason: "No balances available for distribution".to_string(),
+                }
+                .into()],
+                Action::Distribute(self),
+            ));
+        }
+
+        let mut messages: Vec<StrategyMsg> = vec![];
+
+        for destination in self.destinations.clone() {
+            let amounts = balances
+                .iter()
+                .map(|coin| {
+                    Coin::new(
+                        coin.amount
+                            .mul_floor(Decimal::from_ratio(destination.shares, total_shares)),
+                        coin.denom.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            let message = match destination.recipient.clone() {
+                Recipient::Bank { address, .. } => CosmosMsg::Bank(BankMsg::Send {
+                    to_address: address.into(),
+                    amount: amounts.clone(),
+                }),
+                Recipient::Strategy { contract_address } => CosmosMsg::Bank(BankMsg::Send {
+                    to_address: contract_address.into(),
+                    amount: amounts.clone(),
+                }),
+                Recipient::Wasm { address, msg, .. } => CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: address.into(),
+                    msg,
+                    funds: amounts.clone(),
+                }),
+                Recipient::Deposit { memo } => MsgDeposit {
+                    memo,
+                    coins: amounts.clone(),
+                    signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                }
+                .into_cosmos_msg()?,
+            };
+
+            let distribute_message = StrategyMsg::with_payload(
+                message,
+                StrategyMsgPayload {
+                    statistics: Statistics {
+                        distributed: vec![(destination.recipient.clone(), amounts.clone())],
+                        ..Statistics::default()
+                    },
+                    events: vec![DistributionEvent::Distribute {
+                        recipient: destination.recipient.key(),
+                        amount: amounts,
+                    }
+                    .into()],
+                    ..StrategyMsgPayload::default()
+                },
+            );
+
+            messages.push(distribute_message);
+        }
+
+        Ok((messages, vec![], Action::Distribute(self)))
+    }
+}
+
 impl Operation for Distribution {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
+        }
+
+        if self.destinations.is_empty() {
+            return Err(StdError::generic_err("Destinations cannot be empty"));
         }
 
         let has_native_denoms = self.denoms.iter().any(|d| !d.contains('-'));
@@ -88,68 +203,21 @@ impl Operation for Distribution {
             ));
         }
 
-        Ok((Action::Distribute(self), vec![], vec![]))
+        Ok((vec![], vec![], Action::Distribute(self)))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut messages: Vec<SubMsg> = vec![];
-        let events: Vec<Event> = vec![];
-
-        let total_shares = self
-            .destinations
-            .clone()
-            .into_iter()
-            .fold(Uint128::zero(), |acc, d| acc + d.shares);
-
-        for denom in self.denoms.clone() {
-            let balance = deps.querier.query_balance(&env.contract.address, &denom)?;
-
-            if balance.amount.is_zero() {
-                continue;
-            }
-
-            for destination in self.destinations.clone() {
-                let amount = vec![Coin::new(
-                    balance
-                        .amount
-                        .mul_floor(Decimal::from_ratio(destination.shares, total_shares)),
-                    balance.denom.clone(),
-                )];
-
-                let message = match destination.recipient.clone() {
-                    Recipient::Bank { address, .. } => CosmosMsg::Bank(BankMsg::Send {
-                        to_address: address.into(),
-                        amount: amount.clone(),
-                    }),
-                    Recipient::Strategy { contract_address } => CosmosMsg::Bank(BankMsg::Send {
-                        to_address: contract_address.into(),
-                        amount: amount.clone(),
-                    }),
-                    Recipient::Wasm { address, msg, .. } => CosmosMsg::Wasm(WasmMsg::Execute {
-                        contract_addr: address.into(),
-                        msg,
-                        funds: amount.clone(),
-                    }),
-                    Recipient::Deposit { memo } => MsgDeposit {
-                        memo,
-                        coins: amount.clone(),
-                        signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
-                    }
-                    .into_cosmos_msg()?,
-                };
-
-                messages.push(
-                    SubMsg::reply_always(message, UPDATE_STATS_REPLY_ID).with_payload(
-                        to_json_binary(&Statistics {
-                            distributed: vec![(destination.recipient.clone(), amount)],
-                            ..Statistics::default()
-                        })?,
-                    ),
-                );
-            }
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+        match self.clone().execute_unsafe(deps, env) {
+            Ok((action, messages, events)) => (action, messages, events),
+            Err(err) => (
+                vec![],
+                vec![DistributionEvent::DistributionSkipped {
+                    reason: err.to_string(),
+                }
+                .into()],
+                Action::Distribute(self),
+            ),
         }
-
-        Ok((Action::Distribute(self), messages, events))
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -165,11 +233,11 @@ impl Operation for Distribution {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Distribute(self), vec![], vec![]))
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Distribute(self)))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::Distribute(self), vec![], vec![]))
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Distribute(self)))
     }
 }

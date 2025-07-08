@@ -5,27 +5,52 @@ use std::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation, swap::SwapAmountAdjustment},
-    conditions::{Condition, Threshold},
-    constants::{LOG_ERRORS_REPLY_ID, UPDATE_STATS_REPLY_ID},
-    core::{Callback, Contract},
-    scheduler::{CreateTrigger, SchedulerExecuteMsg},
+    actions::{action::Action, operation::Operation, optimal_swap::SwapAmountAdjustment},
     statistics::Statistics,
+    strategy::{StrategyMsg, StrategyMsgPayload},
     thorchain::{MsgDeposit, SwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
-    Uint128,
-};
+use cosmwasm_std::{Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Uint128};
+
+pub enum ThorchainSwapEvent {
+    SwapSkipped {
+        reason: String,
+    },
+    Swap {
+        swap_amount: Coin,
+        expected_receive_amount: Coin,
+        streaming_swap_blocks: u64,
+    },
+}
+
+impl From<ThorchainSwapEvent> for Event {
+    fn from(val: ThorchainSwapEvent) -> Self {
+        match val {
+            ThorchainSwapEvent::SwapSkipped { reason } => {
+                Event::new("thorchain_swap_skipped").add_attribute("reason", reason)
+            }
+            ThorchainSwapEvent::Swap {
+                swap_amount,
+                expected_receive_amount,
+                streaming_swap_blocks,
+            } => Event::new("thorchain_swap")
+                .add_attribute("swap_amount", swap_amount.to_string())
+                .add_attribute(
+                    "expected_receive_amount",
+                    expected_receive_amount.to_string(),
+                )
+                .add_attribute("streaming_swap_blocks", streaming_swap_blocks.to_string()),
+        }
+    }
+}
 
 #[cw_serde]
 pub struct StreamingSwap {
-    starting_block: u64,
-    streaming_interval: u64,
-    streaming_quantity: u64,
     swap_amount: Coin,
     expected_receive_amount: Coin,
+    starting_block: u64,
+    streaming_swap_blocks: u64,
 }
 
 #[cw_serde]
@@ -39,68 +64,18 @@ pub struct ThorSwap {
     pub affiliate_code: Option<String>,
     pub affiliate_bps: Option<u64>,
     pub previous_swap: Option<StreamingSwap>,
-    pub on_complete: Option<Callback>,
-    pub scheduler: Addr,
 }
 
 fn is_secured_asset(denom: &str) -> bool {
     denom.to_lowercase() == "rune" || denom.contains("-")
 }
 
-impl Operation for ThorSwap {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        if !is_secured_asset(self.swap_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Swap denom must be RUNE or a secured asset",
-            ));
-        }
-
-        if !is_secured_asset(self.minimum_receive_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Target denom must be RUNE or a secured asset",
-            ));
-        }
-
-        if self.swap_amount.amount.is_zero() {
-            return Err(StdError::generic_err("Swap amount cannot be zero"));
-        }
-
-        if self.maximum_slippage_bps > 10_000 {
-            return Err(StdError::generic_err(
-                "Maximum slippage basis points cannot exceed 10,000",
-            ));
-        }
-
-        if let Some(streaming_interval) = self.streaming_interval {
-            if streaming_interval == 0 {
-                return Err(StdError::generic_err("Streaming interval cannot be zero"));
-            }
-
-            if streaming_interval > 50 {
-                return Err(StdError::generic_err(
-                    "Streaming interval cannot exceed 50 blocks",
-                ));
-            }
-        }
-
-        if let Some(max_streaming_quantity) = self.max_streaming_quantity {
-            if max_streaming_quantity == 0 {
-                return Err(StdError::generic_err(
-                    "Maximum streaming quantity cannot be zero",
-                ));
-            }
-
-            if max_streaming_quantity > 14_000 {
-                return Err(StdError::generic_err(
-                    "Maximum streaming quantity cannot exceed 14,000",
-                ));
-            }
-        }
-
-        Ok((Action::ThorSwap(self), vec![], vec![]))
-    }
-
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+impl ThorSwap {
+    pub fn execute_unsafe(
+        self,
+        deps: Deps,
+        env: &Env,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         let (new_swap_amount, new_minimum_receive_amount, max_streaming_quantity) =
             match self.adjustment.clone() {
                 SwapAmountAdjustment::Fixed => {
@@ -124,35 +99,15 @@ impl Operation for ThorSwap {
                         self.minimum_receive_amount.denom.clone(),
                     );
 
-                    let swap_quote_request = SwapQuoteRequest {
-                        from_asset: self.swap_amount.denom.clone(),
-                        to_asset: self.minimum_receive_amount.denom.clone(),
-                        amount: self.swap_amount.amount,
-                        streaming_interval: Uint128::new(
-                            // Default to swapping every 3 blocks
-                            self.streaming_interval.unwrap_or(3) as u128,
-                        ),
-                        streaming_quantity: Uint128::new(
-                            // Setting this to 0 allows the chain to
-                            // calculate the maximum streaming quantity
-                            self.max_streaming_quantity.unwrap_or(0) as u128,
-                        ),
-                        destination: env.contract.address.to_string(),
-                        refund_address: env.contract.address.to_string(),
-                        affiliate: self
-                            .affiliate_code
-                            .clone()
-                            .map_or_else(std::vec::Vec::new, |c| vec![c]),
-                        affiliate_bps: self
-                            .affiliate_bps
-                            .map_or_else(std::vec::Vec::new, |b| vec![b]),
-                    };
-
-                    let quote = SwapQuote::get(deps.querier, &swap_quote_request).map_err(|e| {
-                        StdError::generic_err(format!(
-                            "Failed to get L1 swap quote with {swap_quote_request:#?}: {e}"
-                        ))
-                    })?;
+                    let quote = get_quote(
+                        deps,
+                        env,
+                        &ThorSwap {
+                            swap_amount: new_swap_amount.clone(),
+                            minimum_receive_amount: new_minimum_receive_amount.clone(),
+                            ..self.clone()
+                        },
+                    )?;
 
                     (
                         new_swap_amount,
@@ -183,11 +138,11 @@ impl Operation for ThorSwap {
                     let scaled_swap_amount = if current_price < base_price {
                         self.swap_amount
                             .amount
-                            .mul_floor(Decimal::one() + scaled_price_delta)
+                            .mul_floor(Decimal::one().saturating_add(scaled_price_delta))
                     } else {
                         self.swap_amount
                             .amount
-                            .mul_floor(Decimal::one() - scaled_price_delta)
+                            .mul_floor(Decimal::one().saturating_sub(scaled_price_delta))
                     };
 
                     let new_swap_amount = Coin::new(
@@ -224,7 +179,14 @@ impl Operation for ThorSwap {
             };
 
         if new_swap_amount.amount.is_zero() {
-            return Ok((Action::ThorSwap(self), vec![], vec![]));
+            return Ok((
+                vec![],
+                vec![ThorchainSwapEvent::SwapSkipped {
+                    reason: "Adjusted swap amount is zero".to_string(),
+                }
+                .into()],
+                Action::ThorSwap(self),
+            ));
         }
 
         let adjusted_quote = get_quote(
@@ -238,56 +200,146 @@ impl Operation for ThorSwap {
             },
         )?;
 
-        if adjusted_quote.expected_amount_out < new_minimum_receive_amount.amount
-            || adjusted_quote.recommended_min_amount_in > new_swap_amount.amount
-        {
-            return Ok((Action::ThorSwap(self), vec![], vec![]));
+        if adjusted_quote.expected_amount_out < new_minimum_receive_amount.amount {
+            return Ok((
+                vec![],
+                vec![ThorchainSwapEvent::SwapSkipped {
+                    reason: format!(
+                        "Expected amount out ({}) is less than adjusted minimum receive amount ({})",
+                        adjusted_quote.expected_amount_out,
+                        new_minimum_receive_amount.amount
+                    ),
+                }
+                .into()],
+                Action::ThorSwap(self),
+            ));
         }
 
-        let mut messages: Vec<SubMsg> = vec![];
-        let events: Vec<Event> = vec![];
+        if adjusted_quote.recommended_min_amount_in > new_swap_amount.amount {
+            return Ok((
+                vec![],
+                vec![ThorchainSwapEvent::SwapSkipped {
+                    reason: format!(
+                        "Recommended min amount in ({}) is greater than adjusted swap amount ({})",
+                        adjusted_quote.recommended_min_amount_in, new_swap_amount.amount
+                    ),
+                }
+                .into()],
+                Action::ThorSwap(self),
+            ));
+        }
 
-        let swap_msg = SubMsg::reply_always(
+        let swap_msg = StrategyMsg::with_payload(
             MsgDeposit {
                 memo: adjusted_quote.memo,
                 coins: vec![new_swap_amount.clone()],
                 signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
             }
             .into_cosmos_msg()?,
-            UPDATE_STATS_REPLY_ID,
-        )
-        .with_payload(to_json_binary(&Statistics {
-            swapped: vec![new_swap_amount],
-            ..Statistics::default()
-        })?);
+            StrategyMsgPayload {
+                statistics: Statistics {
+                    swapped: vec![new_swap_amount.clone()],
+                    ..Statistics::default()
+                },
+                events: vec![ThorchainSwapEvent::Swap {
+                    swap_amount: new_swap_amount.clone(),
+                    expected_receive_amount: Coin::new(
+                        adjusted_quote.expected_amount_out,
+                        new_minimum_receive_amount.denom.clone(),
+                    ),
+                    streaming_swap_blocks: adjusted_quote.streaming_swap_blocks,
+                }
+                .into()],
+            },
+        );
 
-        messages.push(swap_msg);
+        Ok((
+            vec![swap_msg],
+            vec![],
+            Action::ThorSwap(ThorSwap {
+                previous_swap: Some(StreamingSwap {
+                    swap_amount: new_swap_amount.clone(),
+                    expected_receive_amount: Coin::new(
+                        adjusted_quote.expected_amount_out,
+                        new_minimum_receive_amount.denom.clone(),
+                    ),
+                    starting_block: env.block.height,
+                    streaming_swap_blocks: adjusted_quote.streaming_swap_blocks,
+                }),
+                ..self
+            }),
+        ))
+    }
+}
 
-        if let Some(Callback {
-            msg,
-            contract,
-            execution_rebate,
-        }) = self.on_complete.clone()
-        {
-            let create_trigger_msg = SubMsg::reply_always(
-                Contract(self.scheduler.clone()).call(
-                    to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                        condition: Condition::BlocksCompleted(
-                            env.block.height + adjusted_quote.streaming_swap_blocks,
-                        ),
-                        threshold: Threshold::Any,
-                        to: contract,
-                        msg,
-                    }))?,
-                    execution_rebate,
-                ),
-                LOG_ERRORS_REPLY_ID,
-            );
-
-            messages.push(create_trigger_msg);
+impl Operation for ThorSwap {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if self.swap_amount.amount.is_zero() {
+            return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
 
-        Ok((Action::ThorSwap(self), messages, events))
+        if self.maximum_slippage_bps > 10_000 {
+            return Err(StdError::generic_err(
+                "Maximum slippage basis points cannot exceed 10,000",
+            ));
+        }
+
+        if !is_secured_asset(self.swap_amount.denom.as_str()) {
+            return Err(StdError::generic_err(
+                "Swap denom must be RUNE or a secured asset",
+            ));
+        }
+
+        if !is_secured_asset(self.minimum_receive_amount.denom.as_str()) {
+            return Err(StdError::generic_err(
+                "Target denom must be RUNE or a secured asset",
+            ));
+        }
+
+        if let Some(streaming_interval) = self.streaming_interval {
+            if streaming_interval == 0 {
+                return Err(StdError::generic_err("Streaming interval cannot be zero"));
+            }
+
+            if streaming_interval > 50 {
+                return Err(StdError::generic_err(
+                    "Streaming interval cannot exceed 50 blocks",
+                ));
+            }
+        }
+
+        if let Some(max_streaming_quantity) = self.max_streaming_quantity {
+            if max_streaming_quantity == 0 {
+                return Err(StdError::generic_err(
+                    "Maximum streaming quantity cannot be zero",
+                ));
+            }
+
+            if max_streaming_quantity > 14_000 {
+                return Err(StdError::generic_err(
+                    "Maximum streaming quantity cannot exceed 14,000",
+                ));
+            }
+        }
+
+        // Check that we can get a quote for the swap
+        get_quote(_deps, _env, &self)?;
+
+        Ok((vec![], vec![], Action::ThorSwap(self)))
+    }
+
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+        match self.clone().execute_unsafe(deps, env) {
+            Ok(res) => res,
+            Err(err) => (
+                vec![],
+                vec![ThorchainSwapEvent::SwapSkipped {
+                    reason: err.to_string(),
+                }
+                .into()],
+                Action::ThorSwap(self),
+            ),
+        }
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -303,12 +355,12 @@ impl Operation for ThorSwap {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::ThorSwap(self), vec![], vec![]))
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::ThorSwap(self)))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        Ok((Action::ThorSwap(self), vec![], vec![]))
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::ThorSwap(self)))
     }
 }
 

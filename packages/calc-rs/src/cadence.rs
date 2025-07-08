@@ -518,7 +518,7 @@ mod tests {
         let env = mock_env();
         let cron = "*/10 * * * * *";
 
-        assert!(!Cadence::Cron {
+        assert!(Cadence::Cron {
             expr: cron.to_string(),
             previous: None
         }
@@ -538,5 +538,17 @@ mod tests {
         }
         .is_due(&env)
         .unwrap());
+    }
+
+    #[test]
+    fn invalid_cron_string_fails() {
+        let invalid_cron = "invalid cron string";
+        let res = cron::Schedule::from_str(invalid_cron);
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        println!("Actual error: {err}");
+        assert!(err
+            .to_string()
+            .contains("Invalid expression: Invalid cron expression."));
     }
 }

@@ -1,49 +1,25 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin, MessageInfo, Timestamp};
+use cosmwasm_std::{Addr, Coin, Decimal, Timestamp};
 
-use crate::conditions::{Condition, Threshold};
-
-#[cw_serde]
-pub struct CreateTrigger {
-    pub condition: Condition,
-    pub threshold: Threshold,
-    pub to: Addr,
-    pub msg: Binary,
-}
+use crate::conditions::Condition;
 
 #[cw_serde]
 pub struct Trigger {
     pub id: u64,
     pub owner: Addr,
     pub condition: Condition,
-    pub threshold: Threshold,
-    pub msg: Binary,
-    pub to: Addr,
     pub execution_rebate: Vec<Coin>,
 }
 
-impl Trigger {
-    pub fn from_command(info: &MessageInfo, command: CreateTrigger, rebate: Vec<Coin>) -> Self {
-        Self {
-            id: 0, // This will be set later when the trigger is stored
-            owner: info.sender.clone(),
-            condition: command.condition,
-            threshold: command.threshold,
-            msg: command.msg,
-            to: command.to,
-            execution_rebate: rebate,
-        }
-    }
+#[cw_serde]
+pub struct SchedulerInstantiateMsg {
+    pub manager: Addr,
 }
 
 #[cw_serde]
-pub struct SchedulerInstantiateMsg {}
-
-#[cw_serde]
 pub enum SchedulerExecuteMsg {
-    CreateTrigger(CreateTrigger),
-    SetTriggers(Vec<CreateTrigger>),
-    ExecuteTrigger(u64),
+    Create(Condition),
+    Execute(Vec<u64>),
 }
 
 #[cw_serde]
@@ -57,6 +33,8 @@ pub enum ConditionFilter {
         end: Option<u64>,
     },
     LimitOrder {
+        pair_address: Addr,
+        price_range: Option<(Decimal, Decimal)>,
         start_after: Option<u64>,
     },
 }

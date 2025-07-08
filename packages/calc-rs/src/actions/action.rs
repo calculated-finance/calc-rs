@@ -1,15 +1,15 @@
 use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
+use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
 
 use crate::{
     actions::{
-        distribution::Distribution, fin_swap::FinSwap, fund_strategy::FundStrategy,
-        limit_order::LimitOrder, operation::Operation, schedule::Schedule, swap::OptimalSwap,
-        thor_swap::ThorSwap,
+        conditional::Conditional, distribution::Distribution, fin_swap::FinSwap,
+        fund_strategy::FundStrategy, limit_order::LimitOrder, operation::Operation,
+        optimal_swap::OptimalSwap, schedule::Schedule, thor_swap::ThorSwap,
     },
-    conditions::Conditions,
+    strategy::StrategyMsg,
 };
 
 #[cw_serde]
@@ -21,15 +21,15 @@ pub enum Action {
     Distribute(Distribution),
     Schedule(Schedule),
     FundStrategy(FundStrategy),
-    Conditional((Conditions, Box<Action>)),
+    Conditional(Conditional),
     Many(Vec<Action>),
 }
 
 impl Action {
     pub fn size(&self) -> usize {
         match self {
-            Action::Schedule(action) => action.action.size(),
-            Action::Conditional((_, action)) => action.size(),
+            Action::Schedule(action) => action.action.size() + 1,
+            Action::Conditional(action) => action.action.size() + 1,
             Action::Many(actions) => actions.iter().map(|a| a.size()).sum(),
             _ => 1,
         }
@@ -37,7 +37,7 @@ impl Action {
 }
 
 impl Operation for Action {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         match self {
             Action::FinSwap(action) => action.init(deps, env),
             Action::ThorSwap(action) => action.init(deps, env),
@@ -51,7 +51,7 @@ impl Operation for Action {
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self {
             Action::FinSwap(action) => action.execute(deps, env),
             Action::ThorSwap(action) => action.execute(deps, env),
@@ -98,7 +98,7 @@ impl Operation for Action {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         match self {
             Action::FinSwap(action) => action.withdraw(deps, env, desired),
             Action::ThorSwap(action) => action.withdraw(deps, env, desired),
@@ -112,7 +112,7 @@ impl Operation for Action {
         }
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         match self {
             Action::FinSwap(action) => action.cancel(deps, env),
             Action::ThorSwap(action) => action.cancel(deps, env),

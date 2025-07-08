@@ -19,6 +19,7 @@ overflow-checks = true
 [workspace.dependencies]
 ahash = "0.8.12"
 anybuf = "1.0"
+anyhow = "1"
 calc-rs = { path = "packages/calc-rs" }
 calc-rs-test = { path = "packages/calc-rs-test" }
 cosmwasm-schema = "2.2.0"

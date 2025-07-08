@@ -2,7 +2,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_string, Addr, Coin, Event};
 use rujira_rs::fin::{Price, Side};
 
-use crate::{conditions::Conditions, statistics::Statistics, strategy::StrategyConfig};
+use crate::{statistics::Statistics, strategy::StrategyConfig};
 
 #[cw_serde]
 pub enum DomainEvent {
@@ -43,7 +43,6 @@ pub enum DomainEvent {
     },
     SchedulingAttempted {
         contract_address: Addr,
-        conditions: Vec<Conditions>,
     },
     SchedulingSucceeded {
         contract_address: Addr,
@@ -128,15 +127,10 @@ impl From<DomainEvent> for Event {
             } => Event::new("execution_skipped")
                 .add_attribute("contract_address", contract_address.as_str())
                 .add_attribute("reason", reason),
-            DomainEvent::SchedulingAttempted {
-                contract_address,
-                conditions,
-            } => Event::new("scheduling_attempted")
-                .add_attribute("contract_address", contract_address.as_str())
-                .add_attribute(
-                    "conditions",
-                    to_json_string(&conditions).expect("Failed to serialize conditions"),
-                ),
+            DomainEvent::SchedulingAttempted { contract_address } => {
+                Event::new("scheduling_attempted")
+                    .add_attribute("contract_address", contract_address.as_str())
+            }
             DomainEvent::SchedulingSucceeded { contract_address } => {
                 Event::new("scheduling_succeeded")
                     .add_attribute("contract_address", contract_address.as_str())
