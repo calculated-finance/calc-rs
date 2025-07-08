@@ -1,6 +1,6 @@
 use std::{collections::HashSet, vec};
 
-use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
+use cosmwasm_std::{Coins, Deps, Env, Event, StdError, StdResult};
 
 use crate::{
     actions::{action::Action, operation::Operation},
@@ -9,6 +9,12 @@ use crate::{
 
 impl Operation for Vec<Action> {
     fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if self.is_empty() {
+            return Err(StdError::generic_err(
+                "Cannot initialize an empty action list",
+            ));
+        }
+
         let mut actions = Vec::with_capacity(self.len());
         let mut messages = vec![];
         let mut events = vec![];

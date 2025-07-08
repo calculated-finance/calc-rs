@@ -202,7 +202,15 @@ impl LimitOrder {
             }
         };
 
-        if bid_denom_balance.amount.is_zero() {
+        let (offer, remaining, filled) = existing_order
+            .clone()
+            .map_or((Uint128::zero(), Uint128::zero(), Uint128::zero()), |o| {
+                (o.offer, o.remaining, o.filled)
+            });
+
+        // If we have no balance and no filled amount, we can
+        // return early if the price does not need to change.
+        if bid_denom_balance.amount.is_zero() && filled.is_zero() {
             if let Some(current_price) = self.current_price {
                 if new_price == current_price {
                     return Ok((
@@ -211,7 +219,7 @@ impl LimitOrder {
                             reason: "No balance available to deposit".to_string(),
                         }
                         .into()],
-                        Action::SetLimitOrder(self),
+                        Action::LimitOrder(self),
                     ));
                 }
 
@@ -232,55 +240,97 @@ impl LimitOrder {
                                 reason: "Current price is within deviation tolerance".to_string(),
                             }
                             .into()],
-                            Action::SetLimitOrder(self),
+                            Action::LimitOrder(self),
                         ));
                     }
                 }
             }
         }
 
-        let remaining = bid_denom_balance.amount
-            + existing_order
-                .clone()
-                .map_or(Uint128::zero(), |o| o.remaining);
+        // Total available bid denom includes balance and order remaining.
+        let available = bid_denom_balance.amount + remaining;
 
-        let new_bid_amount = min(self.bid_amount.unwrap_or(remaining), remaining);
+        // Bid amount is total available, unless constrained by configured bid amount.
+        let final_bid_amount = min(self.bid_amount.unwrap_or(available), available);
 
-        let mut orders = if let Some(o) = existing_order.clone() {
-            vec![(o.side, o.price, Some(Uint128::zero()))]
-        } else {
+        // Balance to send is final bid amount - remaining
+        let balance_to_send = final_bid_amount.saturating_sub(remaining);
+
+        let funds_to_send = if balance_to_send.is_zero() {
             vec![]
+        } else {
+            vec![Coin::new(balance_to_send, self.bid_denom.clone())]
         };
 
-        if new_price.gt(&Decimal::zero()) && new_bid_amount.gt(&Uint128::zero()) {
+        let mut messages = vec![];
+        let mut orders = vec![];
+
+        if let Some(o) = existing_order.clone() {
+            let withdraw_order_msg = StrategyMsg::with_payload(
+                Contract(self.pair_address.clone()).call(
+                    to_json_binary(&ExecuteMsg::Order((
+                        vec![(o.side, o.price, Some(Uint128::zero()))],
+                        None,
+                    )))?,
+                    vec![],
+                ),
+                StrategyMsgPayload {
+                    statistics: Statistics {
+                        filled: vec![Coin::new(
+                            o.filled,
+                            self.get_pair(deps)?.denoms.ask(&self.side),
+                        )],
+                        ..Statistics::default()
+                    },
+                    events: vec![LimitOrderEvent::SetOrder(LimitOrderEventData {
+                        pair_address: self.pair_address.clone(),
+                        side: self.side.clone(),
+                        price: Price::Fixed(new_price),
+                        amount: final_bid_amount,
+                    })
+                    .into()],
+                    ..StrategyMsgPayload::default()
+                },
+            );
+
+            // We send a withdraw message separately to ensure
+            // that we don't double count swapped amounts for the stats.
+            messages.push(withdraw_order_msg);
+        }
+
+        if new_price.gt(&Decimal::zero()) && final_bid_amount.gt(&Uint128::zero()) {
             orders.push((
                 self.side.clone(),
                 Price::Fixed(new_price),
-                Some(new_bid_amount),
+                Some(final_bid_amount),
             ));
         }
 
         let set_order_msg = StrategyMsg::with_payload(
             Contract(self.pair_address.clone()).call(
                 to_json_binary(&ExecuteMsg::Order((orders, None)))?,
-                vec![Coin::new(new_bid_amount, self.bid_denom.clone())],
+                funds_to_send,
             ),
             StrategyMsgPayload {
-                statistics: if let Some(existing_order) = existing_order {
-                    self.statistics(deps, &existing_order)?
-                } else {
-                    Statistics::default()
+                statistics: Statistics {
+                    swapped: vec![Coin::new(
+                        offer.saturating_sub(remaining),
+                        self.bid_denom.clone(),
+                    )],
+                    ..Statistics::default()
                 },
                 events: vec![LimitOrderEvent::SetOrder(LimitOrderEventData {
                     pair_address: self.pair_address.clone(),
                     side: self.side.clone(),
                     price: Price::Fixed(new_price),
-                    amount: new_bid_amount,
+                    amount: final_bid_amount,
                 })
                 .into()],
                 ..StrategyMsgPayload::default()
             },
         );
+
+        messages.push(set_order_msg);
 
         let create_trigger_msg =
             StrategyMsg::without_payload(Contract(self.scheduler.clone()).call(
@@ -294,10 +344,12 @@ impl LimitOrder {
                 vec![],
             ));
 
+        messages.push(create_trigger_msg);
+
         Ok((
-            vec![set_order_msg, create_trigger_msg],
+            messages,
             vec![],
-            Action::SetLimitOrder(LimitOrder {
+            Action::LimitOrder(LimitOrder {
                 current_price: Some(new_price),
                 ..self
             }),
@@ -317,11 +369,11 @@ impl Operation for LimitOrder {
 
         if self.current_price.is_some() {
             return Err(StdError::generic_err(
-                "Cannot create limit order with a current price set.",
+                "Cannot initialise a limit order action with a current price already set.",
             ));
         }
 
-        Ok((vec![], vec![], Action::SetLimitOrder(self)))
+        Ok((vec![], vec![], Action::LimitOrder(self)))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
@@ -333,7 +385,7 @@ impl Operation for LimitOrder {
                     reason: err.to_string(),
                 }
                 .into()],
-                Action::SetLimitOrder(self),
+                Action::LimitOrder(self),
             ),
         }
     }
@@ -378,7 +430,7 @@ impl Operation for LimitOrder {
         desired: &HashSet<String>,
     ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if !desired.contains(&self.bid_denom) {
-            return Ok((vec![], vec![], Action::SetLimitOrder(self)));
+            return Ok((vec![], vec![], Action::LimitOrder(self)));
         }
 
         let existing_order = self.strategy.existing_order(
@@ -418,7 +470,7 @@ impl Operation for LimitOrder {
             return Ok((
                 vec![withdraw_order_msg],
                 vec![],
-                Action::SetLimitOrder(LimitOrder {
+                Action::LimitOrder(LimitOrder {
                     current_price: None,
                     ..self
                 }),
@@ -428,7 +480,7 @@ impl Operation for LimitOrder {
         Ok((
             vec![],
             vec![],
-            Action::SetLimitOrder(LimitOrder {
+            Action::LimitOrder(LimitOrder {
                 current_price: None,
                 ..self
             }),
@@ -478,7 +530,7 @@ impl Operation for LimitOrder {
         Ok((
             messages,
             vec![],
-            Action::SetLimitOrder(LimitOrder {
+            Action::LimitOrder(LimitOrder {
                 current_price: None,
                 ..self
             }),

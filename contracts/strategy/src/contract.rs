@@ -213,7 +213,6 @@ pub fn execute(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     let response = Response::new().add_attribute("reply_id", reply.id.to_string());
-
     match reply.id {
         PROCESS_PAYLOAD_REPLY_ID => {
             let payload = from_json::<StrategyMsgPayload>(reply.payload.clone());
@@ -223,9 +222,9 @@ pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
                     SubMsgResult::Ok(_) => {
                         Ok(response.add_events(payload.decorated_events("succeeded")))
                     }
-                    SubMsgResult::Err(_) => {
-                        Ok(response.add_events(payload.decorated_events("failed")))
-                    }
+                    SubMsgResult::Err(err) => Ok(response
+                        .add_events(payload.decorated_events("failed"))
+                        .add_attribute("msg_error", err)),
                 }
             } else {
                 Ok(response

@@ -2,7 +2,6 @@ pub mod action;
 pub mod conditional;
 pub mod distribution;
 pub mod fin_swap;
-pub mod fund_strategy;
 pub mod limit_order;
 pub mod many;
 pub mod operation;

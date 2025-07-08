@@ -158,7 +158,7 @@ impl Distribution {
 }
 
 impl Operation for Distribution {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
         }
@@ -176,14 +176,26 @@ impl Operation for Distribution {
             }
 
             match &destination.recipient {
-                Recipient::Bank { address, .. }
-                | Recipient::Wasm { address, .. }
-                | Recipient::Strategy {
-                    contract_address: address,
-                } => {
+                Recipient::Bank { address, .. } | Recipient::Wasm { address, .. } => {
                     deps.api.addr_validate(address.as_ref()).map_err(|_| {
                         StdError::generic_err(format!("Invalid destination address: {address}"))
                     })?;
+                }
+                Recipient::Strategy { contract_address } => {
+                    let source_contract_info = deps
+                        .querier
+                        .query_wasm_contract_info(env.contract.address.clone())?;
+
+                    let funded_contract_code_id = deps
+                        .querier
+                        .query_wasm_contract_info(contract_address.clone())?
+                        .code_id;
+
+                    if source_contract_info.code_id != funded_contract_code_id {
+                        return Err(StdError::generic_err(
+                            "Funded strategy contract must be a CALC strategy contract",
+                        ));
+                    }
                 }
                 Recipient::Deposit { memo } => {
                     if has_native_denoms {
