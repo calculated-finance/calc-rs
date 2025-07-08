@@ -10,11 +10,9 @@ exclude = []
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+calc-rs = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }
-
-[dev-dependencies]
-calc-rs = { workspace = true }
 cw-multi-test = { workspace = true }
 manager = { workspace = true }
 rujira-rs = { workspace = true }

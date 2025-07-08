@@ -355,7 +355,14 @@ impl Operation for LimitOrder {
             ));
         }
 
-        Ok((Action::SetLimitOrder(self), vec![], vec![]))
+        Ok((
+            Action::SetLimitOrder(LimitOrder {
+                current_price: None,
+                ..self
+            }),
+            vec![],
+            vec![],
+        ))
     }
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
@@ -389,6 +396,13 @@ impl Operation for LimitOrder {
             messages.push(withdraw_order_msg);
         }
 
-        Ok((Action::SetLimitOrder(self), messages, vec![]))
+        Ok((
+            Action::SetLimitOrder(LimitOrder {
+                current_price: None,
+                ..self
+            }),
+            messages,
+            vec![],
+        ))
     }
 }

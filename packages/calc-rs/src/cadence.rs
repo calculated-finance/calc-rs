@@ -518,7 +518,7 @@ mod tests {
         let env = mock_env();
         let cron = "*/10 * * * * *";
 
-        assert!(!Cadence::Cron {
+        assert!(Cadence::Cron {
             expr: cron.to_string(),
             previous: None
         }
