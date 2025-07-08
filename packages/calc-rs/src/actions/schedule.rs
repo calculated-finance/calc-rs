@@ -1,17 +1,34 @@
 use std::collections::HashSet;
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult, SubMsg};
+use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult};
 
 use crate::{
     actions::{action::Action, operation::Operation},
     cadence::Cadence,
-    conditions::Threshold,
-    constants::LOG_ERRORS_REPLY_ID,
+    conditions::Condition,
     core::Contract,
-    manager::ManagerExecuteMsg,
-    scheduler::{CreateTrigger, SchedulerExecuteMsg},
+    scheduler::SchedulerExecuteMsg,
+    strategy::{StrategyMsg, StrategyMsgPayload},
 };
+
+enum ScheduleEvent {
+    ExecutionSkipped { reason: String },
+    CreateTrigger { condition: Condition },
+}
+
+impl Into<Event> for ScheduleEvent {
+    fn into(self) -> Event {
+        match self {
+            ScheduleEvent::ExecutionSkipped { reason } => {
+                Event::new("schedule_skipped").add_attribute("reason", reason)
+            }
+            ScheduleEvent::CreateTrigger { condition } => {
+                Event::new("trigger_created").add_attribute("condition", format!("{:?}", condition))
+            }
+        }
+    }
+}
 
 #[cw_serde]
 pub struct Schedule {
@@ -22,52 +39,28 @@ pub struct Schedule {
 }
 
 impl Operation for Schedule {
-    fn init(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let set_trigger_msg = Contract(self.scheduler.clone()).call(
-            to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                condition: self.cadence.into_condition(env)?,
-                threshold: Threshold::All,
-                to: env.contract.address.clone(),
-                msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                    contract_address: env.contract.address.clone(),
-                })?,
-            }]))?,
-            self.execution_rebate.clone(),
-        );
-
-        Ok((
-            Action::Schedule(self),
-            vec![SubMsg::reply_always(set_trigger_msg, LOG_ERRORS_REPLY_ID)],
-            vec![],
-        ))
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+        Ok((Action::Schedule(self), vec![], vec![]))
     }
 
-    fn execute(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut messages = vec![];
-        let mut events = vec![];
-
+    fn execute(self, _deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         if self.cadence.is_due(env)? {
+            let (action, mut messages, events) = self.action.execute(_deps, env)?;
             let next = self.cadence.next(env)?;
+            let condition = next.into_condition(env)?;
 
-            let (action, messages_from_action, events_from_action) =
-                self.action.execute(_deps, env)?;
-
-            messages.extend(messages_from_action);
-            events.extend(events_from_action);
-
-            let set_trigger_msg = Contract(self.scheduler.clone()).call(
-                to_json_binary(&SchedulerExecuteMsg::SetTriggers(vec![CreateTrigger {
-                    condition: next.into_condition(env)?,
-                    threshold: Threshold::All,
-                    to: env.contract.address.clone(),
-                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                        contract_address: env.contract.address.clone(),
-                    })?,
-                }]))?,
+            let create_trigger_msg = Contract(self.scheduler.clone()).call(
+                to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
                 self.execution_rebate.clone(),
             );
 
-            messages.push(SubMsg::reply_always(set_trigger_msg, LOG_ERRORS_REPLY_ID));
+            messages.push(StrategyMsg::with_payload(
+                create_trigger_msg,
+                StrategyMsgPayload {
+                    events: vec![ScheduleEvent::CreateTrigger { condition }.into()],
+                    ..StrategyMsgPayload::default()
+                },
+            ));
 
             Ok((
                 Action::Schedule(Schedule {
@@ -79,7 +72,28 @@ impl Operation for Schedule {
                 events,
             ))
         } else {
-            Ok((Action::Schedule(self), messages, events))
+            let condition = self.cadence.into_condition(env)?;
+
+            let create_trigger_msg = Contract(self.scheduler.clone()).call(
+                to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
+                self.execution_rebate.clone(),
+            );
+
+            let skipped_event = ScheduleEvent::ExecutionSkipped {
+                reason: format!("Schedule not due: {:?}", self.cadence.clone()),
+            };
+
+            Ok((
+                Action::Schedule(self),
+                vec![StrategyMsg::with_payload(
+                    create_trigger_msg,
+                    StrategyMsgPayload {
+                        events: vec![ScheduleEvent::CreateTrigger { condition }.into()],
+                        ..StrategyMsgPayload::default()
+                    },
+                )],
+                vec![skipped_event.into()],
+            ))
         }
     }
 
@@ -96,11 +110,11 @@ impl Operation for Schedule {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::Schedule(self), vec![], vec![]))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::Schedule(self), vec![], vec![]))
     }
 }

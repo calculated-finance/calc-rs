@@ -6,18 +6,46 @@ use std::{
 
 use crate::{
     actions::{action::Action, operation::Operation, swap::SwapAmountAdjustment},
-    constants::UPDATE_STATS_REPLY_ID,
     core::Contract,
     statistics::Statistics,
+    strategy::{StrategyMsg, StrategyMsgPayload},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
-    Uint128,
+    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Uint128,
 };
 use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
 };
+
+enum FinSwapEvent {
+    SwapSkipped {
+        reason: String,
+    },
+    Swap {
+        swap_amount: Coin,
+        expected_receive_amount: Coin,
+    },
+}
+
+impl Into<Event> for FinSwapEvent {
+    fn into(self) -> Event {
+        match self {
+            FinSwapEvent::SwapSkipped { reason } => {
+                Event::new("fin_swap_skipped").add_attribute("reason", reason)
+            }
+            FinSwapEvent::Swap {
+                swap_amount,
+                expected_receive_amount,
+            } => Event::new("fin_swap_attempted")
+                .add_attribute("swap_amount", swap_amount.to_string())
+                .add_attribute(
+                    "expected_receive_amount",
+                    expected_receive_amount.to_string(),
+                ),
+        }
+    }
+}
 
 #[cw_serde]
 pub struct FinSwap {
@@ -29,7 +57,7 @@ pub struct FinSwap {
 }
 
 impl Operation for FinSwap {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
@@ -63,10 +91,7 @@ impl Operation for FinSwap {
         Ok((Action::FinSwap(self), vec![], vec![]))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut messages: Vec<SubMsg> = vec![];
-        let events: Vec<Event> = vec![];
-
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let (new_swap_amount, new_minimum_receive_amount) = match self.adjustment.clone() {
             SwapAmountAdjustment::Fixed => {
                 let swap_balance = deps
@@ -115,7 +140,14 @@ impl Operation for FinSwap {
                 };
 
                 if scaled_swap_amount.is_zero() {
-                    return Ok((Action::FinSwap(self), messages, events));
+                    return Ok((
+                        Action::FinSwap(self),
+                        vec![],
+                        vec![FinSwapEvent::SwapSkipped {
+                            reason: "Scaled swap amount is zero".to_string(),
+                        }
+                        .into()],
+                    ));
                 }
 
                 let new_swap_amount = Coin::new(
@@ -142,7 +174,14 @@ impl Operation for FinSwap {
         };
 
         if new_swap_amount.amount.is_zero() {
-            return Ok((Action::FinSwap(self), messages, events));
+            return Ok((
+                Action::FinSwap(self),
+                vec![],
+                vec![FinSwapEvent::SwapSkipped {
+                    reason: "Swap amount after adjustment is zero".to_string(),
+                }
+                .into()],
+            ));
         }
 
         let book_response = deps.querier.query_wasm_smart::<BookResponse>(
@@ -188,7 +227,7 @@ impl Operation for FinSwap {
             return Ok((Action::FinSwap(self), vec![], vec![]));
         }
 
-        let swap_msg = SubMsg::reply_always(
+        let swap_msg = StrategyMsg::with_payload(
             Contract(self.pair_address.clone()).call(
                 to_json_binary(&ExecuteMsg::Swap(SwapRequest {
                     min_return: Some(new_minimum_receive_amount),
@@ -197,16 +236,20 @@ impl Operation for FinSwap {
                 }))?,
                 vec![new_swap_amount.clone()],
             ),
-            UPDATE_STATS_REPLY_ID,
-        )
-        .with_payload(to_json_binary(&Statistics {
-            swapped: vec![new_swap_amount],
-            ..Statistics::default()
-        })?);
+            StrategyMsgPayload {
+                statistics: Statistics {
+                    swapped: vec![new_swap_amount.clone()],
+                    ..Statistics::default()
+                },
+                events: vec![FinSwapEvent::Swap {
+                    swap_amount: new_swap_amount.clone(),
+                    expected_receive_amount: expected_amount_out.clone(),
+                }
+                .into()],
+            },
+        );
 
-        messages.push(swap_msg);
-
-        Ok((Action::FinSwap(self), messages, events))
+        Ok((Action::FinSwap(self), vec![swap_msg], vec![]))
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -222,11 +265,11 @@ impl Operation for FinSwap {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::FinSwap(self), vec![], vec![]))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::FinSwap(self), vec![], vec![]))
     }
 }

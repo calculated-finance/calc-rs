@@ -3,19 +3,21 @@ use std::{collections::HashSet, hash::Hasher, vec};
 use ahash::AHasher;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env,
-    Event, Response, StdError, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Decimal, Deps,
+    DepsMut, Env, Event, Response, StdError, StdResult, Storage, SubMsg, Uint128, WasmMsg,
 };
 
 use crate::{
     actions::{
         action::Action,
+        conditional::Conditional,
         distribution::{Destination, Distribution, Recipient},
         operation::Operation,
         schedule::Schedule,
         swap::{OptimalSwap, SwapRoute},
         thor_swap::ThorSwap,
     },
+    constants::PROCESS_REPLY_PAYLOAD_REPLY_ID,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
 };
@@ -72,6 +74,60 @@ impl<S> Strategy<S> {
 }
 
 #[cw_serde]
+pub struct StrategyMsgPayload {
+    pub statistics: Statistics,
+    pub events: Vec<Event>,
+}
+
+impl StrategyMsgPayload {
+    pub fn decorated_events(&self, decorator: &str) -> Vec<Event> {
+        self.events
+            .clone()
+            .into_iter()
+            .map(|mut event| {
+                event.ty = format!("{}_{}", event.ty, decorator);
+                event
+            })
+            .collect()
+    }
+}
+
+impl Default for StrategyMsgPayload {
+    fn default() -> Self {
+        Self {
+            statistics: Statistics::default(),
+            events: vec![],
+        }
+    }
+}
+
+#[cw_serde]
+pub struct StrategyMsg {
+    msg: CosmosMsg,
+    payload: StrategyMsgPayload,
+}
+
+impl StrategyMsg {
+    pub fn with_payload(msg: CosmosMsg, payload: StrategyMsgPayload) -> Self {
+        Self { msg, payload }
+    }
+
+    pub fn without_payload(msg: CosmosMsg) -> Self {
+        Self {
+            msg,
+            payload: StrategyMsgPayload::default(),
+        }
+    }
+}
+
+impl From<StrategyMsg> for SubMsg {
+    fn from(msg: StrategyMsg) -> Self {
+        SubMsg::reply_always(msg.msg, PROCESS_REPLY_PAYLOAD_REPLY_ID)
+            .with_payload(to_json_binary(&msg.payload).unwrap())
+    }
+}
+
+#[cw_serde]
 pub struct Json;
 
 #[cw_serde]
@@ -97,7 +153,7 @@ pub struct Idle {
 #[cw_serde]
 pub struct Executable {
     pub contract_address: Addr,
-    messages: Vec<SubMsg>,
+    messages: Vec<StrategyMsg>,
     events: Vec<Event>,
 }
 
@@ -116,14 +172,6 @@ impl Strategy<Json> {
 }
 
 impl Strategy<New> {
-    // pub fn new(code_id: u64, creator: Addr, owner: Addr, action: Action) -> Self {
-    //     Self {
-    //         owner,
-    //         action,
-    //         state: New { code_id, creator, label },
-    //     }
-    // }
-
     pub fn with_affiliates(
         self,
         deps: Deps,
@@ -224,16 +272,12 @@ impl Strategy<New> {
                             streaming_interval,
                             max_streaming_quantity,
                             previous_swap,
-                            on_complete,
-                            scheduler,
                             affiliate_code: _,
                             affiliate_bps: _,
                         } => SwapRoute::Thorchain {
                             streaming_interval,
                             max_streaming_quantity,
                             previous_swap,
-                            on_complete,
-                            scheduler,
                             // As per agreement with Rujira
                             affiliate_code: Some("rj".to_string()),
                             affiliate_bps: Some(10),
@@ -251,10 +295,10 @@ impl Strategy<New> {
                 action: Box::new(Self::add_affiliates(deps, *schedule.action, affiliates)?),
                 ..schedule
             }),
-            Action::Conditional((conditions, action)) => Action::Conditional((
-                conditions,
-                Box::new(Self::add_affiliates(deps, *action, affiliates)?),
-            )),
+            Action::Conditional(conditional) => Action::Conditional(Conditional {
+                action: Box::new(Self::add_affiliates(deps, *conditional.action, affiliates)?),
+                ..conditional
+            }),
             Action::Many(actions) => {
                 let mut initialised_actions = vec![];
 
@@ -270,14 +314,14 @@ impl Strategy<New> {
 }
 
 impl Strategy<Instantiable> {
-    pub fn instantiate_msg(&self) -> StdResult<WasmMsg> {
+    pub fn instantiate_msg(&self, funds: &[Coin]) -> StdResult<WasmMsg> {
         Ok(WasmMsg::Instantiate2 {
             admin: Some(self.owner.to_string()),
             code_id: self.state.code_id,
             label: self.state.label.clone(),
             salt: self.state.salt.clone(),
             msg: to_json_binary(&StrategyInstantiateMsg(self.clone()))?,
-            funds: vec![],
+            funds: funds.to_vec(),
         })
     }
 
@@ -299,7 +343,7 @@ impl Strategy<Instantiable> {
         )?;
 
         Ok(Response::default()
-            .add_submessages(messages)
+            .add_submessages(messages.into_iter().map(SubMsg::from).collect::<Vec<_>>())
             .add_events(events))
     }
 }
@@ -370,7 +414,13 @@ impl Strategy<Executable> {
         )?;
 
         Ok(Response::default()
-            .add_submessages(self.state.messages)
+            .add_submessages(
+                self.state
+                    .messages
+                    .into_iter()
+                    .map(SubMsg::from)
+                    .collect::<Vec<_>>(),
+            )
             .add_events(self.state.events))
     }
 }

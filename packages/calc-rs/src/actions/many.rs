@@ -1,11 +1,14 @@
 use std::{collections::HashSet, vec};
 
-use cosmwasm_std::{Coins, Deps, Env, Event, StdResult, SubMsg};
+use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
 
-use crate::actions::{action::Action, operation::Operation};
+use crate::{
+    actions::{action::Action, operation::Operation},
+    strategy::StrategyMsg,
+};
 
 impl Operation for Vec<Action> {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let mut actions = Vec::with_capacity(self.len());
         let mut messages = vec![];
         let mut events = vec![];
@@ -21,9 +24,9 @@ impl Operation for Vec<Action> {
         Ok((Action::Many(actions), messages, events))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
-        let mut all_messages = Vec::with_capacity(self.len());
-        let mut all_events = Vec::with_capacity(self.len());
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
+        let mut all_messages = vec![];
+        let mut all_events = vec![];
         let mut new_actions = Vec::with_capacity(self.len());
 
         for action in self.into_iter() {
@@ -67,7 +70,7 @@ impl Operation for Vec<Action> {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let mut actions = vec![];
         let mut messages = vec![];
         let mut events = Vec::with_capacity(self.len());
@@ -83,7 +86,7 @@ impl Operation for Vec<Action> {
         Ok((Action::Many(actions), messages, events))
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let mut all_messages = vec![];
         let mut all_events = vec![];
         let mut new_actions = Vec::with_capacity(self.len());

@@ -5,18 +5,18 @@ mod integration_tests {
     use calc_rs::{
         actions::{
             action::Action,
+            conditional::Conditional,
             fin_swap::FinSwap,
             schedule::Schedule,
             swap::{OptimalSwap, SwapAmountAdjustment, SwapRoute},
         },
         cadence::Cadence,
-        conditions::{Condition, Conditions, Threshold},
+        conditions::{Condition, Threshold},
         statistics::Statistics,
         strategy::{Idle, Strategy, StrategyConfig},
     };
     use cosmwasm_std::{Coin, Decimal, Uint128};
-    use rujira_fin::order;
-    use rujira_rs::fin::{self, OrderResponse, OrdersResponse, Price, Side};
+    use rujira_rs::fin::Side;
 
     use calc_rs::actions::limit_order::{LimitOrder, OrderPriceStrategy};
     use calc_rs::manager::StrategyStatus;
@@ -37,27 +37,26 @@ mod integration_tests {
             adjustment: SwapAmountAdjustment::Fixed,
         };
 
-        let owner = harness.owner.clone();
-        let mut strategy_handler = StrategyBuilder::new(&mut harness, owner.clone(), "Simple Swap")
-            .with_action(Action::OptimalSwap(swap_action.clone()))
-            .instantiate();
-
         let manager_addr = harness.manager_addr.clone();
+        let owner = harness.owner.clone();
+        let keeper = harness.app.api().addr_make("keeper");
 
-        strategy_handler.assert_config(
-            &mut harness,
-            StrategyConfig {
-                manager: manager_addr,
-                escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
-                strategy: Strategy {
-                    owner: owner.clone(),
-                    action: Action::OptimalSwap(swap_action),
-                    state: Idle {
-                        contract_address: strategy_handler.strategy_addr.clone(),
-                    },
+        let mut strategy_handler =
+            StrategyBuilder::new(&mut harness, owner.clone(), "Simple Swap", keeper)
+                .with_action(Action::OptimalSwap(swap_action.clone()))
+                .instantiate(&[]);
+
+        strategy_handler.assert_config(StrategyConfig {
+            manager: manager_addr,
+            escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
+            strategy: Strategy {
+                owner: owner.clone(),
+                action: Action::OptimalSwap(swap_action),
+                state: Idle {
+                    contract_address: strategy_handler.strategy_addr.clone(),
                 },
             },
-        );
+        });
     }
 
     #[test]
@@ -77,31 +76,25 @@ mod integration_tests {
         };
 
         let mut strategy_handler =
-            StrategyBuilder::new(&mut harness, owner.clone(), "Simple ATOM->OSMO Swap")
+            StrategyBuilder::new(&mut harness, owner.clone(), "Simple Swap", keeper)
                 .with_action(Action::OptimalSwap(swap_route.clone()))
-                .with_funds(vec![swap_route.swap_amount.clone()])
-                .with_keeper(keeper)
-                .instantiate();
+                .instantiate(&[Coin::new(
+                    swap_route.swap_amount.amount * Uint128::new(10),
+                    swap_route.swap_amount.denom.clone(),
+                )]);
 
         strategy_handler
-            .execute(&mut harness, &owner, &[])
-            .assert_balances(
-                &mut harness,
-                vec![Coin::new(
-                    swap_route
-                        .swap_amount
-                        .amount
-                        .mul_floor(Decimal::percent(99)),
-                    swap_route.minimum_receive_amount.denom.clone(),
-                )],
-            )
-            .assert_stats(
-                &mut harness,
-                Statistics {
-                    swapped: vec![swap_route.swap_amount],
-                    ..Statistics::default()
-                },
-            );
+            .assert_balance(Coin::new(
+                swap_route
+                    .swap_amount
+                    .amount
+                    .mul_floor(Decimal::percent(99)),
+                swap_route.minimum_receive_amount.denom.clone(),
+            ))
+            .assert_stats(Statistics {
+                swapped: vec![swap_route.swap_amount],
+                ..Statistics::default()
+            });
     }
 
     #[test]
@@ -126,24 +119,19 @@ mod integration_tests {
         )];
 
         let mut strategy_handler =
-            StrategyBuilder::new(&mut harness, owner.clone(), "Simple ATOM->OSMO Swap")
-                .with_action(Action::Conditional((
-                    Conditions {
-                        conditions: vec![Condition::OwnBalanceAvailable {
-                            amount: swap_action.swap_amount.clone(),
-                        }],
-                        threshold: Threshold::All,
-                    },
-                    Box::new(Action::OptimalSwap(swap_action.clone())),
-                )))
-                .with_funds(funds.clone())
-                .with_keeper(keeper)
-                .instantiate();
+            StrategyBuilder::new(&mut harness, owner.clone(), "Simple Swap", keeper)
+                .with_action(Action::Conditional(Conditional {
+                    conditions: vec![Condition::StrategyBalanceAvailable {
+                        amount: swap_action.swap_amount.clone(),
+                    }],
+                    threshold: Threshold::All,
+                    action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                }))
+                .instantiate(&funds);
 
         strategy_handler
-            .execute(&mut harness, &owner, &[])
-            .assert_balances(&mut harness, funds)
-            .assert_stats(&mut harness, Statistics::default());
+            .assert_balances(funds)
+            .assert_stats(Statistics::default());
     }
 
     #[test]
@@ -161,42 +149,40 @@ mod integration_tests {
             bid_amount: Some(Uint128::new(1000u128)),
             strategy: OrderPriceStrategy::Fixed(order_price),
             current_price: None,
+            scheduler: harness.scheduler_addr.clone(),
+            execution_rebate: vec![],
         };
 
+        let manager_addr = harness.manager_addr.clone();
+        let keeper = harness.app.api().addr_make("keeper");
+
         let mut strategy_handler =
-            StrategyBuilder::new(&mut harness, owner.clone(), "Limit Order Strategy")
+            StrategyBuilder::new(&mut harness, owner.clone(), "Limit Order Strategy", keeper)
                 .with_action(Action::SetLimitOrder(order_action.clone()))
-                .with_funds(vec![Coin::new(
+                .instantiate(&[Coin::new(
                     order_action.bid_amount.unwrap(),
                     order_action.bid_denom.clone(),
-                )])
-                .instantiate();
+                )]);
 
         let strategy_addr = strategy_handler.strategy_addr.clone();
-        let manager_addr = harness.manager_addr.clone();
 
         strategy_handler
-            .execute(&mut harness, &owner, &[])
-            .assert_config(
-                &mut harness,
-                StrategyConfig {
-                    manager: manager_addr.clone(),
-                    escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
-                    strategy: Strategy {
-                        owner: owner.clone(),
-                        action: Action::SetLimitOrder(LimitOrder {
-                            current_price: Some(Price::Fixed(order_price)),
-                            ..order_action.clone()
-                        }),
-                        state: Idle {
-                            contract_address: strategy_addr.clone(),
-                        },
+            .assert_config(StrategyConfig {
+                manager: manager_addr.clone(),
+                escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
+                strategy: Strategy {
+                    owner: owner.clone(),
+                    action: Action::SetLimitOrder(LimitOrder {
+                        current_price: Some(order_price),
+                        ..order_action.clone()
+                    }),
+                    state: Idle {
+                        contract_address: strategy_addr.clone(),
                     },
                 },
-            )
-            .assert_status(&mut harness, StrategyStatus::Active)
+            })
+            .assert_status(StrategyStatus::Active)
             .assert_fin_orders(
-                &mut harness,
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -206,23 +192,20 @@ mod integration_tests {
                     Uint128::zero(),
                 )],
             )
-            .pause(&mut harness, &owner)
-            .assert_config(
-                &mut harness,
-                StrategyConfig {
-                    manager: manager_addr,
-                    escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
-                    strategy: Strategy {
-                        owner: owner.clone(),
-                        action: Action::SetLimitOrder(order_action.clone()),
-                        state: Idle {
-                            contract_address: strategy_addr,
-                        },
+            .pause()
+            .assert_config(StrategyConfig {
+                manager: manager_addr,
+                escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
+                strategy: Strategy {
+                    owner: owner.clone(),
+                    action: Action::SetLimitOrder(order_action.clone()),
+                    state: Idle {
+                        contract_address: strategy_addr,
                     },
                 },
-            )
-            .assert_status(&mut harness, StrategyStatus::Paused)
-            .assert_fin_orders(&mut harness, &order_action.pair_address, vec![]);
+            })
+            .assert_status(StrategyStatus::Paused)
+            .assert_fin_orders(&order_action.pair_address, vec![]);
     }
 
     #[test]
@@ -240,42 +223,40 @@ mod integration_tests {
             bid_amount: Some(Uint128::new(1000u128)),
             strategy: OrderPriceStrategy::Fixed(order_price),
             current_price: None,
+            scheduler: harness.scheduler_addr.clone(),
+            execution_rebate: vec![],
         };
 
+        let manager_addr = harness.manager_addr.clone();
+        let keeper = harness.app.api().addr_make("keeper");
+
         let mut strategy_handler =
-            StrategyBuilder::new(&mut harness, owner.clone(), "Limit Order Strategy")
+            StrategyBuilder::new(&mut harness, owner.clone(), "Limit Order Strategy", keeper)
                 .with_action(Action::SetLimitOrder(order_action.clone()))
-                .with_funds(vec![Coin::new(
+                .instantiate(&[Coin::new(
                     order_action.bid_amount.unwrap().u128(),
                     order_action.bid_denom.clone(),
-                )])
-                .instantiate();
+                )]);
 
-        let manager_addr = harness.manager_addr.clone();
         let strategy_addr = strategy_handler.strategy_addr.clone();
 
         strategy_handler
-            .execute(&mut harness, &owner, &[])
-            .assert_config(
-                &mut harness,
-                StrategyConfig {
-                    manager: manager_addr.clone(),
-                    escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
-                    strategy: Strategy {
-                        owner: owner.clone(),
-                        action: Action::SetLimitOrder(LimitOrder {
-                            current_price: Some(Price::Fixed(order_price)),
-                            ..order_action.clone()
-                        }),
-                        state: Idle {
-                            contract_address: strategy_addr.clone(),
-                        },
+            .assert_config(StrategyConfig {
+                manager: manager_addr.clone(),
+                escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
+                strategy: Strategy {
+                    owner: owner.clone(),
+                    action: Action::SetLimitOrder(LimitOrder {
+                        current_price: Some(order_price),
+                        ..order_action.clone()
+                    }),
+                    state: Idle {
+                        contract_address: strategy_addr.clone(),
                     },
                 },
-            )
-            .assert_status(&mut harness, StrategyStatus::Active)
+            })
+            .assert_status(StrategyStatus::Active)
             .assert_fin_orders(
-                &mut harness,
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -285,43 +266,36 @@ mod integration_tests {
                     Uint128::zero(),
                 )],
             )
-            .pause(&mut harness, &owner)
-            .assert_config(
-                &mut harness,
-                StrategyConfig {
-                    manager: manager_addr.clone(),
-                    escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
-                    strategy: Strategy {
-                        owner: owner.clone(),
-                        action: Action::SetLimitOrder(order_action.clone()),
-                        state: Idle {
-                            contract_address: strategy_addr.clone(),
-                        },
+            .pause()
+            .assert_config(StrategyConfig {
+                manager: manager_addr.clone(),
+                escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
+                strategy: Strategy {
+                    owner: owner.clone(),
+                    action: Action::SetLimitOrder(order_action.clone()),
+                    state: Idle {
+                        contract_address: strategy_addr.clone(),
                     },
                 },
-            )
-            .assert_fin_orders(&mut harness, &order_action.pair_address, vec![])
-            .resume(&mut harness, &owner)
-            .assert_config(
-                &mut harness,
-                StrategyConfig {
-                    manager: manager_addr,
-                    escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
-                    strategy: Strategy {
-                        owner: owner.clone(),
-                        action: Action::SetLimitOrder(LimitOrder {
-                            current_price: Some(Price::Fixed(order_price)),
-                            ..order_action.clone()
-                        }),
-                        state: Idle {
-                            contract_address: strategy_addr.clone(),
-                        },
+            })
+            .assert_fin_orders(&order_action.pair_address, vec![])
+            .resume()
+            .assert_config(StrategyConfig {
+                manager: manager_addr,
+                escrowed: HashSet::from([fin_pair.denoms.quote().to_string()]),
+                strategy: Strategy {
+                    owner: owner.clone(),
+                    action: Action::SetLimitOrder(LimitOrder {
+                        current_price: Some(order_price),
+                        ..order_action.clone()
+                    }),
+                    state: Idle {
+                        contract_address: strategy_addr.clone(),
                     },
                 },
-            )
-            .assert_status(&mut harness, StrategyStatus::Active)
+            })
+            .assert_status(StrategyStatus::Active)
             .assert_fin_orders(
-                &mut harness,
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -337,7 +311,6 @@ mod integration_tests {
     fn test_schedule_action_with_blocks_cadence_schedules_correctly() {
         let mut harness = CalcTestApp::setup();
         let keeper = harness.app.api().addr_make("keeper");
-
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
         let owner = harness.owner.clone();
         let scheduler_addr = harness.scheduler_addr.clone();
@@ -350,72 +323,62 @@ mod integration_tests {
             adjustment: SwapAmountAdjustment::Fixed,
         };
 
-        let mut strategy_handler =
-            StrategyBuilder::new(&mut harness, owner.clone(), "Scheduled Strategy")
-                .with_action(Action::Schedule(Schedule {
-                    scheduler: scheduler_addr.clone(),
-                    cadence: Cadence::Blocks {
-                        interval: 5,
-                        previous: None,
-                    },
-                    execution_rebate: vec![],
-                    action: Box::new(Action::FinSwap(swap_action.clone())),
-                }))
-                .with_funds(vec![Coin::new(
-                    swap_action.swap_amount.amount * Uint128::new(10),
-                    swap_action.swap_amount.denom.clone(),
-                )])
-                .with_keeper(keeper.clone())
-                .instantiate();
+        let scheduled_swap_action = Action::Schedule(Schedule {
+            scheduler: scheduler_addr.clone(),
+            cadence: Cadence::Blocks {
+                interval: 5,
+                previous: None,
+            },
+            execution_rebate: vec![],
+            action: Box::new(Action::FinSwap(swap_action.clone())),
+        });
+
+        let mut strategy_handler = StrategyBuilder::new(
+            &mut harness,
+            owner.clone(),
+            "Blocks Schedule Strategy",
+            keeper.clone(),
+        )
+        .with_action(scheduled_swap_action)
+        .instantiate(&[Coin::new(
+            swap_action.swap_amount.amount * Uint128::new(10),
+            swap_action.swap_amount.denom.clone(),
+        )]);
 
         strategy_handler
-            .execute(&mut harness, &owner, &[])
-            .assert_balances(
-                &mut harness,
-                vec![
-                    Coin::new(
-                        swap_action.swap_amount.amount * Uint128::new(9),
-                        swap_action.swap_amount.denom.clone(),
-                    ),
-                    Coin::new(
-                        swap_action
-                            .swap_amount
-                            .amount
-                            .mul_floor(Decimal::percent(99)),
-                        swap_action.minimum_receive_amount.denom.clone(),
-                    ),
-                ],
-            )
-            .assert_swapped(&mut harness, vec![swap_action.swap_amount.clone()])
-            .advance_blocks(&mut harness, 2)
-            .execute(&mut harness, &keeper, &[])
-            .assert_swapped(&mut harness, vec![swap_action.swap_amount.clone()])
-            .advance_blocks(&mut harness, 4)
-            .execute(&mut harness, &keeper, &[])
-            .assert_balances(
-                &mut harness,
-                vec![
-                    Coin::new(
-                        swap_action.swap_amount.amount * Uint128::new(8),
-                        swap_action.swap_amount.denom.clone(),
-                    ),
-                    Coin::new(
-                        swap_action
-                            .swap_amount
-                            .amount
-                            .mul_floor(Decimal::percent(99))
-                            * Uint128::new(2),
-                        swap_action.minimum_receive_amount.denom.clone(),
-                    ),
-                ],
-            )
-            .assert_swapped(
-                &mut harness,
-                vec![Coin::new(
-                    swap_action.swap_amount.amount * Uint128::new(2),
+            .assert_balance(Coin::new(
+                swap_action.swap_amount.amount * Uint128::new(9),
+                swap_action.swap_amount.denom.clone(),
+            ))
+            .assert_balance(Coin::new(
+                swap_action
+                    .swap_amount
+                    .amount
+                    .mul_floor(Decimal::percent(99)),
+                swap_action.minimum_receive_amount.denom.clone(),
+            ))
+            .assert_swapped(vec![swap_action.swap_amount.clone()])
+            .advance_blocks(2)
+            .assert_swapped(vec![swap_action.swap_amount.clone()])
+            .advance_blocks(4)
+            .assert_balances(vec![
+                Coin::new(
+                    swap_action.swap_amount.amount * Uint128::new(8),
                     swap_action.swap_amount.denom.clone(),
-                )],
-            );
+                ),
+                Coin::new(
+                    swap_action
+                        .swap_amount
+                        .amount
+                        .mul_floor(Decimal::percent(99))
+                        * Uint128::new(2),
+                    swap_action.minimum_receive_amount.denom.clone(),
+                ),
+            ])
+            .assert_swapped(vec![Coin::new(
+                swap_action.swap_amount.amount * Uint128::new(2),
+                swap_action.swap_amount.denom.clone(),
+            )]);
     }
 
     #[test]
@@ -435,7 +398,7 @@ mod integration_tests {
             adjustment: SwapAmountAdjustment::Fixed,
         };
 
-        let crank_action = Action::Schedule(Schedule {
+        let schedule_action = Action::Schedule(Schedule {
             scheduler: scheduler_addr.clone(),
             cadence: Cadence::Cron {
                 expr: "*/10 * * * * *".to_string(),
@@ -445,132 +408,81 @@ mod integration_tests {
             action: Box::new(Action::FinSwap(swap_action.clone())),
         });
 
-        let mut strategy_handler =
-            StrategyBuilder::new(&mut harness, owner.clone(), "Crank Cron Strategy")
-                .with_action(crank_action)
-                .with_funds(vec![Coin::new(
-                    swap_action.swap_amount.amount * Uint128::new(10),
-                    swap_action.swap_amount.denom.clone(),
-                )])
-                .with_keeper(keeper.clone())
-                .instantiate();
+        let mut strategy_handler = StrategyBuilder::new(
+            &mut harness,
+            owner.clone(),
+            "Cron Schedule Strategy",
+            keeper.clone(),
+        )
+        .with_action(schedule_action)
+        .instantiate(&[Coin::new(
+            swap_action.swap_amount.amount * Uint128::new(10),
+            swap_action.swap_amount.denom.clone(),
+        )]);
 
         strategy_handler
-            .advance_time(&mut harness, 10)
-            .execute(&mut harness, &owner, &[])
-            .assert_balances(
-                &mut harness,
-                vec![
-                    Coin::new(
-                        swap_action.swap_amount.amount * Uint128::new(9),
-                        swap_action.swap_amount.denom.clone(),
-                    ),
-                    Coin::new(
-                        swap_action
-                            .swap_amount
-                            .amount
-                            .mul_floor(Decimal::percent(99)),
-                        swap_action.minimum_receive_amount.denom.clone(),
-                    ),
-                ],
-            )
-            .assert_swapped(&mut harness, vec![swap_action.swap_amount.clone()])
-            .advance_time(&mut harness, 2)
-            .execute(&mut harness, &keeper, &[])
-            .assert_swapped(&mut harness, vec![swap_action.swap_amount.clone()])
-            .advance_time(&mut harness, 10)
-            .execute(&mut harness, &keeper, &[])
-            .assert_balances(
-                &mut harness,
-                vec![
-                    Coin::new(
-                        swap_action.swap_amount.amount * Uint128::new(8),
-                        swap_action.swap_amount.denom.clone(),
-                    ),
-                    Coin::new(
-                        swap_action
-                            .swap_amount
-                            .amount
-                            .mul_floor(Decimal::percent(99))
-                            * Uint128::new(2),
-                        swap_action.minimum_receive_amount.denom.clone(),
-                    ),
-                ],
-            )
-            .assert_swapped(
-                &mut harness,
-                vec![Coin::new(
-                    swap_action.swap_amount.amount * Uint128::new(2),
-                    swap_action.swap_amount.denom.clone(),
-                )],
-            );
+            .assert_swapped(vec![swap_action.swap_amount.clone()])
+            .advance_time(2)
+            .assert_swapped(vec![swap_action.swap_amount.clone()])
+            .advance_time(10)
+            .assert_swapped(vec![Coin::new(
+                swap_action.swap_amount.amount * Uint128::new(2),
+                swap_action.swap_amount.denom.clone(),
+            )]);
     }
 
-    // #[test]
-    // fn test_composite_all_threshold_halts_on_first_error() {
-    //     let mut harness = CalcTestApp::setup();
-    //     let owner = harness.app.api().addr_make("owner");
-    //     let creator = harness.app.api().addr_make("creator");
-    //     let keeper = harness.app.api().addr_make("keeper");
+    #[test]
+    fn test_conditional_action_only_executes_when_satisfied() {
+        let mut harness = CalcTestApp::setup();
+        let owner = harness.app.api().addr_make("owner");
+        let keeper = harness.app.api().addr_make("keeper");
 
-    //     let fin_pair = harness.query_fin_config(&harness.fin_addr);
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-    //     let valid_swap_action = Swap {
-    //         exchange_contract: harness.exchanger_addr.clone(),
-    //         swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
-    //         minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
-    //         maximum_slippage_bps: 101,
-    //         adjustment: SwapAmountAdjustment::Fixed,
-    //         route: Some(Route::FinMarket {
-    //             address: harness.fin_addr.clone(),
-    //         }),
-    //     };
+        let swap_action = FinSwap {
+            pair_address: harness.fin_addr.clone(),
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+        };
 
-    //     // This swap will fail due to insufficient funds (we won't fund it)
-    //     let invalid_swap_action = Swap {
-    //         exchange_contract: harness.exchanger_addr.clone(),
-    //         swap_amount: Coin::new(5000u128, fin_pair.denoms.base()),
-    //         minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
-    //         maximum_slippage_bps: 101,
-    //         adjustment: SwapAmountAdjustment::Fixed,
-    //         route: Some(Route::FinMarket {
-    //             address: harness.fin_addr.clone(),
-    //         }),
-    //     };
+        let conditional = Action::Conditional(Conditional {
+            conditions: vec![
+                Condition::StrategyBalanceAvailable {
+                    amount: swap_action.swap_amount.clone(),
+                },
+                Condition::BlocksCompleted(harness.app.block_info().height + 5),
+            ],
+            threshold: Threshold::All,
+            action: Box::new(Action::FinSwap(swap_action.clone())),
+        });
 
-    //     let strategy_addr = harness
-    //         .create_strategy(
-    //             &creator,
-    //             &owner,
-    //             "Composite All Threshold Strategy",
-    //             ActionConfig::Compose(Behaviour {
-    //                 actions: vec![
-    //                     ActionConfig::Swap(valid_swap_action.clone()),
-    //                     ActionConfig::Swap(invalid_swap_action.clone()),
-    //                 ],
-    //                 threshold: Threshold::All,
-    //             }),
-    //         )
-    //         .unwrap();
+        let mut strategy_handler = StrategyBuilder::new(
+            &mut harness,
+            owner.clone(),
+            "All Conditions Strategy",
+            keeper.clone(),
+        )
+        .with_action(conditional)
+        .instantiate(&[Coin::new(
+            swap_action.swap_amount.amount * Uint128::new(10),
+            swap_action.swap_amount.denom.clone(),
+        )]);
 
-    //     // Fund only for the first swap
-    //     harness.fund_contract(
-    //         &strategy_addr,
-    //         &owner,
-    //         &[valid_swap_action.swap_amount.clone()],
-    //     );
-
-    //     let initial_balances = harness.query_balances(&strategy_addr);
-    //     let initial_stats = harness.query_strategy_stats(&strategy_addr);
-
-    //     // Execute the strategy, expect an error because the second swap will fail
-    //     let res = harness.execute_strategy(&keeper, &strategy_addr, &[]);
-    //     assert!(res.is_err());
-
-    //     // Assert that balances and statistics remain unchanged, as Threshold::All should revert all actions on failure
-    //     assert_eq!(harness.query_balances(&strategy_addr), initial_balances);
-    //     assert_eq!(harness.query_strategy_stats(&strategy_addr), initial_stats);
-    // }
+        strategy_handler
+            .execute()
+            .assert_swapped(vec![])
+            .advance_blocks(2)
+            .execute()
+            .assert_swapped(vec![])
+            .advance_blocks(10)
+            .execute()
+            .assert_swapped(vec![Coin::new(
+                swap_action.swap_amount.amount,
+                swap_action.swap_amount.denom.clone(),
+            )]);
+    }
 
     // #[test]
     // fn test_composite_any_threshold_executes_all_and_handles_partial_failure() {

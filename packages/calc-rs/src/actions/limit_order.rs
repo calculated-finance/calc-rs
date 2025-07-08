@@ -2,8 +2,7 @@ use std::{cmp::min, collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
-    Uint128,
+    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Uint128,
 };
 use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side,
@@ -11,10 +10,47 @@ use rujira_rs::fin::{
 
 use crate::{
     actions::{action::Action, operation::Operation},
-    constants::UPDATE_STATS_REPLY_ID,
+    conditions::Condition,
     core::Contract,
+    scheduler::SchedulerExecuteMsg,
     statistics::Statistics,
+    strategy::{StrategyMsg, StrategyMsgPayload},
 };
+
+struct LimitOrderEventData {
+    pair_address: Addr,
+    side: Side,
+    price: Price,
+    amount: Uint128,
+}
+
+impl LimitOrderEventData {
+    pub fn to_event(&self, event_type: &str) -> Event {
+        Event::new(event_type)
+            .add_attribute("pair_address", self.pair_address.to_string())
+            .add_attribute("side", self.side.to_string())
+            .add_attribute("price", self.price.to_string())
+            .add_attribute("amount", self.amount.to_string())
+    }
+}
+
+enum LimitOrderEvent {
+    SetOrderSkipped { reason: String },
+    SetOrder(LimitOrderEventData),
+    WithdrawOrder(LimitOrderEventData),
+}
+
+impl Into<Event> for LimitOrderEvent {
+    fn into(self) -> Event {
+        match self {
+            LimitOrderEvent::SetOrderSkipped { reason } => {
+                Event::new("set_order_skipped").add_attribute("reason", reason)
+            }
+            LimitOrderEvent::SetOrder(data) => data.to_event("set_order"),
+            LimitOrderEvent::WithdrawOrder(data) => data.to_event("withdraw_order"),
+        }
+    }
+}
 
 #[cw_serde]
 pub enum Direction {
@@ -31,7 +67,6 @@ pub enum Offset {
 #[cw_serde]
 pub enum OrderPriceStrategy {
     Fixed(Decimal),
-    Oracle(i16),
     Offset {
         direction: Direction,
         offset: Offset,
@@ -46,7 +81,7 @@ impl OrderPriceStrategy {
         env: &Env,
         pair_address: &Addr,
         side: &Side,
-        current_price: &Option<Price>,
+        current_price: &Option<Decimal>,
     ) -> Option<OrderResponse> {
         match self {
             OrderPriceStrategy::Fixed(price) => deps
@@ -60,25 +95,22 @@ impl OrderPriceStrategy {
                     )),
                 )
                 .ok(),
-            OrderPriceStrategy::Oracle(offset) => deps
-                .querier
-                .query_wasm_smart::<OrderResponse>(
-                    pair_address,
-                    &QueryMsg::Order((
-                        env.contract.address.to_string(),
-                        side.clone(),
-                        Price::Oracle(*offset),
-                    )),
-                )
-                .ok(),
-            OrderPriceStrategy::Offset { .. } => current_price.clone().and_then(|price| {
-                deps.querier
-                    .query_wasm_smart::<OrderResponse>(
-                        pair_address,
-                        &QueryMsg::Order((env.contract.address.to_string(), side.clone(), price)),
-                    )
-                    .ok()
-            }),
+            OrderPriceStrategy::Offset { .. } => {
+                if let Some(price) = current_price {
+                    deps.querier
+                        .query_wasm_smart::<OrderResponse>(
+                            pair_address,
+                            &QueryMsg::Order((
+                                env.contract.address.to_string(),
+                                side.clone(),
+                                Price::Fixed(*price),
+                            )),
+                        )
+                        .ok()
+                } else {
+                    None
+                }
+            }
         }
     }
 }
@@ -90,7 +122,9 @@ pub struct LimitOrder {
     pub bid_amount: Option<Uint128>,
     pub side: Side,
     pub strategy: OrderPriceStrategy,
-    pub current_price: Option<Price>,
+    pub current_price: Option<Decimal>,
+    pub scheduler: Addr,
+    pub execution_rebate: Vec<Coin>,
 }
 
 impl LimitOrder {
@@ -118,7 +152,7 @@ impl LimitOrder {
 }
 
 impl Operation for LimitOrder {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         if let Some(amount) = self.bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
                 return Err(StdError::generic_err(
@@ -127,32 +161,16 @@ impl Operation for LimitOrder {
             }
         }
 
-        if let Some(price) = self.current_price.clone() {
-            match price {
-                Price::Fixed(price) => {
-                    if price.is_zero() {
-                        return Err(StdError::generic_err("Fixed price cannot be zero"));
-                    }
-                }
-                Price::Oracle(_) => {}
-            }
+        if self.current_price.is_some() {
+            return Err(StdError::generic_err(
+                "Cannot create limit order with a current price set.",
+            ));
         }
 
-        Ok((
-            Action::SetLimitOrder(LimitOrder {
-                current_price: match self.strategy {
-                    OrderPriceStrategy::Fixed(price) => Some(Price::Fixed(price)),
-                    OrderPriceStrategy::Oracle(offset) => Some(Price::Oracle(offset)),
-                    OrderPriceStrategy::Offset { .. } => None,
-                },
-                ..self
-            }),
-            vec![],
-            vec![], // TODO: set order
-        ))
+        Ok((Action::SetLimitOrder(self), vec![], vec![]))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let existing_order = self.strategy.existing_order(
             deps,
             env,
@@ -166,8 +184,7 @@ impl Operation for LimitOrder {
             .query_balance(env.contract.address.clone(), self.bid_denom.clone())?;
 
         let new_price = match self.strategy.clone() {
-            OrderPriceStrategy::Fixed(price) => Price::Fixed(price),
-            OrderPriceStrategy::Oracle(offset) => Price::Oracle(offset),
+            OrderPriceStrategy::Fixed(price) => price,
             OrderPriceStrategy::Offset {
                 direction, offset, ..
             } => {
@@ -186,7 +203,7 @@ impl Operation for LimitOrder {
                 }[0]
                 .price;
 
-                Price::Fixed(match offset {
+                match offset {
                     Offset::Exact(offset) => match direction {
                         Direction::Up => book_price.saturating_add(offset),
                         Direction::Down => book_price.saturating_sub(offset),
@@ -197,34 +214,42 @@ impl Operation for LimitOrder {
                         Direction::Down => book_price
                             .saturating_mul(Decimal::one().saturating_sub(Decimal::bps(offset))),
                     },
-                })
+                }
             }
         };
 
         if bid_denom_balance.amount.is_zero() {
             if let Some(current_price) = self.current_price.clone() {
                 if new_price == current_price {
-                    // We have no more bid denom & we are not adjusting the price
-                    return Ok((Action::SetLimitOrder(self), vec![], vec![]));
+                    return Ok((
+                        Action::SetLimitOrder(self),
+                        vec![],
+                        vec![LimitOrderEvent::SetOrderSkipped {
+                            reason: "No balance available to deposit".to_string(),
+                        }
+                        .into()],
+                    ));
                 }
 
                 if let OrderPriceStrategy::Offset { tolerance, .. } = self.strategy.clone() {
-                    if let (Price::Fixed(current_price), Price::Fixed(new_price)) =
-                        (current_price, &new_price)
-                    {
-                        let price_delta = new_price.abs_diff(current_price);
+                    let price_delta = new_price.abs_diff(current_price);
 
-                        let tolerance_threshold = match tolerance {
-                            Offset::Exact(tolerance_val) => tolerance_val,
-                            Offset::Bps(tolerance_bps) => {
-                                current_price.saturating_mul(Decimal::bps(tolerance_bps))
-                            }
-                        };
-
-                        if price_delta <= tolerance_threshold {
-                            // Price change is within tolerance, no need to update the order
-                            return Ok((Action::SetLimitOrder(self), vec![], vec![]));
+                    let tolerance_threshold = match tolerance {
+                        Offset::Exact(tolerance_val) => tolerance_val,
+                        Offset::Bps(tolerance_bps) => {
+                            current_price.saturating_mul(Decimal::bps(tolerance_bps))
                         }
+                    };
+
+                    if price_delta <= tolerance_threshold {
+                        return Ok((
+                            Action::SetLimitOrder(self),
+                            vec![],
+                            vec![LimitOrderEvent::SetOrderSkipped {
+                                reason: "Current price is within deviation tolerance".to_string(),
+                            }
+                            .into()],
+                        ));
                     }
                 }
             }
@@ -243,36 +268,54 @@ impl Operation for LimitOrder {
             vec![]
         };
 
-        let new_price_is_valid = match new_price {
-            Price::Fixed(price) => price.gt(&Decimal::zero()),
-            _ => true,
-        };
-
-        if new_price_is_valid && new_bid_amount.gt(&Uint128::zero()) {
-            orders.push((self.side.clone(), new_price.clone(), Some(new_bid_amount)));
+        if new_price.gt(&Decimal::zero()) && new_bid_amount.gt(&Uint128::zero()) {
+            orders.push((
+                self.side.clone(),
+                Price::Fixed(new_price),
+                Some(new_bid_amount),
+            ));
         }
 
-        let set_order_msg = SubMsg::reply_always(
+        let set_order_msg = StrategyMsg::with_payload(
             Contract(self.pair_address.clone()).call(
                 to_json_binary(&ExecuteMsg::Order((orders, None)))?,
                 vec![Coin::new(new_bid_amount, self.bid_denom.clone())],
             ),
-            UPDATE_STATS_REPLY_ID,
-        )
-        .with_payload(to_json_binary(
-            &if let Some(existing_order) = existing_order {
-                self.statistics(deps, &existing_order)?
-            } else {
-                Statistics::default()
+            StrategyMsgPayload {
+                statistics: if let Some(existing_order) = existing_order {
+                    self.statistics(deps, &existing_order)?
+                } else {
+                    Statistics::default()
+                },
+                events: vec![LimitOrderEvent::SetOrder(LimitOrderEventData {
+                    pair_address: self.pair_address.clone(),
+                    side: self.side.clone(),
+                    price: Price::Fixed(new_price),
+                    amount: new_bid_amount,
+                })
+                .into()],
+                ..StrategyMsgPayload::default()
             },
-        )?);
+        );
+
+        let create_trigger_msg =
+            StrategyMsg::without_payload(Contract(self.scheduler.clone()).call(
+                to_json_binary(&SchedulerExecuteMsg::Create(Condition::LimitOrderFilled {
+                    pair_address: self.pair_address.clone(),
+                    owner: env.contract.address.clone(),
+                    side: self.side.clone(),
+                    price: Price::Fixed(new_price),
+                    rate: new_price,
+                }))?,
+                vec![],
+            ));
 
         Ok((
             Action::SetLimitOrder(LimitOrder {
                 current_price: Some(new_price),
                 ..self
             }),
-            vec![set_order_msg],
+            vec![set_order_msg, create_trigger_msg],
             vec![],
         ))
     }
@@ -315,7 +358,7 @@ impl Operation for LimitOrder {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         if !desired.contains(&self.bid_denom) {
             return Ok((Action::SetLimitOrder(self), vec![], vec![]));
         }
@@ -329,7 +372,7 @@ impl Operation for LimitOrder {
         );
 
         if let Some(existing_order) = existing_order {
-            let withdraw_order_msg = SubMsg::reply_always(
+            let withdraw_order_msg = StrategyMsg::with_payload(
                 Contract(self.pair_address.clone()).call(
                     to_json_binary(&ExecuteMsg::Order((
                         vec![(
@@ -341,9 +384,18 @@ impl Operation for LimitOrder {
                     )))?,
                     vec![],
                 ),
-                UPDATE_STATS_REPLY_ID,
-            )
-            .with_payload(to_json_binary(&self.statistics(deps, &existing_order)?)?);
+                StrategyMsgPayload {
+                    statistics: self.statistics(deps, &existing_order)?,
+                    events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
+                        pair_address: self.pair_address.clone(),
+                        side: self.side.clone(),
+                        price: existing_order.price.clone(),
+                        amount: existing_order.remaining,
+                    })
+                    .into()],
+                    ..StrategyMsgPayload::default()
+                },
+            );
 
             return Ok((
                 Action::SetLimitOrder(LimitOrder {
@@ -365,7 +417,7 @@ impl Operation for LimitOrder {
         ))
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let existing_order = self.strategy.existing_order(
             deps,
             env,
@@ -377,7 +429,7 @@ impl Operation for LimitOrder {
         let mut messages = vec![];
 
         if let Some(existing_order) = existing_order {
-            let withdraw_order_msg = SubMsg::reply_always(
+            let withdraw_order_msg = StrategyMsg::with_payload(
                 Contract(self.pair_address.clone()).call(
                     to_json_binary(&ExecuteMsg::Order((
                         vec![(
@@ -389,9 +441,18 @@ impl Operation for LimitOrder {
                     )))?,
                     vec![],
                 ),
-                UPDATE_STATS_REPLY_ID,
-            )
-            .with_payload(to_json_binary(&self.statistics(deps, &existing_order)?)?);
+                StrategyMsgPayload {
+                    statistics: self.statistics(deps, &existing_order)?,
+                    events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
+                        pair_address: self.pair_address.clone(),
+                        side: self.side.clone(),
+                        price: existing_order.price.clone(),
+                        amount: existing_order.remaining,
+                    })
+                    .into()],
+                    ..StrategyMsgPayload::default()
+                },
+            );
 
             messages.push(withdraw_order_msg);
         }

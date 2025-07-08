@@ -98,7 +98,11 @@ pub fn execute(
                 },
             )?;
 
-            messages.push(strategy_with_affiliates.instantiate_msg()?.into());
+            messages.push(
+                strategy_with_affiliates
+                    .instantiate_msg(&info.funds)?
+                    .into(),
+            );
         }
         ManagerExecuteMsg::ExecuteStrategy { contract_address } => {
             let strategy = strategy_store().load(deps.storage, contract_address.clone())?;

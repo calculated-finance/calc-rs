@@ -2,7 +2,9 @@ use std::vec;
 
 use calc_rs::{
     manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle},
-    scheduler::SchedulerInstantiateMsg,
+    scheduler::{
+        ConditionFilter, SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger,
+    },
     statistics::Statistics,
     strategy::{Json, Strategy, StrategyConfig, StrategyQueryMsg},
 };
@@ -96,7 +98,9 @@ impl CalcTestApp {
             .instantiate_contract(
                 scheduler_code_id,
                 admin.clone(),
-                &SchedulerInstantiateMsg {},
+                &SchedulerInstantiateMsg {
+                    manager: manager_addr.clone(),
+                },
                 &[],
                 "calc-scheduler",
                 Some(admin.clone().to_string()),
@@ -185,6 +189,7 @@ impl CalcTestApp {
         owner: &Addr,
         label: &str,
         strategy: Strategy<Json>,
+        funds: &[Coin],
     ) -> StdResult<Addr> {
         let msg = ManagerExecuteMsg::InstantiateStrategy {
             owner: owner.clone(),
@@ -195,7 +200,7 @@ impl CalcTestApp {
 
         let response = self
             .app
-            .execute_contract(sender.clone(), self.manager_addr.clone(), &msg, &[])
+            .execute_contract(sender.clone(), self.manager_addr.clone(), &msg, &funds)
             .unwrap();
 
         let wasm_event = response
@@ -215,11 +220,75 @@ impl CalcTestApp {
         Ok(Addr::unchecked(contract_addr))
     }
 
+    pub fn execute_filtered_triggers(
+        &mut self,
+        sender: &Addr,
+        filter: ConditionFilter,
+    ) -> AnyResult<AppResponse> {
+        let triggers = self
+            .app
+            .wrap()
+            .query_wasm_smart::<Vec<Trigger>>(
+                self.scheduler_addr.clone(),
+                &SchedulerQueryMsg::Filtered {
+                    filter: filter.clone(),
+                    limit: None,
+                },
+            )
+            .unwrap();
+
+        if triggers.is_empty() {
+            return Ok(AppResponse::default());
+        }
+
+        println!("[CalcTestApp] Executing triggers: {triggers:?}");
+
+        self.app
+            .execute_contract(
+                sender.clone(),
+                self.scheduler_addr.clone(),
+                &SchedulerExecuteMsg::Execute(triggers.iter().map(|t| t.id).collect()),
+                &[],
+            )
+            .unwrap();
+
+        Ok(AppResponse::default())
+    }
+
+    pub fn execute_owned_triggers(
+        &mut self,
+        sender: &Addr,
+        strategy_addr: &Addr,
+    ) -> AnyResult<AppResponse> {
+        let triggers = self
+            .app
+            .wrap()
+            .query_wasm_smart::<Vec<Trigger>>(
+                self.scheduler_addr.clone(),
+                &SchedulerQueryMsg::Owned {
+                    owner: strategy_addr.clone(),
+                    limit: None,
+                    start_after: None,
+                },
+            )
+            .unwrap();
+
+        self.app
+            .execute_contract(
+                sender.clone(),
+                self.scheduler_addr.clone(),
+                &SchedulerExecuteMsg::Execute(triggers.iter().map(|t| t.id).collect()),
+                &[],
+            )
+            .unwrap();
+
+        Ok(AppResponse::default())
+    }
+
     pub fn execute_strategy(
         &mut self,
         sender: &Addr,
         strategy_addr: &Addr,
-        funds: &[Coin],
     ) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
@@ -227,7 +296,7 @@ impl CalcTestApp {
             &ManagerExecuteMsg::ExecuteStrategy {
                 contract_address: strategy_addr.clone(),
             },
-            funds,
+            &[],
         )
     }
 

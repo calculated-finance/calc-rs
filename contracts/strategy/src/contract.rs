@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 
 use calc_rs::{
-    constants::{LOG_ERRORS_REPLY_ID, UPDATE_STATS_REPLY_ID},
+    constants::{LOG_ERRORS_REPLY_ID, PROCESS_REPLY_PAYLOAD_REPLY_ID},
     core::{Contract, ContractError, ContractResult},
     manager::StrategyStatus,
-    statistics::Statistics,
-    strategy::{StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg},
+    strategy::{
+        StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyMsgPayload,
+        StrategyQueryMsg,
+    },
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -31,9 +33,9 @@ pub fn instantiate(
         )));
     }
 
+    // Collate escrowed denoms & initialise the strategy
     let escrowed = msg.0.escrowed(deps.as_ref(), &env)?;
-
-    Ok(msg.0.init(&mut deps, &env, |storage, strategy| {
+    let response = msg.0.init(&mut deps, &env, |storage, strategy| {
         CONFIG.init(
             storage,
             StrategyConfig {
@@ -42,7 +44,14 @@ pub fn instantiate(
                 escrowed,
             },
         )
-    })?)
+    })?;
+
+    // Execute the strategy immediately after instantiation
+    Ok(response.add_submessage(SubMsg::reply_always(
+        Contract(env.contract.address.clone())
+            .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]),
+        LOG_ERRORS_REPLY_ID,
+    )))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -202,20 +211,33 @@ pub fn execute(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
+pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
+    let response = Response::new().add_attribute("reply_id", reply.id.to_string());
+
     match reply.id {
-        UPDATE_STATS_REPLY_ID => {
-            if let SubMsgResult::Ok(_) = reply.result {
-                let stats = from_json::<Statistics>(reply.payload);
-                if let Ok(stats) = stats {
-                    STATS.update(_deps.storage, |s| s.update(stats))?;
+        PROCESS_REPLY_PAYLOAD_REPLY_ID => {
+            let payload = from_json::<StrategyMsgPayload>(reply.payload.clone());
+            if let Ok(payload) = payload {
+                STATS.update(deps.storage, |s| s.update(payload.statistics.clone()))?;
+                match reply.result {
+                    SubMsgResult::Ok(_) => {
+                        Ok(response.add_events(payload.decorated_events("succeeded")))
+                    }
+                    SubMsgResult::Err(_) => {
+                        Ok(response.add_events(payload.decorated_events("failed")))
+                    }
                 }
+            } else {
+                Ok(response
+                    .add_attribute("msg_error", "Failed to parse reply payload")
+                    .add_attribute("msg_payload", reply.payload.to_string()))
             }
-            Ok(Response::default())
         }
         _ => match reply.result {
-            SubMsgResult::Err(err) => Ok(Response::default().add_attribute("reply_error", err)),
-            SubMsgResult::Ok(_) => Ok(Response::default()),
+            SubMsgResult::Ok(_) => Ok(response),
+            SubMsgResult::Err(err) => Ok(response
+                .add_attribute("msg_error", err)
+                .add_attribute("msg_payload", reply.payload.to_string())),
         },
     }
 }

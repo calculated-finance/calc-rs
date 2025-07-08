@@ -9,10 +9,10 @@ use crate::{
             get_expected_amount_out as get_expected_amount_out_thorchain, StreamingSwap, ThorSwap,
         },
     },
-    core::Callback,
+    strategy::StrategyMsg,
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Coins, Decimal, Deps, Env, Event, StdResult, SubMsg};
+use cosmwasm_std::{Addr, Coin, Coins, Decimal, Deps, Env, Event, StdResult};
 
 #[cw_serde]
 pub enum SwapAmountAdjustment {
@@ -37,8 +37,6 @@ pub enum SwapRoute {
         affiliate_code: Option<String>,
         affiliate_bps: Option<u64>,
         previous_swap: Option<StreamingSwap>,
-        on_complete: Option<Callback>,
-        scheduler: Addr,
     },
 }
 
@@ -52,8 +50,6 @@ impl From<Action> for SwapRoute {
                 affiliate_code: thor_swap.affiliate_code,
                 affiliate_bps: thor_swap.affiliate_bps,
                 previous_swap: thor_swap.previous_swap,
-                on_complete: thor_swap.on_complete,
-                scheduler: thor_swap.scheduler,
             },
             _ => panic!("Invalid action type for SwapRoute"),
         }
@@ -76,8 +72,6 @@ impl SwapRoute {
                 affiliate_code,
                 affiliate_bps,
                 previous_swap,
-                on_complete,
-                scheduler,
             } => Action::ThorSwap(ThorSwap {
                 swap_amount: swap.swap_amount,
                 minimum_receive_amount: swap.minimum_receive_amount,
@@ -88,8 +82,6 @@ impl SwapRoute {
                 affiliate_code: affiliate_code.clone(),
                 affiliate_bps: *affiliate_bps,
                 previous_swap: previous_swap.clone(),
-                on_complete: on_complete.clone(),
-                scheduler: scheduler.clone(),
             }),
         }
     }
@@ -117,8 +109,6 @@ impl SwapRoute {
                 affiliate_code,
                 affiliate_bps,
                 previous_swap,
-                on_complete,
-                scheduler,
             } => get_expected_amount_out_thorchain(
                 deps,
                 env,
@@ -132,8 +122,6 @@ impl SwapRoute {
                     affiliate_code: affiliate_code.clone(),
                     affiliate_bps: *affiliate_bps,
                     previous_swap: previous_swap.clone(),
-                    on_complete: on_complete.clone(),
-                    scheduler: scheduler.clone(),
                 },
             ),
         }
@@ -150,7 +138,7 @@ pub struct OptimalSwap {
 }
 
 impl Operation for OptimalSwap {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let mut messages = vec![];
         let mut events = vec![];
 
@@ -164,7 +152,7 @@ impl Operation for OptimalSwap {
         Ok((Action::OptimalSwap(self), messages, events))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let best_route_index = self
             .routes
             .iter()
@@ -218,11 +206,11 @@ impl Operation for OptimalSwap {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::OptimalSwap(self), vec![], vec![]))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::OptimalSwap(self), vec![], vec![]))
     }
 }

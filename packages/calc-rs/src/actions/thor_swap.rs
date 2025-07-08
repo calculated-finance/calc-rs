@@ -6,26 +6,51 @@ use std::{
 
 use crate::{
     actions::{action::Action, operation::Operation, swap::SwapAmountAdjustment},
-    conditions::{Condition, Threshold},
-    constants::{LOG_ERRORS_REPLY_ID, UPDATE_STATS_REPLY_ID},
-    core::{Callback, Contract},
-    scheduler::{CreateTrigger, SchedulerExecuteMsg},
     statistics::Statistics,
+    strategy::{StrategyMsg, StrategyMsgPayload},
     thorchain::{MsgDeposit, SwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, SubMsg,
-    Uint128,
-};
+use cosmwasm_std::{Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Uint128};
+
+pub enum ThorchainSwapEvent {
+    SwapSkipped {
+        reason: String,
+    },
+    Swap {
+        swap_amount: Coin,
+        expected_receive_amount: Coin,
+        streaming_swap_blocks: u64,
+    },
+}
+
+impl Into<Event> for ThorchainSwapEvent {
+    fn into(self) -> Event {
+        match self {
+            ThorchainSwapEvent::SwapSkipped { reason } => {
+                Event::new("thorchain_swap_skipped").add_attribute("reason", reason)
+            }
+            ThorchainSwapEvent::Swap {
+                swap_amount,
+                expected_receive_amount,
+                streaming_swap_blocks,
+            } => Event::new("thorchain_swap")
+                .add_attribute("swap_amount", swap_amount.to_string())
+                .add_attribute(
+                    "expected_receive_amount",
+                    expected_receive_amount.to_string(),
+                )
+                .add_attribute("streaming_swap_blocks", streaming_swap_blocks.to_string()),
+        }
+    }
+}
 
 #[cw_serde]
 pub struct StreamingSwap {
-    starting_block: u64,
-    streaming_interval: u64,
-    streaming_quantity: u64,
     swap_amount: Coin,
     expected_receive_amount: Coin,
+    starting_block: u64,
+    streaming_swap_blocks: u64,
 }
 
 #[cw_serde]
@@ -39,8 +64,6 @@ pub struct ThorSwap {
     pub affiliate_code: Option<String>,
     pub affiliate_bps: Option<u64>,
     pub previous_swap: Option<StreamingSwap>,
-    pub on_complete: Option<Callback>,
-    pub scheduler: Addr,
 }
 
 fn is_secured_asset(denom: &str) -> bool {
@@ -48,7 +71,7 @@ fn is_secured_asset(denom: &str) -> bool {
 }
 
 impl Operation for ThorSwap {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         if !is_secured_asset(self.swap_amount.denom.as_str()) {
             return Err(StdError::generic_err(
                 "Swap denom must be RUNE or a secured asset",
@@ -100,7 +123,7 @@ impl Operation for ThorSwap {
         Ok((Action::ThorSwap(self), vec![], vec![]))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         let (new_swap_amount, new_minimum_receive_amount, max_streaming_quantity) =
             match self.adjustment.clone() {
                 SwapAmountAdjustment::Fixed => {
@@ -224,7 +247,14 @@ impl Operation for ThorSwap {
             };
 
         if new_swap_amount.amount.is_zero() {
-            return Ok((Action::ThorSwap(self), vec![], vec![]));
+            return Ok((
+                Action::ThorSwap(self),
+                vec![],
+                vec![ThorchainSwapEvent::SwapSkipped {
+                    reason: "Adjusted swap amount is zero".to_string(),
+                }
+                .into()],
+            ));
         }
 
         let adjusted_quote = get_quote(
@@ -238,56 +268,75 @@ impl Operation for ThorSwap {
             },
         )?;
 
-        if adjusted_quote.expected_amount_out < new_minimum_receive_amount.amount
-            || adjusted_quote.recommended_min_amount_in > new_swap_amount.amount
-        {
-            return Ok((Action::ThorSwap(self), vec![], vec![]));
+        if adjusted_quote.expected_amount_out < new_minimum_receive_amount.amount {
+            return Ok((
+                Action::ThorSwap(self),
+                vec![],
+                vec![ThorchainSwapEvent::SwapSkipped {
+                    reason: format!(
+                        "Expected amount out ({}) is less than adjusted minimum receive amount ({})",
+                        adjusted_quote.expected_amount_out,
+                        new_minimum_receive_amount.amount
+                    ),
+                }
+                .into()],
+            ));
         }
 
-        let mut messages: Vec<SubMsg> = vec![];
-        let events: Vec<Event> = vec![];
+        if adjusted_quote.recommended_min_amount_in > new_swap_amount.amount {
+            return Ok((
+                Action::ThorSwap(self),
+                vec![],
+                vec![ThorchainSwapEvent::SwapSkipped {
+                    reason: format!(
+                        "Recommended min amount in ({}) is greater than adjusted swap amount ({})",
+                        adjusted_quote.recommended_min_amount_in, new_swap_amount.amount
+                    ),
+                }
+                .into()],
+            ));
+        }
 
-        let swap_msg = SubMsg::reply_always(
+        let swap_msg = StrategyMsg::with_payload(
             MsgDeposit {
                 memo: adjusted_quote.memo,
                 coins: vec![new_swap_amount.clone()],
                 signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
             }
             .into_cosmos_msg()?,
-            UPDATE_STATS_REPLY_ID,
-        )
-        .with_payload(to_json_binary(&Statistics {
-            swapped: vec![new_swap_amount],
-            ..Statistics::default()
-        })?);
+            StrategyMsgPayload {
+                statistics: Statistics {
+                    swapped: vec![new_swap_amount.clone()],
+                    ..Statistics::default()
+                },
+                events: vec![ThorchainSwapEvent::Swap {
+                    swap_amount: new_swap_amount.clone(),
+                    expected_receive_amount: Coin::new(
+                        adjusted_quote.expected_amount_out,
+                        new_minimum_receive_amount.denom.clone(),
+                    ),
+                    streaming_swap_blocks: adjusted_quote.streaming_swap_blocks,
+                }
+                .into()],
+            },
+        );
 
-        messages.push(swap_msg);
-
-        if let Some(Callback {
-            msg,
-            contract,
-            execution_rebate,
-        }) = self.on_complete.clone()
-        {
-            let create_trigger_msg = SubMsg::reply_always(
-                Contract(self.scheduler.clone()).call(
-                    to_json_binary(&SchedulerExecuteMsg::CreateTrigger(CreateTrigger {
-                        condition: Condition::BlocksCompleted(
-                            env.block.height + adjusted_quote.streaming_swap_blocks,
-                        ),
-                        threshold: Threshold::Any,
-                        to: contract,
-                        msg,
-                    }))?,
-                    execution_rebate,
-                ),
-                LOG_ERRORS_REPLY_ID,
-            );
-
-            messages.push(create_trigger_msg);
-        }
-
-        Ok((Action::ThorSwap(self), messages, events))
+        Ok((
+            Action::ThorSwap(ThorSwap {
+                previous_swap: Some(StreamingSwap {
+                    swap_amount: new_swap_amount.clone(),
+                    expected_receive_amount: Coin::new(
+                        adjusted_quote.expected_amount_out,
+                        new_minimum_receive_amount.denom.clone(),
+                    ),
+                    starting_block: env.block.height,
+                    streaming_swap_blocks: adjusted_quote.streaming_swap_blocks,
+                }),
+                ..self
+            }),
+            vec![swap_msg],
+            vec![],
+        ))
     }
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
@@ -303,11 +352,11 @@ impl Operation for ThorSwap {
         _deps: Deps,
         _env: &Env,
         _desired: &HashSet<String>,
-    ) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    ) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::ThorSwap(self), vec![], vec![]))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<SubMsg>, Vec<Event>)> {
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Action, Vec<StrategyMsg>, Vec<Event>)> {
         Ok((Action::ThorSwap(self), vec![], vec![]))
     }
 }
