@@ -132,7 +132,7 @@ impl<'a> StrategyHandler<'a> {
 
     // Assertion helpers
 
-    pub fn assert_balance(&mut self, expected: Coin) -> &mut Self {
+    pub fn assert_balance(&mut self, expected: &Coin) -> &mut Self {
         println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
         let balances = self.harness.query_balances(&self.strategy_addr);
         assert!(

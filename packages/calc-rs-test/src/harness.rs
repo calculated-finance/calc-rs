@@ -90,7 +90,7 @@ impl CalcTestApp {
                 admin.clone(),
                 &ManagerConfig {
                     strategy_code_id,
-                    fee_collector: Addr::unchecked("fee_collector"),
+                    fee_collector: app.api().addr_make("fee_collector"),
                 },
                 &[],
                 "calc-manager",

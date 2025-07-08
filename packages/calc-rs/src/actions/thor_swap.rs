@@ -200,6 +200,22 @@ impl ThorSwap {
             },
         )?;
 
+        if let Some(fees) = adjusted_quote.fees {
+            if fees.slippage_bps as u128 > self.maximum_slippage_bps {
+                return Ok((
+                    vec![],
+                    vec![ThorchainSwapEvent::SwapSkipped {
+                        reason: format!(
+                            "Slippage BPS ({}) exceeds maximum allowed ({})",
+                            fees.slippage_bps, self.maximum_slippage_bps
+                        ),
+                    }
+                    .into()],
+                    Action::ThorSwap(self),
+                ));
+            }
+        }
+
         if adjusted_quote.expected_amount_out < new_minimum_receive_amount.amount {
             return Ok((
                 vec![],
@@ -315,9 +331,10 @@ impl Operation for ThorSwap {
                 ));
             }
 
-            if max_streaming_quantity > 14_000 {
+            // 6 seconds per block, max 24 hours to a swap = 14,400 max swaps
+            if max_streaming_quantity > 14_400 {
                 return Err(StdError::generic_err(
-                    "Maximum streaming quantity cannot exceed 14,000",
+                    "Maximum streaming quantity cannot exceed 14,400",
                 ));
             }
         }
