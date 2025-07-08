@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod integration_tests {
-    use std::{collections::HashSet, vec};
+    use std::{collections::HashSet, time::Duration, vec};
 
     use calc_rs::{
         actions::{
@@ -382,6 +382,80 @@ mod integration_tests {
     }
 
     #[test]
+    fn test_schedule_action_with_time_duration_cadence_schedules_correctly() {
+        let mut harness = CalcTestApp::setup();
+        let keeper = harness.app.api().addr_make("keeper");
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
+        let owner = harness.owner.clone();
+        let scheduler_addr = harness.scheduler_addr.clone();
+
+        let swap_action = FinSwap {
+            pair_address: harness.fin_addr.clone(),
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+        };
+
+        let scheduled_swap_action = Action::Schedule(Schedule {
+            scheduler: scheduler_addr.clone(),
+            cadence: Cadence::Time {
+                duration: Duration::from_secs(5),
+                previous: None,
+            },
+            execution_rebate: vec![],
+            action: Box::new(Action::FinSwap(swap_action.clone())),
+        });
+
+        let mut strategy_handler = StrategyBuilder::new(
+            &mut harness,
+            owner.clone(),
+            "Blocks Schedule Strategy",
+            keeper.clone(),
+        )
+        .with_action(scheduled_swap_action)
+        .instantiate(&[Coin::new(
+            swap_action.swap_amount.amount * Uint128::new(10),
+            swap_action.swap_amount.denom.clone(),
+        )]);
+
+        strategy_handler
+            .assert_balance(Coin::new(
+                swap_action.swap_amount.amount * Uint128::new(9),
+                swap_action.swap_amount.denom.clone(),
+            ))
+            .assert_balance(Coin::new(
+                swap_action
+                    .swap_amount
+                    .amount
+                    .mul_floor(Decimal::percent(99)),
+                swap_action.minimum_receive_amount.denom.clone(),
+            ))
+            .assert_swapped(vec![swap_action.swap_amount.clone()])
+            .advance_time(2)
+            .assert_swapped(vec![swap_action.swap_amount.clone()])
+            .advance_time(4)
+            .assert_balances(vec![
+                Coin::new(
+                    swap_action.swap_amount.amount * Uint128::new(8),
+                    swap_action.swap_amount.denom.clone(),
+                ),
+                Coin::new(
+                    swap_action
+                        .swap_amount
+                        .amount
+                        .mul_floor(Decimal::percent(99))
+                        * Uint128::new(2),
+                    swap_action.minimum_receive_amount.denom.clone(),
+                ),
+            ])
+            .assert_swapped(vec![Coin::new(
+                swap_action.swap_amount.amount * Uint128::new(2),
+                swap_action.swap_amount.denom.clone(),
+            )]);
+    }
+
+    #[test]
     fn test_schedule_action_with_cron_cadence_schedules_correctly() {
         let mut harness = CalcTestApp::setup();
         let owner = harness.app.api().addr_make("owner");
@@ -432,7 +506,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_conditional_action_only_executes_when_satisfied() {
+    fn test_all_conditions_action_only_executes_when_all_satisfied() {
         let mut harness = CalcTestApp::setup();
         let owner = harness.app.api().addr_make("owner");
         let keeper = harness.app.api().addr_make("keeper");
@@ -484,85 +558,62 @@ mod integration_tests {
             )]);
     }
 
-    // #[test]
-    // fn test_composite_any_threshold_executes_all_and_handles_partial_failure() {
-    //     let mut harness = CalcTestApp::setup();
-    //     let owner = harness.app.api().addr_make("owner");
-    //     let creator = harness.app.api().addr_make("creator");
-    //     let keeper = harness.app.api().addr_make("keeper");
+    #[test]
+    fn test_any_conditions_action_always_executes_when_any_satisfied() {
+        let mut harness = CalcTestApp::setup();
+        let owner = harness.app.api().addr_make("owner");
+        let keeper = harness.app.api().addr_make("keeper");
 
-    //     let fin_pair = harness.query_fin_config(&harness.fin_addr);
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-    //     let valid_swap_action = Swap {
-    //         exchange_contract: harness.exchanger_addr.clone(),
-    //         swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
-    //         minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
-    //         maximum_slippage_bps: 101,
-    //         adjustment: SwapAmountAdjustment::Fixed,
-    //         route: Some(Route::FinMarket {
-    //             address: harness.fin_addr.clone(),
-    //         }),
-    //     };
+        let swap_action = FinSwap {
+            pair_address: harness.fin_addr.clone(),
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+        };
 
-    //     // This swap will fail due to insufficient funds (we won't fund it)
-    //     let invalid_swap_action = Swap {
-    //         exchange_contract: harness.exchanger_addr.clone(),
-    //         swap_amount: Coin::new(5000u128, fin_pair.denoms.base()),
-    //         minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
-    //         maximum_slippage_bps: 101,
-    //         adjustment: SwapAmountAdjustment::Fixed,
-    //         route: Some(Route::FinMarket {
-    //             address: harness.fin_addr.clone(),
-    //         }),
-    //     };
+        let conditional = Action::Conditional(Conditional {
+            conditions: vec![
+                Condition::StrategyBalanceAvailable {
+                    amount: swap_action.swap_amount.clone(),
+                },
+                Condition::BlocksCompleted(harness.app.block_info().height + 5),
+            ],
+            threshold: Threshold::Any,
+            action: Box::new(Action::FinSwap(swap_action.clone())),
+        });
 
-    //     let strategy_addr = harness
-    //         .create_strategy(
-    //             &creator,
-    //             &owner,
-    //             "Composite Any Threshold Strategy",
-    //             ActionConfig::Compose(Behaviour {
-    //                 actions: vec![
-    //                     ActionConfig::Swap(valid_swap_action.clone()),
-    //                     ActionConfig::Swap(invalid_swap_action.clone()),
-    //                 ],
-    //                 threshold: Threshold::Any,
-    //             }),
-    //         )
-    //         .unwrap();
+        let mut strategy_handler = StrategyBuilder::new(
+            &mut harness,
+            owner.clone(),
+            "All Conditions Strategy",
+            keeper.clone(),
+        )
+        .with_action(conditional)
+        .instantiate(&[Coin::new(
+            swap_action.swap_amount.amount * Uint128::new(10),
+            swap_action.swap_amount.denom.clone(),
+        )]);
 
-    //     // Fund only for the first swap
-    //     harness.fund_contract(
-    //         &strategy_addr,
-    //         &owner,
-    //         &[valid_swap_action.swap_amount.clone()],
-    //     );
-
-    //     // Execute the strategy, it should succeed because Threshold::Any allows partial failures
-    //     let res = harness.execute_strategy(&keeper, &strategy_addr, &[]);
-    //     assert!(res.is_ok());
-
-    //     // Verify the valid swap occurred
-    //     assert_eq!(
-    //         harness.query_balances(&strategy_addr),
-    //         vec![Coin::new(
-    //             valid_swap_action
-    //                 .swap_amount
-    //                 .amount
-    //                 .mul_floor(Decimal::percent(99)),
-    //             valid_swap_action.minimum_receive_amount.denom.clone()
-    //         )]
-    //     );
-
-    //     // Verify statistics updated for the valid swap
-    //     assert_eq!(
-    //         harness.query_strategy_stats(&strategy_addr),
-    //         Statistics {
-    //             swapped: vec![valid_swap_action.swap_amount.clone()],
-    //             ..Statistics::default()
-    //         }
-    //     );
-    // }
+        strategy_handler
+            .assert_swapped(vec![Coin::new(
+                swap_action.swap_amount.amount,
+                swap_action.swap_amount.denom.clone(),
+            )])
+            .execute()
+            .assert_swapped(vec![Coin::new(
+                swap_action.swap_amount.amount * Uint128::new(2),
+                swap_action.swap_amount.denom.clone(),
+            )])
+            .advance_blocks(10)
+            .execute()
+            .assert_swapped(vec![Coin::new(
+                swap_action.swap_amount.amount * Uint128::new(3),
+                swap_action.swap_amount.denom.clone(),
+            )]);
+    }
 
     // #[test]
     // fn test_update_strategy_from_unauthorized_sender_fails() {
