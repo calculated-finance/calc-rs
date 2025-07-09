@@ -2,16 +2,26 @@ use std::collections::HashSet;
 
 use calc_rs::{
     statistics::Statistics,
-    strategy::{Idle, Strategy, StrategyConfig, StrategyExecuteMsg},
+    strategy::{Active, Committed, Strategy, StrategyConfig, StrategyExecuteMsg},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, StdError, StdResult, Storage};
 use cw_storage_plus::Item;
 
+pub const ESCROWED: Item<HashSet<String>> = Item::new("escrowed");
+pub const STATE: Item<StrategyExecuteMsg> = Item::new("state");
+pub const STATS: Item<Statistics> = Item::new("stats");
+
+pub const ACTIVE_STRATEGY: Item<Strategy<Active>> = Item::new("active_strategy");
+
+pub const CONFIG: StrategyStore = StrategyStore {
+    store: Item::new("config"),
+};
+
 #[cw_serde]
 pub struct StoredStrategy {
     pub manager: Addr,
-    pub strategy: Strategy<Idle>,
+    pub strategy: Strategy<Committed>,
 }
 
 pub struct StrategyStore {
@@ -32,7 +42,7 @@ impl StrategyStore {
         )
     }
 
-    pub fn save(&self, storage: &mut dyn Storage, update: Strategy<Idle>) -> StdResult<()> {
+    pub fn save(&self, storage: &mut dyn Storage, update: Strategy<Committed>) -> StdResult<()> {
         self.store.update(storage, |config| {
             Ok::<StoredStrategy, StdError>(StoredStrategy {
                 manager: config.manager,
@@ -52,13 +62,3 @@ impl StrategyStore {
         })
     }
 }
-
-pub const ESCROWED: Item<HashSet<String>> = Item::new("escrowed");
-
-pub const STATE: Item<StrategyExecuteMsg> = Item::new("state");
-
-pub const CONFIG: StrategyStore = StrategyStore {
-    store: Item::new("config"),
-};
-
-pub const STATS: Item<Statistics> = Item::new("stats");

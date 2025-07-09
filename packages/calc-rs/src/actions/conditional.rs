@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coins, Deps, Env, Event, StdError, StdResult};
+use cosmwasm_std::{Deps, Env, Event, StdError, StdResult};
 
 use crate::{
-    actions::{action::Action, operation::Operation},
-    conditions::{Condition, Threshold},
+    actions::{action::Action, operation::StatelessOperation},
+    conditions::Condition,
+    core::Threshold,
     strategy::StrategyMsg,
 };
 
@@ -53,11 +54,17 @@ impl Conditional {
     }
 }
 
-impl Operation for Conditional {
+impl StatelessOperation for Conditional {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.conditions.is_empty() {
             return Err(StdError::generic_err(
                 "Conditional conditions cannot be empty",
+            ));
+        }
+
+        if self.conditions.len() > 10 {
+            return Err(StdError::generic_err(
+                "Conditional conditions cannot exceed 10",
             ));
         }
 
@@ -98,40 +105,5 @@ impl Operation for Conditional {
 
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         self.action.escrowed(deps, env)
-    }
-
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
-        self.action.balances(deps, env, denoms)
-    }
-
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        let (messages, events, action) = self.action.withdraw(deps, env, desired)?;
-
-        Ok((
-            messages,
-            events,
-            Action::Conditional(Conditional {
-                action: Box::new(action),
-                ..self
-            }),
-        ))
-    }
-
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        let (messages, events, action) = self.action.cancel(deps, env)?;
-
-        Ok((
-            messages,
-            events,
-            Action::Conditional(Conditional {
-                action: Box::new(action),
-                ..self
-            }),
-        ))
     }
 }

@@ -5,14 +5,14 @@ use std::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation, optimal_swap::SwapAmountAdjustment},
+    actions::{action::Action, operation::StatelessOperation, optimal_swap::SwapAmountAdjustment},
     core::Contract,
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Uint128,
+    to_json_binary, Addr, Coin, Decimal, Deps, Env, Event, StdError, StdResult, Uint128,
 };
 use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
@@ -255,7 +255,7 @@ impl FinSwap {
     }
 }
 
-impl Operation for FinSwap {
+impl StatelessOperation for FinSwap {
     fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
@@ -306,23 +306,6 @@ impl Operation for FinSwap {
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
-    }
-
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
-        Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::FinSwap(self)))
-    }
-
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::FinSwap(self)))
     }
 }
 

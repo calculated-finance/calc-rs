@@ -1,6 +1,7 @@
 use std::cmp::max;
 
 use calc_rs::{
+    constants::BASE_FEE_BPS,
     core::{Contract, ContractError, ContractResult},
     manager::{
         Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle,
@@ -16,8 +17,6 @@ use cosmwasm_std::{
 use cw_storage_plus::Bound;
 
 use crate::state::{strategy_store, updated_at_cursor, CONFIG, STRATEGY_COUNTER};
-
-const BASE_FEE_BPS: u64 = 25;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -48,7 +47,6 @@ pub fn execute(
 ) -> ContractResult {
     Ok(match msg {
         ManagerExecuteMsg::InstantiateStrategy {
-            owner,
             label,
             affiliates,
             strategy,
@@ -83,7 +81,7 @@ pub fn execute(
                 strategy_with_affiliates.state.contract_address.clone(),
                 &StrategyHandle {
                     id,
-                    owner,
+                    owner: strategy_with_affiliates.owner.clone(),
                     contract_address: strategy_with_affiliates.state.contract_address.clone(),
                     created_at: env.block.time.seconds(),
                     updated_at: env.block.time.seconds(),

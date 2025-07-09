@@ -12,12 +12,13 @@ use crate::{
         action::Action,
         conditional::Conditional,
         distribution::{Destination, Distribution, Recipient},
-        operation::Operation,
+        operation::{StatefulOperation, StatelessOperation},
         optimal_swap::{OptimalSwap, SwapRoute},
         schedule::Schedule,
         thor_swap::ThorSwap,
     },
-    constants::PROCESS_PAYLOAD_REPLY_ID,
+    constants::{LOG_ERRORS_REPLY_ID, PROCESS_PAYLOAD_REPLY_ID},
+    core::Contract,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
 };
@@ -27,7 +28,7 @@ pub const MAX_STRATEGY_ACTIONS: usize = 10;
 #[cw_serde]
 pub struct StrategyConfig {
     pub manager: Addr,
-    pub strategy: Strategy<Idle>,
+    pub strategy: Strategy<Committed>,
     pub escrowed: HashSet<String>,
 }
 
@@ -35,11 +36,12 @@ pub type StrategyInstantiateMsg = Strategy<Instantiable>;
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
-    Execute {},
+    Execute,
     Withdraw(HashSet<String>),
     Update(Strategy<Instantiable>),
     UpdateStatus(StrategyStatus),
-    Clear {},
+    Commit,
+    Clear,
 }
 
 #[cw_serde]
@@ -139,7 +141,7 @@ pub struct Instantiable {
 }
 
 #[cw_serde]
-pub struct Idle {
+pub struct Active {
     pub contract_address: Addr,
 }
 
@@ -148,6 +150,11 @@ pub struct Executable {
     pub contract_address: Addr,
     messages: Vec<StrategyMsg>,
     events: Vec<Event>,
+}
+
+#[cw_serde]
+pub struct Committed {
+    pub contract_address: Addr,
 }
 
 impl Strategy<Json> {
@@ -217,38 +224,61 @@ impl Strategy<New> {
                     .iter()
                     .fold(0, |acc, affiliate| acc + affiliate.bps);
 
-                let total_shares = destinations
-                    .iter()
-                    .filter(|d| match d.recipient {
+                // let total_fee_applied_shares = destinations
+                //     .iter()
+                //     .filter(|d| match d.recipient {
+                //         Recipient::Bank { .. }
+                //         | Recipient::Contract { .. }
+                //         | Recipient::Deposit { .. } => true,
+                //         // We don't take fees on transfers between strategies
+                //         Recipient::Strategy { .. } => false,
+                //     })
+                //     .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
+                let mut total_fee_applied_shares = Uint128::zero();
+                let mut total_fee_exempt_shares = Uint128::zero();
+
+                for destination in destinations.iter() {
+                    match &destination.recipient {
                         Recipient::Bank { .. }
-                        | Recipient::Wasm { .. }
-                        | Recipient::Deposit { .. } => true,
-                        // We don't take fees on transfers between strategies
-                        Recipient::Strategy { .. } => false,
+                        | Recipient::Contract { .. }
+                        | Recipient::Deposit { .. } => {
+                            total_fee_applied_shares += destination.shares;
+                        }
+                        Recipient::Strategy { .. } => {
+                            total_fee_exempt_shares += destination.shares;
+                        }
+                    }
+                }
+
+                let total_fee_shares =
+                    total_fee_applied_shares.mul_ceil(Decimal::bps(total_affiliate_bps));
+
+                if total_fee_shares.is_zero() {
+                    Action::Distribute(Distribution {
+                        denoms: denoms.clone(),
+                        destinations: destinations,
                     })
-                    .fold(Uint128::zero(), |acc, d| acc + d.shares);
-
-                let total_shares_with_fees =
-                    total_shares.mul_ceil(Decimal::bps(10_000 + total_affiliate_bps));
-
-                Action::Distribute(Distribution {
-                    denoms: denoms.clone(),
-                    destinations: [
-                        destinations.clone(),
-                        affiliates
-                            .iter()
-                            .map(|affiliate| Destination {
-                                recipient: Recipient::Bank {
-                                    address: affiliate.address.clone(),
-                                },
-                                shares: total_shares_with_fees
-                                    .mul_floor(Decimal::bps(affiliate.bps)),
-                                label: Some(affiliate.label.clone()),
-                            })
-                            .collect::<Vec<_>>(),
-                    ]
-                    .concat(),
-                })
+                } else {
+                    Action::Distribute(Distribution {
+                        denoms: denoms.clone(),
+                        destinations: [
+                            destinations.clone(),
+                            affiliates
+                                .iter()
+                                .map(|affiliate| Destination {
+                                    recipient: Recipient::Bank {
+                                        address: affiliate.address.clone(),
+                                    },
+                                    shares: total_fee_applied_shares
+                                        .mul_ceil(Decimal::bps(affiliate.bps)),
+                                    label: Some(affiliate.label.clone()),
+                                })
+                                .collect::<Vec<_>>(),
+                        ]
+                        .concat(),
+                    })
+                }
             }
             Action::ThorSwap(thor_swap) => Action::ThorSwap(ThorSwap {
                 // As per agreement with Rujira
@@ -321,7 +351,7 @@ impl Strategy<Instantiable> {
 
     pub fn init<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
     where
-        F: FnOnce(&mut dyn Storage, Strategy<Idle>) -> StdResult<()>,
+        F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
     {
         if self.size() > MAX_STRATEGY_ACTIONS {
             return Err(StdError::generic_err(format!(
@@ -336,7 +366,7 @@ impl Strategy<Instantiable> {
             Strategy {
                 owner: self.owner,
                 action,
-                state: Idle {
+                state: Committed {
                     contract_address: self.state.contract_address.clone(),
                 },
             },
@@ -348,7 +378,19 @@ impl Strategy<Instantiable> {
     }
 }
 
-impl Strategy<Idle> {
+impl Strategy<Committed> {
+    pub fn activate(self) -> Strategy<Active> {
+        Strategy {
+            owner: self.owner,
+            action: self.action,
+            state: Active {
+                contract_address: self.state.contract_address,
+            },
+        }
+    }
+}
+
+impl Strategy<Active> {
     pub fn prepare_to_execute(self, deps: Deps, env: &Env) -> StdResult<Strategy<Executable>> {
         let (messages, events, action) = self.action.execute(deps, env);
 
@@ -395,23 +437,43 @@ impl Strategy<Idle> {
             },
         })
     }
+
+    pub fn commit(self, deps: Deps, env: &Env) -> StdResult<Strategy<Committed>> {
+        Ok(Strategy {
+            owner: self.owner,
+            action: self.action.commit(deps, env),
+            state: Committed {
+                contract_address: self.state.contract_address.clone(),
+            },
+        })
+    }
 }
 
 impl Strategy<Executable> {
-    pub fn execute<F>(self, deps: &mut DepsMut, save: F) -> StdResult<Response>
+    pub fn execute<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
     where
-        F: FnOnce(&mut dyn Storage, Strategy<Idle>) -> StdResult<()>,
+        F: FnOnce(&mut dyn Storage, Strategy<Active>) -> StdResult<()>,
     {
         save(
             deps.storage,
             Strategy {
                 owner: self.owner,
                 action: self.action,
-                state: Idle {
+                state: Active {
                     contract_address: self.state.contract_address.clone(),
                 },
             },
         )?;
+
+        if self.state.messages.is_empty() {
+            return Ok(Response::default().add_events(self.state.events));
+        }
+
+        let commit_message = SubMsg::reply_always(
+            Contract(env.contract.address.clone())
+                .call(to_json_binary(&StrategyExecuteMsg::Commit)?, vec![]),
+            LOG_ERRORS_REPLY_ID,
+        );
 
         Ok(Response::default()
             .add_submessages(
@@ -421,6 +483,7 @@ impl Strategy<Executable> {
                     .map(SubMsg::from)
                     .collect::<Vec<_>>(),
             )
+            .add_submessage(commit_message)
             .add_events(self.state.events))
     }
 }

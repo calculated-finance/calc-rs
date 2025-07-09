@@ -3,11 +3,14 @@ use std::{collections::HashSet, vec};
 use cosmwasm_std::{Coins, Deps, Env, Event, StdError, StdResult};
 
 use crate::{
-    actions::{action::Action, operation::Operation},
+    actions::{
+        action::Action,
+        operation::{StatefulOperation, StatelessOperation},
+    },
     strategy::StrategyMsg,
 };
 
-impl Operation for Vec<Action> {
+impl StatelessOperation for Vec<Action> {
     fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.is_empty() {
             return Err(StdError::generic_err(
@@ -55,6 +58,18 @@ impl Operation for Vec<Action> {
         }
 
         Ok(escrowed)
+    }
+}
+
+impl StatefulOperation for Vec<Action> {
+    fn commit(self, deps: Deps, env: &Env) -> Action {
+        let mut actions = Vec::with_capacity(self.len());
+
+        for action in self.into_iter() {
+            actions.push(action.commit(deps, env));
+        }
+
+        Action::Many(actions)
     }
 
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {

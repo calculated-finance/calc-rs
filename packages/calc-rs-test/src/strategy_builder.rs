@@ -43,7 +43,7 @@ impl<'a> StrategyBuilder<'a> {
 
         let strategy_addr = self
             .app
-            .create_strategy(&self.owner, &self.owner, &self.label, strategy, funds)
+            .create_strategy(&self.label, strategy, funds)
             .unwrap();
 
         StrategyHandler {
@@ -61,9 +61,7 @@ impl<'a> StrategyBuilder<'a> {
             state: Json,
         };
 
-        let strategy_addr =
-            self.app
-                .create_strategy(&self.owner, &self.owner, &self.label, strategy, funds)?;
+        let strategy_addr = self.app.create_strategy(&self.label, strategy, funds)?;
 
         Ok(StrategyHandler {
             strategy_addr,

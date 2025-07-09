@@ -4,7 +4,7 @@ use crate::{
     actions::{
         action::Action,
         fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
-        operation::Operation,
+        operation::StatelessOperation,
         thor_swap::{
             get_expected_amount_out as get_expected_amount_out_thorchain, StreamingSwap, ThorSwap,
         },
@@ -12,7 +12,7 @@ use crate::{
     strategy::StrategyMsg,
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult};
+use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, Event, StdError, StdResult};
 
 #[cw_serde]
 pub enum SwapAmountAdjustment {
@@ -137,7 +137,7 @@ pub struct OptimalSwap {
     pub routes: Vec<SwapRoute>,
 }
 
-impl Operation for OptimalSwap {
+impl StatelessOperation for OptimalSwap {
     fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
@@ -219,22 +219,5 @@ impl Operation for OptimalSwap {
         }
 
         Ok(escrowed)
-    }
-
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
-        Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::OptimalSwap(self)))
-    }
-
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::OptimalSwap(self)))
     }
 }

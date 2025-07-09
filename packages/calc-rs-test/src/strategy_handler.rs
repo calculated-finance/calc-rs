@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{collections::HashSet, fmt::Debug};
 
 use calc_rs::{
     manager::StrategyStatus, scheduler::ConditionFilter, statistics::Statistics,
@@ -99,6 +99,12 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
+    pub fn deposit(&mut self, funds: &[Coin]) -> &mut Self {
+        self.harness
+            .fund_contract(&self.owner, &self.strategy_addr, funds);
+        self
+    }
+
     pub fn execute_triggers(&mut self) -> &mut Self {
         self.harness
             .execute_owned_triggers(&self.keeper, &self.strategy_addr)
@@ -122,8 +128,16 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
-    pub fn withdraw(&mut self, sender: &Addr, funds: &[Coin]) -> AnyResult<AppResponse> {
-        self.harness.withdraw(sender, &self.strategy_addr, funds)
+    pub fn withdraw(&mut self, denoms: HashSet<String>) -> &mut Self {
+        self.harness
+            .withdraw(&self.owner, &self.strategy_addr, denoms)
+            .unwrap();
+        self
+    }
+
+    pub fn try_withdraw(&mut self, denoms: HashSet<String>) -> AnyResult<AppResponse> {
+        self.harness
+            .withdraw(&self.owner, &self.strategy_addr, denoms)
     }
 
     pub fn config(self) -> StrategyConfig {
@@ -134,12 +148,12 @@ impl<'a> StrategyHandler<'a> {
 
     pub fn assert_balance(&mut self, expected: &Coin) -> &mut Self {
         println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
-        let balances = self.harness.query_balances(&self.strategy_addr);
-        assert!(
-            balances
-                .iter()
-                .any(|c| c.denom == expected.denom && c.amount == expected.amount),
-            "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
+        let balance = self
+            .harness
+            .query_balance(&self.strategy_addr, &expected.denom);
+        assert_eq!(
+            balance.amount, expected.amount,
+            "Expected balance not found: {expected:?}\n\nCurrent balance: {balance:#?}",
         );
         self
     }
@@ -162,9 +176,26 @@ impl<'a> StrategyHandler<'a> {
         println!("[StrategyHandler] Asserting strategy stats are {expected_stats:#?}");
         let stats = self.harness.query_strategy_stats(&self.strategy_addr);
         assert_eq!(
-            stats, expected_stats,
-            "Expected stats do not match current stats: expected {expected_stats:#?}, got {stats:#?}"
+            stats.swapped, expected_stats.swapped,
+            "Expected swapped coins do not match current swapped coins: expected {:#?}, got {:#?}",
+            expected_stats.swapped, stats.swapped
         );
+        assert_eq!(
+            stats.filled, expected_stats.filled,
+            "Expected filled coins do not match current filled coins: expected {:#?}, got {:#?}",
+            expected_stats.filled, stats.filled
+        );
+        assert_eq!(stats.withdrawn, expected_stats.withdrawn,
+            "Expected withdrawn coins do not match current withdrawn coins: expected {:#?}, got {:#?}",
+            expected_stats.withdrawn, stats.withdrawn
+        );
+        for distribution in &expected_stats.distributed {
+            assert!(
+                stats.distributed.iter().any(|d| d == distribution),
+                "Expected distributed coin not found: {distribution:#?}\n\nAll distributed coins: {:#?}",
+                stats.distributed
+            );
+        }
         self
     }
 
@@ -209,7 +240,7 @@ impl<'a> StrategyHandler<'a> {
         expected_fin_orders: Vec<(Side, Decimal, Uint128, Uint128, Uint128)>,
     ) -> &mut Self {
         println!(
-            "[StrategyHandler] Asserting strategy fin orders on pair {pair_address} are {expected_fin_orders:#?}"
+            "[StrategyHandler] Asserting strategy fin orders on pair {pair_address} are (side, price, offer, remaining, filled): {expected_fin_orders:#?}"
         );
         let fin_orders =
             self.harness

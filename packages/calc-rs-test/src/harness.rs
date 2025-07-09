@@ -1,4 +1,4 @@
-use std::vec;
+use std::{collections::HashSet, vec};
 
 use calc_rs::{
     manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle},
@@ -25,7 +25,9 @@ pub struct CalcTestApp {
     pub fin_addr: Addr,
     pub manager_addr: Addr,
     pub scheduler_addr: Addr,
+    pub fee_collector_addr: Addr,
     pub owner: Addr,
+    pub unknown: Addr,
 }
 
 impl CalcTestApp {
@@ -60,7 +62,9 @@ impl CalcTestApp {
         ));
 
         let admin = app.api().addr_make("admin");
+        let fee_collector_addr = app.api().addr_make("fee_collector");
         let owner = app.api().addr_make("owner");
+        let unknown = app.api().addr_make("unknown");
 
         let base_denom = "rune";
         let quote_denom = "eth-usdc";
@@ -90,7 +94,7 @@ impl CalcTestApp {
                 admin.clone(),
                 &ManagerConfig {
                     strategy_code_id,
-                    fee_collector: app.api().addr_make("fee_collector"),
+                    fee_collector: fee_collector_addr.clone(),
                 },
                 &[],
                 "calc-manager",
@@ -118,8 +122,21 @@ impl CalcTestApp {
                     storage,
                     &owner,
                     vec![
-                        Coin::new(1_000_000_000_000u128, base_denom),
-                        Coin::new(1_000_000_000_000u128, quote_denom),
+                        Coin::new(1_000_000_000u128, base_denom),
+                        Coin::new(1_000_000_000u128, quote_denom),
+                        Coin::new(1_000_000_000u128, "x/ruji"),
+                    ],
+                )
+                .unwrap();
+            router
+                .bank
+                .init_balance(
+                    storage,
+                    &unknown,
+                    vec![
+                        Coin::new(1_000_000_000u128, base_denom),
+                        Coin::new(1_000_000_000u128, quote_denom),
+                        Coin::new(1_000_000_000u128, "x/ruji"),
                     ],
                 )
                 .unwrap();
@@ -154,8 +171,29 @@ impl CalcTestApp {
             fin_addr,
             manager_addr,
             scheduler_addr,
+            fee_collector_addr,
             owner,
+            unknown,
         }
+    }
+
+    pub fn set_fin_orders(
+        &mut self,
+        owner: &Addr,
+        pair_address: &Addr,
+        orders: Vec<(Side, Price, Option<Uint128>)>,
+        funds: &[Coin],
+    ) -> AnyResult<AppResponse> {
+        self.app
+            .execute_contract(
+                owner.clone(),
+                pair_address.clone(),
+                &ExecuteMsg::Order((orders, None)),
+                funds,
+            )
+            .unwrap();
+
+        Ok(AppResponse::default())
     }
 
     pub fn query_fin_config(&self, pair_address: &Addr) -> ConfigResponse {
@@ -189,22 +227,22 @@ impl CalcTestApp {
 
     pub fn create_strategy(
         &mut self,
-        sender: &Addr,
-        owner: &Addr,
         label: &str,
         strategy: Strategy<Json>,
         funds: &[Coin],
     ) -> AnyResult<Addr> {
         let msg = ManagerExecuteMsg::InstantiateStrategy {
-            owner: owner.clone(),
             label: label.to_string(),
             affiliates: vec![],
             strategy,
         };
 
-        let response =
-            self.app
-                .execute_contract(sender.clone(), self.manager_addr.clone(), &msg, funds)?;
+        let response = self.app.execute_contract(
+            self.owner.clone(),
+            self.manager_addr.clone(),
+            &msg,
+            funds,
+        )?;
 
         let wasm_event = response
             .events
@@ -303,9 +341,9 @@ impl CalcTestApp {
         )
     }
 
-    pub fn fund_contract(&mut self, target: &Addr, sender: &Addr, funds: &[Coin]) {
+    pub fn fund_contract(&mut self, sender: &Addr, contract_address: &Addr, funds: &[Coin]) {
         self.app
-            .send_tokens(sender.clone(), target.clone(), funds)
+            .send_tokens(sender.clone(), contract_address.clone(), funds)
             .unwrap();
     }
 
@@ -338,6 +376,13 @@ impl CalcTestApp {
     pub fn query_balances(&self, addr: &Addr) -> Vec<Coin> {
         #[allow(deprecated)]
         self.app.wrap().query_all_balances(addr).unwrap()
+    }
+
+    pub fn query_balance(&self, addr: &Addr, denom: &str) -> Coin {
+        self.app
+            .wrap()
+            .query_balance(addr, denom)
+            .unwrap_or_else(|_| Coin::new(0u128, denom))
     }
 
     pub fn advance_blocks(&mut self, count: u64) {
@@ -373,12 +418,12 @@ impl CalcTestApp {
         &mut self,
         sender: &Addr,
         strategy_addr: &Addr,
-        funds: &[Coin],
+        denoms: HashSet<String>,
     ) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
             strategy_addr.clone(),
-            &StrategyExecuteMsg::Withdraw(funds.iter().map(|c| c.denom.clone()).collect()),
+            &StrategyExecuteMsg::Withdraw(denoms),
             &[],
         )
     }

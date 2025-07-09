@@ -10,13 +10,14 @@ use crate::{
         optimal_swap::{SwapAmountAdjustment, SwapRoute},
         thor_swap::{get_expected_amount_out as get_expected_amount_out_thorchain, ThorSwap},
     },
+    core::Threshold,
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
 };
 
 #[cw_serde]
-pub enum Threshold {
-    All,
-    Any,
+pub struct CompositeCondition {
+    pub conditions: Vec<Condition>,
+    pub threshold: Threshold,
 }
 
 #[cw_serde]
@@ -47,6 +48,8 @@ pub enum Condition {
         contract_address: Addr,
         status: StrategyStatus,
     },
+    Not(Box<Condition>),
+    Composite(CompositeCondition),
 }
 
 impl Condition {
@@ -155,6 +158,14 @@ impl Condition {
                     false
                 }
             }
+            Condition::Not(condition) => !condition.is_satisfied(deps, env),
+            Condition::Composite(CompositeCondition {
+                conditions,
+                threshold,
+            }) => match threshold {
+                Threshold::All => conditions.iter().all(|c| c.is_satisfied(deps, env)),
+                Threshold::Any => conditions.iter().any(|c| c.is_satisfied(deps, env)),
+            },
         }
     }
 
@@ -191,6 +202,24 @@ impl Condition {
             } => format!(
                 "strategy ({contract_address}) is in status: {status:?}"
             ),
+            Condition::Not(condition) => format!("not ({})", condition.description(env)),
+            Condition::Composite(CompositeCondition {
+                conditions,
+                threshold,
+            }) => {
+                let conditions_desc: Vec<String> = conditions
+                    .iter()
+                    .map(|c| c.description(env))
+                    .collect();
+                let threshold_desc = match threshold {
+                    Threshold::All => "all",
+                    Threshold::Any => "any",
+                };
+                format!(
+                    "composite condition ({threshold_desc}): [{}]",
+                    conditions_desc.join(", ")
+                )
+            }
         }
     }
 }

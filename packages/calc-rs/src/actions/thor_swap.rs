@@ -5,13 +5,13 @@ use std::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation, optimal_swap::SwapAmountAdjustment},
+    actions::{action::Action, operation::StatelessOperation, optimal_swap::SwapAmountAdjustment},
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
     thorchain::{MsgDeposit, SwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Uint128};
+use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult, Uint128};
 
 pub enum ThorchainSwapEvent {
     SwapSkipped {
@@ -288,7 +288,7 @@ impl ThorSwap {
     }
 }
 
-impl Operation for ThorSwap {
+impl StatelessOperation for ThorSwap {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
@@ -361,23 +361,6 @@ impl Operation for ThorSwap {
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
-    }
-
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
-        Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::ThorSwap(self)))
-    }
-
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::ThorSwap(self)))
     }
 }
 
