@@ -6,6 +6,7 @@ mod integration_tests {
             limit_order::{Direction, Offset, StaleOrder},
             thor_swap::ThorSwap,
         },
+        conditions::CompositeCondition,
         constants::BASE_FEE_BPS,
         core::{ContractError, Threshold},
         scheduler::SchedulerExecuteMsg,
@@ -2571,6 +2572,74 @@ mod integration_tests {
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Archived,
                 }))],
+                threshold: Threshold::All,
+                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+            }))
+            .instantiate(&funds)
+            .assert_swapped(vec![swap_action.swap_amount.clone()]);
+    }
+
+    #[test]
+    fn test_execute_condition_action_respects_composite_condition_threshold() {
+        let mut harness = CalcTestApp::setup();
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
+
+        let swap_action = OptimalSwap {
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+        };
+
+        let funds = vec![Coin::new(
+            swap_action.swap_amount.amount + Uint128::one(),
+            fin_pair.denoms.base(),
+        )];
+
+        let manager = harness.manager_addr.clone();
+        let strategy_action = Action::FinSwap(default_fin_swap_action(&harness));
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_action(strategy_action)
+            .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
+
+        StrategyBuilder::new(&mut strategy.harness)
+            .with_action(Action::Conditional(Conditional {
+                conditions: vec![Condition::Composite(CompositeCondition {
+                    conditions: vec![
+                        Condition::StrategyStatus {
+                            manager_contract: manager.clone(),
+                            contract_address: strategy.strategy_addr.clone(),
+                            status: StrategyStatus::Archived,
+                        },
+                        Condition::StrategyBalanceAvailable {
+                            amount: funds[0].clone(),
+                        },
+                    ],
+                    threshold: Threshold::All,
+                })],
+                threshold: Threshold::All,
+                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+            }))
+            .instantiate(&funds)
+            .assert_swapped(vec![]);
+
+        StrategyBuilder::new(&mut strategy.harness)
+            .with_action(Action::Conditional(Conditional {
+                conditions: vec![Condition::Composite(CompositeCondition {
+                    conditions: vec![
+                        Condition::StrategyStatus {
+                            manager_contract: manager.clone(),
+                            contract_address: strategy.strategy_addr.clone(),
+                            status: StrategyStatus::Archived,
+                        },
+                        Condition::StrategyBalanceAvailable {
+                            amount: funds[0].clone(),
+                        },
+                    ],
+                    threshold: Threshold::Any,
+                })],
                 threshold: Threshold::All,
                 action: Box::new(Action::OptimalSwap(swap_action.clone())),
             }))
