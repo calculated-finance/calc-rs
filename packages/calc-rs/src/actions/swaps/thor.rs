@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::{
-    actions::swap::{
+    actions::swaps::swap::{
         self, Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote, SwapRoute,
-        ThorchainRoute, Validated,
+        Validated,
     },
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
@@ -57,16 +57,12 @@ pub struct StreamingSwap {
 }
 
 #[cw_serde]
-pub struct ThorSwap {
-    pub swap_amount: Coin,
-    pub minimum_receive_amount: Coin,
-    pub maximum_slippage_bps: u128,
-    pub adjustment: SwapAmountAdjustment,
+pub struct ThorchainRoute {
     pub streaming_interval: Option<u64>,
     pub max_streaming_quantity: Option<u64>,
     pub affiliate_code: Option<String>,
     pub affiliate_bps: Option<u64>,
-    pub previous_swap: Option<StreamingSwap>,
+    pub latest_swap: Option<StreamingSwap>,
 }
 
 fn is_secured_asset(denom: &str) -> bool {

@@ -4,14 +4,17 @@ use std::{
 };
 
 use crate::{
-    actions::swap::{
-        Adjusted, Executable, FinRoute, New, Quotable, SwapAmountAdjustment, SwapQuote, Validated,
+    actions::swaps::swap::{
+        Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote, Validated,
     },
     core::Contract,
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
-use cosmwasm_std::{to_json_binary, Coin, Decimal, Deps, Env, Event, StdError, StdResult, Uint128};
+use cosmwasm_schema::cw_serde;
+use cosmwasm_std::{
+    to_json_binary, Addr, Coin, Decimal, Deps, Env, Event, StdError, StdResult, Uint128,
+};
 use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
 };
@@ -37,6 +40,11 @@ impl From<FinSwapEvent> for Event {
                 ),
         }
     }
+}
+
+#[cw_serde]
+pub struct FinRoute {
+    pub pair_address: Addr,
 }
 
 impl Quotable for FinRoute {

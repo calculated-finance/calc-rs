@@ -5,7 +5,7 @@ use cosmwasm_std::{Addr, Coin, Deps, Env, StdResult, Timestamp, Uint128};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
-    actions::swap::Swap,
+    actions::swaps::swap::Swap,
     core::Threshold,
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
 };
@@ -140,7 +140,10 @@ mod conditions_tests {
     use rujira_rs::fin::{OrderResponse, Price, Side, SimulationResponse};
 
     use crate::{
-        actions::swap::{FinRoute, SwapAmountAdjustment, SwapRoute},
+        actions::{
+            swaps::fin::FinRoute,
+            swaps::swap::{SwapAmountAdjustment, SwapRoute},
+        },
         manager::{StrategyHandle, StrategyStatus},
     };
 

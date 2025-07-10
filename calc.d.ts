@@ -44,7 +44,6 @@ export type ManagerExecuteMsg =
       instantiate_strategy: {
         affiliates: Affiliate[];
         label: string;
-        owner: Addr;
         strategy: StrategyFor_Json;
       };
     }
@@ -67,13 +66,7 @@ export type ManagerExecuteMsg =
     };
 export type Action =
   | {
-      fin_swap: FinSwap;
-    }
-  | {
-      thor_swap: ThorSwap;
-    }
-  | {
-      optimal_swap: OptimalSwap;
+      swap: Swap;
     }
   | {
       limit_order: LimitOrder;
@@ -121,16 +114,10 @@ export type Uint128 = string;
 export type Decimal = string;
 export type SwapRoute =
   | {
-      fin: Addr;
+      fin: FinRoute;
     }
   | {
-      thorchain: {
-        affiliate_bps?: number | null;
-        affiliate_code?: string | null;
-        max_streaming_quantity?: number | null;
-        previous_swap?: StreamingSwap | null;
-        streaming_interval?: number | null;
-      };
+      thorchain: ThorchainRoute;
     };
 export type Side = "base" | "quote";
 export type OrderPriceStrategy =
@@ -159,7 +146,7 @@ export type Recipient =
       };
     }
   | {
-      wasm: {
+      contract: {
         address: Addr;
         msg: Binary;
       };
@@ -231,18 +218,14 @@ export type Condition =
       blocks_completed: number;
     }
   | {
-      can_swap: {
-        minimum_receive_amount: Coin;
-        route: SwapRoute;
-        swap_amount: Coin;
-      };
+      can_swap: Swap;
     }
   | {
       limit_order_filled: {
+        minimum_filled_amount?: Uint128 | null;
         owner: Addr;
         pair_address: Addr;
         price: Price;
-        rate: Decimal;
         side: Side;
       };
     }
@@ -266,6 +249,9 @@ export type Condition =
     }
   | {
       not: Condition;
+    }
+  | {
+      composite: CompositeCondition;
     };
 export type Price =
   | {
@@ -282,39 +268,32 @@ export interface StrategyFor_Json {
   owner: Addr;
   state: Json;
 }
-export interface FinSwap {
+export interface Swap {
   adjustment: SwapAmountAdjustment;
   maximum_slippage_bps: number;
   minimum_receive_amount: Coin;
-  pair_address: Addr;
+  routes: SwapRoute[];
   swap_amount: Coin;
 }
 export interface Coin {
   amount: Uint128;
   denom: string;
 }
-export interface ThorSwap {
-  adjustment: SwapAmountAdjustment;
+export interface FinRoute {
+  pair_address: Addr;
+}
+export interface ThorchainRoute {
   affiliate_bps?: number | null;
   affiliate_code?: string | null;
+  latest_swap?: StreamingSwap | null;
   max_streaming_quantity?: number | null;
-  maximum_slippage_bps: number;
-  minimum_receive_amount: Coin;
-  previous_swap?: StreamingSwap | null;
   streaming_interval?: number | null;
-  swap_amount: Coin;
 }
 export interface StreamingSwap {
   expected_receive_amount: Coin;
+  memo: string;
   starting_block: number;
   streaming_swap_blocks: number;
-  swap_amount: Coin;
-}
-export interface OptimalSwap {
-  adjustment: SwapAmountAdjustment;
-  maximum_slippage_bps: number;
-  minimum_receive_amount: Coin;
-  routes: SwapRoute[];
   swap_amount: Coin;
 }
 export interface LimitOrder {
@@ -351,6 +330,9 @@ export interface Duration {
 }
 export interface Conditional {
   action: Action;
+  condition: Condition;
+}
+export interface CompositeCondition {
   conditions: Condition[];
   threshold: Threshold;
 }
@@ -389,9 +371,7 @@ export type SchedulerQueryMsg =
       };
     }
   | {
-      can_execute: {
-        id: number;
-      };
+      can_execute: number;
     };
 export type ConditionFilter =
   | {
@@ -483,14 +463,11 @@ export interface Statistics {
 export interface StrategyInstantiateMsg {
   action: Action;
   owner: Addr;
-  state: Instantiable;
+  state: Indexed;
 }
 
-export interface Instantiable {
-  code_id: number;
+export interface Indexed {
   contract_address: Addr;
-  label: string;
-  salt: Binary;
 }
 export type StrategyQueryMsg =
   | {
@@ -508,16 +485,16 @@ export type StrategyExecuteMsg =
       withdraw: string[];
     }
   | {
-      update: StrategyFor_Instantiable;
+      update: StrategyFor_Indexed;
     }
   | {
       update_status: StrategyStatus;
     };
 
-export interface StrategyFor_Instantiable {
+export interface StrategyFor_Indexed {
   action: Action;
   owner: Addr;
-  state: Instantiable;
+  state: Indexed;
 }
 
 export type ArrayOf_Coin = Coin[];

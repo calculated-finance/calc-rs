@@ -10,7 +10,7 @@ pub trait StatelessOperation {
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
 }
 
-pub trait StatefulOperation: StatelessOperation {
+pub trait StatefulOperation {
     fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)>;
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
     fn withdraw(

@@ -4,7 +4,8 @@ mod integration_tests {
         actions::{
             distribution::{Destination, Distribution, Recipient},
             limit_order::{Direction, Offset, StaleOrder},
-            swap::{FinRoute, ThorchainRoute},
+            swaps::fin::FinRoute,
+            swaps::thor::ThorchainRoute,
         },
         conditions::CompositeCondition,
         constants::BASE_FEE_BPS,
@@ -20,7 +21,7 @@ mod integration_tests {
             action::Action,
             conditional::Conditional,
             schedule::Schedule,
-            swap::{Swap, SwapAmountAdjustment, SwapRoute},
+            swaps::swap::{Swap, SwapAmountAdjustment, SwapRoute},
         },
         cadence::Cadence,
         conditions::Condition,

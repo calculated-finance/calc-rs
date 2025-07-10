@@ -1,12 +1,29 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, mem::discriminant};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, Event, StdError, StdResult};
+use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult};
 
 use crate::{
-    actions::{action::Action, operation::StatelessOperation, thor_swap::StreamingSwap},
+    actions::{
+        action::Action, operation::StatelessOperation, swaps::fin::FinRoute,
+        swaps::thor::ThorchainRoute,
+    },
     strategy::StrategyMsg,
 };
+
+pub enum SwapEvent {
+    SwapSkipped { reason: String },
+}
+
+impl From<SwapEvent> for Event {
+    fn from(val: SwapEvent) -> Self {
+        match val {
+            SwapEvent::SwapSkipped { reason } => {
+                Event::new("swap_skipped").add_attribute("reason", reason)
+            }
+        }
+    }
+}
 
 #[cw_serde]
 pub enum SwapAmountAdjustment {
@@ -20,20 +37,6 @@ pub enum SwapAmountAdjustment {
 
 pub trait Routable {
     fn get_expected_amount_out(&self, swap_amount: Coin) -> StdResult<Coin>;
-}
-
-#[cw_serde]
-pub struct ThorchainRoute {
-    pub streaming_interval: Option<u64>,
-    pub max_streaming_quantity: Option<u64>,
-    pub affiliate_code: Option<String>,
-    pub affiliate_bps: Option<u64>,
-    pub latest_swap: Option<StreamingSwap>,
-}
-
-#[cw_serde]
-pub struct FinRoute {
-    pub pair_address: Addr,
 }
 
 #[cw_serde]
@@ -208,7 +211,19 @@ impl Swap {
         let best_route = self.best_route(deps, env)?;
 
         if let Some(route) = best_route {
-            let messages = route.execute(deps, env)?.swap_messages();
+            let messages = route.clone().execute(deps, env)?.swap_messages();
+
+            let updated_routes = self
+                .routes
+                .iter()
+                .map(|r| {
+                    if discriminant(r) == discriminant(&route.route) {
+                        route.route.clone()
+                    } else {
+                        r.clone()
+                    }
+                })
+                .collect::<Vec<_>>();
 
             Ok((
                 messages,
@@ -218,11 +233,20 @@ impl Swap {
                     minimum_receive_amount: self.minimum_receive_amount,
                     maximum_slippage_bps: self.maximum_slippage_bps,
                     adjustment: self.adjustment,
-                    routes: self.routes,
+                    // Some routes (i.e. Thorchain) may have relevant state that cannot be
+                    // verifiably committed or recreated, so we cache it here.
+                    routes: updated_routes,
                 }),
             ))
         } else {
-            Ok((vec![], vec![], Action::Swap(self)))
+            Ok((
+                vec![],
+                vec![SwapEvent::SwapSkipped {
+                    reason: "No valid swap routes found".to_string(),
+                }
+                .into()],
+                Action::Swap(self),
+            ))
         }
     }
 }
@@ -263,7 +287,14 @@ impl StatelessOperation for Swap {
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self.clone().execute_unsafe(deps, env) {
             Ok((action, messages, events)) => (action, messages, events),
-            Err(_) => (vec![], vec![], Action::Swap(self)),
+            Err(err) => (
+                vec![],
+                vec![SwapEvent::SwapSkipped {
+                    reason: format!("Swap execution failed: {}", err),
+                }
+                .into()],
+                Action::Swap(self),
+            ),
         }
     }
 
