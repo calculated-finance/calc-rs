@@ -14,9 +14,8 @@ use crate::{
         conditional::Conditional,
         distribution::{Destination, Distribution, Recipient},
         operation::{StatefulOperation, StatelessOperation},
-        optimal_swap::{OptimalSwap, SwapRoute},
         schedule::Schedule,
-        thor_swap::ThorSwap,
+        swap::{Swap, SwapRoute, ThorchainRoute},
     },
     constants::{LOG_ERRORS_REPLY_ID, MAX_STRATEGY_SIZE, PROCESS_PAYLOAD_REPLY_ID},
     core::Contract,
@@ -238,46 +237,27 @@ impl Strategy<Json> {
                                         .mul_ceil(Decimal::bps(affiliate.bps)),
                                     label: Some(affiliate.label.clone()),
                                 })
-                                .collect::<Vec<_>>(),
+                                .collect(),
                         ]
                         .concat(),
                     })
                 }
             }
-            Action::ThorSwap(thor_swap) => Action::ThorSwap(ThorSwap {
-                // As per agreement with Rujira
-                affiliate_code: Some("rj".to_string()),
-                affiliate_bps: Some(10),
-                ..thor_swap
-            }),
-            Action::OptimalSwap(swap) => {
-                let routes_with_affiliates = swap
+            Action::Swap(swap) => Action::Swap(Swap {
+                routes: swap
                     .routes
                     .into_iter()
                     .map(|route| match route {
-                        SwapRoute::Thorchain {
-                            streaming_interval,
-                            max_streaming_quantity,
-                            previous_swap,
-                            affiliate_code: _,
-                            affiliate_bps: _,
-                        } => SwapRoute::Thorchain {
-                            streaming_interval,
-                            max_streaming_quantity,
-                            previous_swap,
-                            // As per agreement with Rujira
+                        SwapRoute::Thorchain(thor_route) => SwapRoute::Thorchain(ThorchainRoute {
                             affiliate_code: Some("rj".to_string()),
                             affiliate_bps: Some(10),
-                        },
+                            ..thor_route
+                        }),
                         _ => route,
                     })
-                    .collect::<Vec<_>>();
-
-                Action::OptimalSwap(OptimalSwap {
-                    routes: routes_with_affiliates,
-                    ..swap
-                })
-            }
+                    .collect(),
+                ..swap
+            }),
             Action::Schedule(schedule) => Action::Schedule(Schedule {
                 action: Box::new(Self::add_affiliates(deps, *schedule.action, affiliates)?),
                 ..schedule

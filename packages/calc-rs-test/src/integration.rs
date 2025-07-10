@@ -4,7 +4,7 @@ mod integration_tests {
         actions::{
             distribution::{Destination, Distribution, Recipient},
             limit_order::{Direction, Offset, StaleOrder},
-            thor_swap::ThorSwap,
+            swap::{FinRoute, ThorchainRoute},
         },
         conditions::CompositeCondition,
         constants::BASE_FEE_BPS,
@@ -19,9 +19,8 @@ mod integration_tests {
         actions::{
             action::Action,
             conditional::Conditional,
-            fin_swap::FinSwap,
-            optimal_swap::{OptimalSwap, SwapAmountAdjustment, SwapRoute},
             schedule::Schedule,
+            swap::{Swap, SwapAmountAdjustment, SwapRoute},
         },
         cadence::Cadence,
         conditions::Condition,
@@ -39,10 +38,42 @@ mod integration_tests {
 
     // Test helpers
 
-    fn default_optimal_swap_action(harness: &CalcTestApp) -> OptimalSwap {
+    fn default_swap_action(harness: &CalcTestApp) -> Swap {
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
-        OptimalSwap {
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+        Swap {
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+        }
+    }
+
+    fn default_swap_action_thor(harness: &CalcTestApp) -> Swap {
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
+        Swap {
+            routes: vec![SwapRoute::Thorchain(ThorchainRoute {
+                streaming_interval: Some(2),
+                max_streaming_quantity: Some(1000),
+                affiliate_code: Some("rj".to_string()),
+                affiliate_bps: Some(10),
+                latest_swap: None,
+            })],
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+        }
+    }
+
+    fn default_swap_action_fin(harness: &CalcTestApp) -> Swap {
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
+        Swap {
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
@@ -86,32 +117,6 @@ mod integration_tests {
         }
     }
 
-    fn default_fin_swap_action(harness: &CalcTestApp) -> FinSwap {
-        let fin_pair = harness.query_fin_config(&harness.fin_addr);
-        FinSwap {
-            pair_address: harness.fin_addr.clone(),
-            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
-            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
-            maximum_slippage_bps: 101,
-            adjustment: SwapAmountAdjustment::Fixed,
-        }
-    }
-
-    fn default_thor_swap_action(harness: &CalcTestApp) -> ThorSwap {
-        let fin_pair = harness.query_fin_config(&harness.fin_addr);
-        ThorSwap {
-            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
-            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
-            maximum_slippage_bps: 101,
-            adjustment: SwapAmountAdjustment::Fixed,
-            streaming_interval: None,
-            max_streaming_quantity: None,
-            affiliate_code: None,
-            affiliate_bps: None,
-            previous_swap: None,
-        }
-    }
-
     fn default_distribution_action(harness: &CalcTestApp) -> Distribution {
         Distribution {
             destinations: vec![Destination {
@@ -121,7 +126,7 @@ mod integration_tests {
                 shares: Uint128::new(10_000),
                 label: None,
             }],
-            denoms: vec![default_fin_swap_action(harness).swap_amount.denom.clone()],
+            denoms: vec![default_swap_action(harness).swap_amount.denom.clone()],
         }
     }
 
@@ -130,13 +135,13 @@ mod integration_tests {
     #[test]
     fn test_instantiate_strategy_with_single_action_succeeds() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_optimal_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let manager_addr = harness.manager_addr.clone();
         let owner = harness.owner.clone();
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[]);
 
         strategy.assert_config(StrategyConfig {
@@ -144,7 +149,7 @@ mod integration_tests {
             escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
             strategy: Strategy {
                 owner: owner.clone(),
-                action: Action::OptimalSwap(swap_action),
+                action: Action::Swap(swap_action),
                 state: Committed {
                     contract_address: strategy.strategy_addr.clone(),
                 },
@@ -156,18 +161,14 @@ mod integration_tests {
     fn test_instantiate_strategy_with_all_action_types_succeeds() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_optimal_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
         let limit_order_action = default_limit_order_action(&harness);
         let schedule_action = default_schedule_action(&harness);
         let conditional_action = default_conditional_action(&harness);
-        let fin_swap_action = default_fin_swap_action(&harness);
-        let thor_swap_action = default_thor_swap_action(&harness);
         let distribution_action = default_distribution_action(&harness);
 
         let many_action = Action::Many(vec![
-            Action::OptimalSwap(swap_action),
-            Action::FinSwap(fin_swap_action),
-            Action::ThorSwap(thor_swap_action),
+            Action::Swap(swap_action),
             Action::LimitOrder(limit_order_action),
             Action::Schedule(schedule_action),
             Action::Conditional(conditional_action),
@@ -193,7 +194,7 @@ mod integration_tests {
                 condition: Condition::StrategyBalanceAvailable {
                     amount: Coin::new(1000u128, fin_pair.denoms.base()),
                 },
-                action: Box::new(Action::FinSwap(default_fin_swap_action(&harness))),
+                action: Box::new(Action::Swap(default_swap_action(&harness))),
             })),
         };
 
@@ -234,20 +235,20 @@ mod integration_tests {
             .is_err());
     }
 
-    // ThorSwap Action tests
+    // Swap Action tests
 
     #[test]
     fn test_instantiate_thor_swap_action_with_zero_swap_amount_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_thor_swap_action(&harness);
+        let default_swap = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(0u128, default_swap.swap_amount.denom.clone()),
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -256,15 +257,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_thor_swap_action_with_invalid_maximum_slippage_bps_amount_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_thor_swap_action(&harness);
+        let default_swap = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             maximum_slippage_bps: 10_001,
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -273,15 +274,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_thor_swap_action_with_non_secured_swap_denom_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_thor_swap_action(&harness);
+        let default_swap = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, "x/ruji".to_string()),
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -290,15 +291,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_thor_swap_action_with_non_secured_receive_denom_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_thor_swap_action(&harness);
+        let default_swap = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             minimum_receive_amount: Coin::new(1000u128, "x/ruji".to_string()),
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -307,15 +308,21 @@ mod integration_tests {
     #[test]
     fn test_instantiate_thor_swap_action_with_zero_streaming_interval_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_thor_swap_action(&harness);
+        let default_swap = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
-            streaming_interval: Some(0),
+        let swap_action = Swap {
+            routes: vec![SwapRoute::Thorchain(ThorchainRoute {
+                streaming_interval: Some(0),
+                max_streaming_quantity: Some(1000),
+                affiliate_code: Some("rj".to_string()),
+                affiliate_bps: Some(10),
+                latest_swap: None,
+            })],
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -324,15 +331,21 @@ mod integration_tests {
     #[test]
     fn test_instantiate_thor_swap_action_with_too_high_streaming_interval_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_thor_swap_action(&harness);
+        let default_swap = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
-            streaming_interval: Some(51),
+        let swap_action = Swap {
+            routes: vec![SwapRoute::Thorchain(ThorchainRoute {
+                streaming_interval: Some(51),
+                max_streaming_quantity: Some(1000),
+                affiliate_code: Some("rj".to_string()),
+                affiliate_bps: Some(10),
+                latest_swap: None,
+            })],
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -341,15 +354,21 @@ mod integration_tests {
     #[test]
     fn test_instantiate_thor_swap_action_with_invalid_max_streaming_quantity_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_thor_swap_action(&harness);
+        let default_swap = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
-            streaming_interval: Some(14_401),
+        let swap_action = Swap {
+            routes: vec![SwapRoute::Thorchain(ThorchainRoute {
+                streaming_interval: Some(5),
+                max_streaming_quantity: Some(15_000),
+                affiliate_code: Some("rj".to_string()),
+                affiliate_bps: Some(10),
+                latest_swap: None,
+            })],
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -358,10 +377,10 @@ mod integration_tests {
     #[test]
     fn test_instantiate_thor_swap_action_executes_immediately() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_thor_swap_action(&harness);
+        let swap_action = default_swap_action_thor(&harness);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[Coin::new(
                 swap_action.swap_amount.amount * Uint128::new(2),
                 swap_action.swap_amount.denom.clone(),
@@ -373,9 +392,9 @@ mod integration_tests {
     #[test]
     fn test_execute_thor_swap_action_with_swap_amount_scaled_to_zero_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_thor_swap_action(&harness);
+        let default_swap_action = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
                     10u128,
@@ -388,7 +407,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -403,15 +422,15 @@ mod integration_tests {
     #[test]
     fn test_execute_thor_swap_action_with_slippage_higher_than_maximum_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_thor_swap_action(&harness);
+        let default_swap_action = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             maximum_slippage_bps: 99,
             ..default_swap_action
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy.assert_stats(Statistics {
@@ -423,9 +442,9 @@ mod integration_tests {
     #[test]
     fn test_execute_thor_swap_action_with_receive_amount_lower_than_minimum_threshold_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_thor_swap_action(&harness);
+        let default_swap_action = default_swap_action_thor(&harness);
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             minimum_receive_amount: Coin::new(
                 10000000u128,
                 default_swap_action.minimum_receive_amount.denom.clone(),
@@ -434,7 +453,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -449,10 +468,10 @@ mod integration_tests {
     #[test]
     fn test_execute_thor_swap_action_with_zero_balance_skips() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_thor_swap_action(&harness);
+        let swap_action = default_swap_action_thor(&harness);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[]);
 
         strategy
@@ -467,7 +486,7 @@ mod integration_tests {
     #[test]
     fn test_execute_thor_swap_action_with_less_balance_than_swap_amount_executes() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_thor_swap_action(&harness);
+        let swap_action = default_swap_action_thor(&harness);
 
         let balance = Coin::new(
             swap_action.swap_amount.amount / Uint128::new(2),
@@ -475,7 +494,7 @@ mod integration_tests {
         );
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[balance.clone()]);
 
         strategy.assert_stats(Statistics {
@@ -487,10 +506,10 @@ mod integration_tests {
     #[test]
     fn test_execute_thor_swap_action_with_swap_amount_scaled_to_minimum_swap_amount_executes() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_thor_swap_action(&harness);
+        let default_swap_action = default_swap_action_thor(&harness);
         let minimum_swap_amount = Coin::new(100u128, default_swap_action.swap_amount.denom.clone());
 
-        let swap_action = ThorSwap {
+        let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
                     10u128,
@@ -503,7 +522,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::ThorSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy.assert_stats(Statistics {
@@ -512,20 +531,20 @@ mod integration_tests {
         });
     }
 
-    // FinSwap Action tests
+    // Swap Action tests
 
     #[test]
     fn test_instantiate_fin_swap_action_with_zero_swap_amount_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_fin_swap_action(&harness);
+        let default_swap = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(0u128, default_swap.swap_amount.denom.clone()),
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -534,15 +553,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_fin_swap_action_with_invalid_maximum_slippage_bps_amount_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_fin_swap_action(&harness);
+        let default_swap = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             maximum_slippage_bps: 10_001,
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -551,15 +570,17 @@ mod integration_tests {
     #[test]
     fn test_instantiate_fin_swap_action_with_invalid_pair_address_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_fin_swap_action(&harness);
+        let default_swap = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
-            pair_address: Addr::unchecked("not-a-fin-pair"),
+        let swap_action = Swap {
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: Addr::unchecked("not-a-fin-pair"),
+            })],
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -568,15 +589,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_fin_swap_action_with_mismatched_pair_and_swap_denom_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_fin_swap_action(&harness);
+        let default_swap = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, "invalid-denom".to_string()),
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -585,15 +606,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_fin_swap_action_with_mismatched_pair_and_receive_denom_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_fin_swap_action(&harness);
+        let default_swap = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             minimum_receive_amount: Coin::new(1000u128, "invalid-denom".to_string()),
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -602,13 +623,13 @@ mod integration_tests {
     #[test]
     fn test_instantiate_fin_swap_action_executes_immediately() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action_fin(&harness);
 
         let manager_addr = harness.manager_addr.clone();
         let owner = harness.owner.clone();
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -617,7 +638,7 @@ mod integration_tests {
                 escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
                 strategy: Strategy {
                     owner: owner.clone(),
-                    action: Action::FinSwap(swap_action.clone()),
+                    action: Action::Swap(swap_action.clone()),
                     state: Committed {
                         contract_address: strategy.strategy_addr.clone(),
                     },
@@ -642,9 +663,9 @@ mod integration_tests {
     #[test]
     fn test_execute_fin_swap_action_with_swap_amount_scaled_to_zero_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_fin_swap_action(&harness);
+        let default_swap_action = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
                     10u128,
@@ -657,7 +678,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -672,15 +693,15 @@ mod integration_tests {
     #[test]
     fn test_execute_fin_swap_action_with_slippage_higher_than_maximum_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_fin_swap_action(&harness);
+        let default_swap_action = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             maximum_slippage_bps: 99,
             ..default_swap_action
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -695,9 +716,9 @@ mod integration_tests {
     #[test]
     fn test_execute_fin_swap_action_with_receive_amount_lower_than_minimum_threshold_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_fin_swap_action(&harness);
+        let default_swap_action = default_swap_action_fin(&harness);
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             minimum_receive_amount: Coin::new(
                 10000000u128,
                 default_swap_action.minimum_receive_amount.denom.clone(),
@@ -706,7 +727,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -721,10 +742,10 @@ mod integration_tests {
     #[test]
     fn test_execute_fin_swap_action_with_zero_balance_skips() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action_fin(&harness);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[]);
 
         strategy
@@ -739,7 +760,7 @@ mod integration_tests {
     #[test]
     fn test_execute_fin_swap_action_with_less_balance_than_swap_amount_executes() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action_fin(&harness);
 
         let balance = Coin::new(
             swap_action.swap_amount.amount / Uint128::new(2),
@@ -747,7 +768,7 @@ mod integration_tests {
         );
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[balance.clone()]);
 
         strategy
@@ -765,10 +786,10 @@ mod integration_tests {
     #[test]
     fn test_execute_fin_swap_action_with_swap_amount_scaled_to_minimum_swap_amount_executes() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_fin_swap_action(&harness);
+        let default_swap_action = default_swap_action_fin(&harness);
         let minimum_swap_amount = Coin::new(100u128, default_swap_action.swap_amount.denom.clone());
 
-        let swap_action = FinSwap {
+        let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
                     10u128,
@@ -781,7 +802,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -801,20 +822,20 @@ mod integration_tests {
             });
     }
 
-    // OptimalSwap Action tests
+    // Swap Action tests
 
     #[test]
     fn test_instantiate_optimal_swap_action_with_zero_swap_amount_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_optimal_swap_action(&harness);
+        let default_swap = default_swap_action(&harness);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(0u128, default_swap.swap_amount.denom.clone()),
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -823,15 +844,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_optimal_swap_action_with_invalid_maximum_slippage_bps_amount_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_optimal_swap_action(&harness);
+        let default_swap = default_swap_action(&harness);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             maximum_slippage_bps: 10_001,
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -840,15 +861,15 @@ mod integration_tests {
     #[test]
     fn test_instantiate_optimal_swap_action_with_no_routes_fails() {
         let mut harness = CalcTestApp::setup();
-        let default_swap = default_optimal_swap_action(&harness);
+        let default_swap = default_swap_action(&harness);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             routes: vec![],
             ..default_swap
         };
 
         let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .try_instantiate(&[swap_action.swap_amount.clone()]);
 
         assert!(result.is_err());
@@ -857,10 +878,10 @@ mod integration_tests {
     #[test]
     fn test_instantiate_optimal_swap_action_immediately_executes() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_optimal_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[Coin::new(
                 swap_action.swap_amount.amount * Uint128::new(10),
                 swap_action.swap_amount.denom.clone(),
@@ -885,16 +906,18 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_route = OptimalSwap {
+        let swap_route = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_route.clone()))
+            .with_action(Action::Swap(swap_route.clone()))
             .instantiate(&[Coin::new(
                 swap_route.swap_amount.amount * Uint128::new(10),
                 swap_route.swap_amount.denom.clone(),
@@ -924,25 +947,27 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_route = OptimalSwap {
+        let swap_route = Swap {
             swap_amount: Coin::new(10000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
             routes: vec![
-                SwapRoute::Fin(harness.fin_addr.clone()),
-                SwapRoute::Thorchain {
+                SwapRoute::Fin(FinRoute {
+                    pair_address: harness.fin_addr.clone(),
+                }),
+                SwapRoute::Thorchain(ThorchainRoute {
                     streaming_interval: Some(3),
                     max_streaming_quantity: Some(100),
                     affiliate_code: None,
                     affiliate_bps: None,
-                    previous_swap: None,
-                },
+                    latest_swap: None,
+                }),
             ],
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_route.clone()))
+            .with_action(Action::Swap(swap_route.clone()))
             .instantiate(&[Coin::new(
                 swap_route.swap_amount.amount * Uint128::new(10),
                 swap_route.swap_amount.denom.clone(),
@@ -970,9 +995,9 @@ mod integration_tests {
     #[test]
     fn test_execute_optimal_swap_action_with_swap_amount_scaled_to_zero_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_optimal_swap_action(&harness);
+        let default_swap_action = default_swap_action(&harness);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
                     10u128,
@@ -985,7 +1010,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -1000,15 +1025,15 @@ mod integration_tests {
     #[test]
     fn test_execute_optimal_swap_action_with_slippage_higher_than_maximum_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_optimal_swap_action(&harness);
+        let default_swap_action = default_swap_action(&harness);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             maximum_slippage_bps: 99,
             ..default_swap_action
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -1023,9 +1048,9 @@ mod integration_tests {
     #[test]
     fn test_execute_optimal_swap_action_with_receive_amount_lower_than_minimum_threshold_skips() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_optimal_swap_action(&harness);
+        let default_swap_action = default_swap_action(&harness);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             minimum_receive_amount: Coin::new(
                 10000000u128,
                 default_swap_action.minimum_receive_amount.denom.clone(),
@@ -1034,7 +1059,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -1049,10 +1074,10 @@ mod integration_tests {
     #[test]
     fn test_execute_optimal_swap_action_with_zero_balance_skips() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_optimal_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[]);
 
         strategy
@@ -1067,7 +1092,7 @@ mod integration_tests {
     #[test]
     fn test_execute_optimal_swap_action_with_less_balance_than_swap_amount_executes() {
         let mut harness = CalcTestApp::setup();
-        let swap_action = default_optimal_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let balance = Coin::new(
             swap_action.swap_amount.amount / Uint128::new(2),
@@ -1075,7 +1100,7 @@ mod integration_tests {
         );
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[balance.clone()]);
 
         strategy
@@ -1093,10 +1118,10 @@ mod integration_tests {
     #[test]
     fn test_execute_optimal_swap_action_with_swap_amount_scaled_to_minimum_swap_amount_executes() {
         let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_optimal_swap_action(&harness);
+        let default_swap_action = default_swap_action(&harness);
         let minimum_swap_amount = Coin::new(100u128, default_swap_action.swap_amount.denom.clone());
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
                     10u128,
@@ -1109,7 +1134,7 @@ mod integration_tests {
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::OptimalSwap(swap_action.clone()))
+            .with_action(Action::Swap(swap_action.clone()))
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy
@@ -1755,8 +1780,8 @@ mod integration_tests {
         let pair = harness.query_fin_config(&harness.fin_addr);
 
         let actions = vec![
-            Action::FinSwap(default_fin_swap_action(&harness)),
-            Action::OptimalSwap(default_optimal_swap_action(&harness)),
+            Action::Swap(default_swap_action(&harness)),
+            Action::Swap(default_swap_action(&harness)),
         ];
 
         let manager = harness.manager_addr.clone();
@@ -1784,13 +1809,13 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let pair_address = harness.fin_addr.clone();
 
-        let fin_swap_action = default_fin_swap_action(&harness);
+        let fin_swap_action = default_swap_action(&harness);
         let limit_order_action = default_limit_order_action(&harness);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_action(
                 Action::Many(vec![
-                    Action::FinSwap(fin_swap_action.clone()),
+                    Action::Swap(fin_swap_action.clone()),
                     Action::LimitOrder(limit_order_action.clone()),
                 ])
                 .clone(),
@@ -1810,7 +1835,7 @@ mod integration_tests {
             .with_action(
                 Action::Many(vec![
                     Action::LimitOrder(limit_order_action.clone()),
-                    Action::FinSwap(fin_swap_action.clone()),
+                    Action::Swap(fin_swap_action.clone()),
                 ])
                 .clone(),
             )
@@ -1837,7 +1862,7 @@ mod integration_tests {
         let pair = harness.query_fin_config(&harness.fin_addr);
 
         let actions = vec![
-            Action::FinSwap(default_fin_swap_action(&harness)),
+            Action::Swap(default_swap_action(&harness)),
             Action::Many(vec![Action::LimitOrder(default_limit_order_action(
                 &harness,
             ))]),
@@ -2018,10 +2043,10 @@ mod integration_tests {
         let scheduler = harness.scheduler_addr.clone();
         let fee_collector = harness.fee_collector_addr.clone();
 
-        let default_fin_swap_action = default_fin_swap_action(&harness);
+        let default_swap_action = default_swap_action(&harness);
 
         let other_strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(default_fin_swap_action.clone()))
+            .with_action(Action::Swap(default_swap_action.clone()))
             .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
 
         let destinations = vec![
@@ -2119,10 +2144,10 @@ mod integration_tests {
         let scheduler = harness.scheduler_addr.clone();
         let fee_collector = harness.fee_collector_addr.clone();
 
-        let default_fin_swap_action = default_fin_swap_action(&harness);
+        let default_swap_action = default_swap_action(&harness);
 
         let other_strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::FinSwap(default_fin_swap_action.clone()))
+            .with_action(Action::Swap(default_swap_action.clone()))
             .instantiate(&[Coin::new(100_000u128, "eth-usdc")]);
 
         let destinations = vec![
@@ -2329,7 +2354,7 @@ mod integration_tests {
                 ],
                 threshold: Threshold::All,
             }),
-            action: Box::new(Action::FinSwap(default_fin_swap_action(&harness))),
+            action: Box::new(Action::Swap(default_swap_action(&harness))),
         });
 
         let result = StrategyBuilder::new(&mut harness)
@@ -2349,7 +2374,7 @@ mod integration_tests {
             condition: Condition::StrategyBalanceAvailable {
                 amount: Coin::new(1000u128, "x/ruji"),
             },
-            action: Box::new(Action::FinSwap(default_fin_swap_action(&harness))),
+            action: Box::new(Action::Swap(default_swap_action(&harness))),
         });
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -2374,12 +2399,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2392,7 +2419,7 @@ mod integration_tests {
                 condition: Condition::StrategyBalanceAvailable {
                     amount: swap_action.swap_amount.clone(),
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds);
 
@@ -2404,12 +2431,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2425,7 +2454,7 @@ mod integration_tests {
                         fin_pair.denoms.base(),
                     ),
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![]);
@@ -2436,12 +2465,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2454,7 +2485,7 @@ mod integration_tests {
         StrategyBuilder::new(&mut harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::TimestampElapsed(block_time.plus_seconds(60)),
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![])
@@ -2468,12 +2499,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2486,7 +2519,7 @@ mod integration_tests {
         StrategyBuilder::new(&mut harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::BlocksCompleted(block_height + 60),
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![])
@@ -2500,13 +2533,7 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
-            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
-            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
-            maximum_slippage_bps: 101,
-            adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
-        };
+        let swap_action = default_swap_action(&harness);
 
         let funds = vec![Coin::new(
             swap_action.swap_amount.amount + Uint128::one(),
@@ -2515,24 +2542,22 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_action(Action::Conditional(Conditional {
-                condition: Condition::CanSwap {
-                    swap_amount: swap_action.swap_amount.clone(),
-                    minimum_receive_amount: Coin::new(200_000u128, fin_pair.denoms.quote()),
-                    route: swap_action.routes[0].clone(),
-                },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                condition: Condition::CanSwap(Swap {
+                    minimum_receive_amount: Coin::new(20_000_000u128, fin_pair.denoms.quote()),
+                    ..swap_action.clone()
+                }),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![]);
 
         StrategyBuilder::new(&mut harness)
             .with_action(Action::Conditional(Conditional {
-                condition: Condition::CanSwap {
-                    swap_amount: swap_action.swap_amount.clone(),
+                condition: Condition::CanSwap(Swap {
                     minimum_receive_amount: Coin::new(20u128, fin_pair.denoms.quote()),
-                    route: swap_action.routes[0].clone(),
-                },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                    ..swap_action.clone()
+                }),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![swap_action.swap_amount.clone()]);
@@ -2543,12 +2568,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2565,7 +2592,7 @@ mod integration_tests {
                     address: random,
                     amount: Coin::new(1u128, fin_pair.denoms.base()),
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![]);
@@ -2576,7 +2603,7 @@ mod integration_tests {
                     address: owner,
                     amount: Coin::new(1u128, fin_pair.denoms.base()),
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![swap_action.swap_amount.clone()]);
@@ -2587,12 +2614,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2605,7 +2634,7 @@ mod integration_tests {
                 condition: Condition::StrategyBalanceAvailable {
                     amount: Coin::new(1u128, fin_pair.denoms.base()),
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&[])
             .assert_swapped(vec![]);
@@ -2615,7 +2644,7 @@ mod integration_tests {
                 condition: Condition::StrategyBalanceAvailable {
                     amount: funds[0].clone(),
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![swap_action.swap_amount.clone()]);
@@ -2626,12 +2655,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2640,7 +2671,7 @@ mod integration_tests {
         )];
 
         let manager = harness.manager_addr.clone();
-        let strategy_action = Action::FinSwap(default_fin_swap_action(&harness));
+        let strategy_action = Action::Swap(default_swap_action(&harness));
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_action(strategy_action)
@@ -2653,7 +2684,7 @@ mod integration_tests {
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Archived,
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![]);
@@ -2665,7 +2696,7 @@ mod integration_tests {
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Active,
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![swap_action.swap_amount.clone()]);
@@ -2676,12 +2707,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2690,7 +2723,7 @@ mod integration_tests {
         )];
 
         let manager = harness.manager_addr.clone();
-        let strategy_action = Action::FinSwap(default_fin_swap_action(&harness));
+        let strategy_action = Action::Swap(default_swap_action(&harness));
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_action(strategy_action)
@@ -2703,7 +2736,7 @@ mod integration_tests {
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Archived,
                 },
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![]);
@@ -2715,7 +2748,7 @@ mod integration_tests {
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Archived,
                 })),
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![swap_action.swap_amount.clone()]);
@@ -2726,12 +2759,14 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
-        let swap_action = OptimalSwap {
+        let swap_action = Swap {
             swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
-            routes: vec![SwapRoute::Fin(harness.fin_addr.clone())],
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
         };
 
         let funds = vec![Coin::new(
@@ -2740,7 +2775,7 @@ mod integration_tests {
         )];
 
         let manager = harness.manager_addr.clone();
-        let strategy_action = Action::FinSwap(default_fin_swap_action(&harness));
+        let strategy_action = Action::Swap(default_swap_action(&harness));
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_action(strategy_action)
@@ -2761,7 +2796,7 @@ mod integration_tests {
                     ],
                     threshold: Threshold::All,
                 }),
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![]);
@@ -2781,7 +2816,7 @@ mod integration_tests {
                     ],
                     threshold: Threshold::Any,
                 }),
-                action: Box::new(Action::OptimalSwap(swap_action.clone())),
+                action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)
             .assert_swapped(vec![swap_action.swap_amount.clone()]);
@@ -2794,7 +2829,7 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(default_fin_swap_action(&harness))),
+            action: Box::new(Action::Swap(default_swap_action(&harness))),
             scheduler: Addr::unchecked("scheduler"),
             cadence: Cadence::Cron {
                 expr: "invalid cron".to_string(),
@@ -2840,10 +2875,10 @@ mod integration_tests {
     fn test_instantiate_schedule_action_with_time_cadence_due_executes_immediately() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
@@ -2867,10 +2902,10 @@ mod integration_tests {
     fn test_instantiate_schedule_action_with_time_cadence_not_due_executes_immediately() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
@@ -2897,10 +2932,10 @@ mod integration_tests {
     fn test_instantiate_schedule_action_with_block_cadence_due_executes_immediately() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Blocks {
                 interval: 60,
@@ -2924,10 +2959,10 @@ mod integration_tests {
     fn test_instantiate_schedule_action_with_block_cadence_not_due_executes_immediately() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Blocks {
                 interval: 60,
@@ -2954,10 +2989,10 @@ mod integration_tests {
     fn test_instantiate_schedule_action_with_cron_cadence_due_executes_immediately() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Cron {
                 expr: "0 0 * * * *".to_string(),
@@ -2981,10 +3016,10 @@ mod integration_tests {
     fn test_instantiate_schedule_action_with_cron_cadence_not_due_executes_immediately() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Cron {
                 expr: "0 0 * * * *".to_string(),
@@ -3010,10 +3045,10 @@ mod integration_tests {
     fn test_crank_time_schedule_sets_and_resets_triggers() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
@@ -3046,10 +3081,10 @@ mod integration_tests {
     fn test_schedule_action_without_execution_rebate_balance_skips() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
@@ -3078,10 +3113,10 @@ mod integration_tests {
     fn test_schedule_action_deposits_execution_rebate() {
         let mut harness = CalcTestApp::setup();
 
-        let swap_action = default_fin_swap_action(&harness);
+        let swap_action = default_swap_action(&harness);
 
         let action = Action::Schedule(Schedule {
-            action: Box::new(Action::FinSwap(swap_action.clone())),
+            action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),

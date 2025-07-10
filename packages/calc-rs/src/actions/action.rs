@@ -7,21 +7,20 @@ use crate::{
     actions::{
         conditional::Conditional,
         distribution::Distribution,
-        fin_swap::FinSwap,
         limit_order::LimitOrder,
         operation::{StatefulOperation, StatelessOperation},
-        optimal_swap::OptimalSwap,
         schedule::Schedule,
-        thor_swap::ThorSwap,
+        swap::Swap,
     },
     strategy::StrategyMsg,
 };
 
 #[cw_serde]
 pub enum Action {
-    FinSwap(FinSwap),
-    ThorSwap(ThorSwap),
-    OptimalSwap(OptimalSwap),
+    Swap(Swap),
+    // FinSwap(FinSwap),
+    // ThorSwap(ThorSwap),
+    // OptimalSwap(OptimalSwap),
     LimitOrder(LimitOrder),
     Distribute(Distribution),
     Schedule(Schedule),
@@ -32,10 +31,11 @@ pub enum Action {
 impl Action {
     pub fn size(&self) -> usize {
         match self {
+            Action::Swap(action) => action.routes.len() * 4 + 1,
             Action::Distribute(action) => action.destinations.len() + 1,
-            Action::FinSwap(_) => 4,
-            Action::ThorSwap(_) => 4,
-            Action::OptimalSwap(action) => action.routes.len() * 4,
+            // Action::FinSwap(_) => 4,
+            // Action::ThorSwap(_) => 4,
+            // Action::OptimalSwap(action) => action.routes.len() * 4,
             Action::LimitOrder(_) => 4,
             Action::Schedule(action) => action.action.size() + 1,
             Action::Conditional(action) => action.action.size() + action.condition.size() + 1,
@@ -47,9 +47,10 @@ impl Action {
 impl StatelessOperation for Action {
     fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         match self {
-            Action::FinSwap(action) => action.init(deps, env),
-            Action::ThorSwap(action) => action.init(deps, env),
-            Action::OptimalSwap(action) => action.init(deps, env),
+            Action::Swap(action) => action.init(deps, env),
+            // Action::FinSwap(action) => action.init(deps, env),
+            // Action::ThorSwap(action) => action.init(deps, env),
+            // Action::OptimalSwap(action) => action.init(deps, env),
             Action::LimitOrder(action) => action.init(deps, env),
             Action::Distribute(action) => action.init(deps, env),
             Action::Schedule(action) => action.init(deps, env),
@@ -60,9 +61,10 @@ impl StatelessOperation for Action {
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self {
-            Action::FinSwap(action) => action.execute(deps, env),
-            Action::ThorSwap(action) => action.execute(deps, env),
-            Action::OptimalSwap(action) => action.execute(deps, env),
+            Action::Swap(action) => action.execute(deps, env),
+            // Action::FinSwap(action) => action.execute(deps, env),
+            // Action::ThorSwap(action) => action.execute(deps, env),
+            // Action::OptimalSwap(action) => action.execute(deps, env),
             Action::LimitOrder(action) => action.execute(deps, env),
             Action::Distribute(action) => action.execute(deps, env),
             Action::Schedule(action) => action.execute(deps, env),
@@ -73,9 +75,10 @@ impl StatelessOperation for Action {
 
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         match self {
-            Action::FinSwap(action) => action.escrowed(deps, env),
-            Action::ThorSwap(action) => action.escrowed(deps, env),
-            Action::OptimalSwap(action) => action.escrowed(deps, env),
+            Action::Swap(action) => action.escrowed(deps, env),
+            // Action::FinSwap(action) => action.escrowed(deps, env),
+            // Action::ThorSwap(action) => action.escrowed(deps, env),
+            // Action::OptimalSwap(action) => action.escrowed(deps, env),
             Action::LimitOrder(action) => action.escrowed(deps, env),
             Action::Distribute(action) => action.escrowed(deps, env),
             Action::Schedule(action) => action.escrowed(deps, env),

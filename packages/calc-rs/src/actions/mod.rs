@@ -7,4 +7,5 @@ pub mod many;
 pub mod operation;
 pub mod optimal_swap;
 pub mod schedule;
+pub mod swap;
 pub mod thor_swap;

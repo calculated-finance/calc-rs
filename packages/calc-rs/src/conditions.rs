@@ -5,11 +5,7 @@ use cosmwasm_std::{Addr, Coin, Deps, Env, StdResult, Timestamp, Uint128};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
-    actions::{
-        fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
-        optimal_swap::{SwapAmountAdjustment, SwapRoute},
-        thor_swap::{get_expected_amount_out as get_expected_amount_out_thorchain, ThorSwap},
-    },
+    actions::swap::Swap,
     core::Threshold,
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
 };
@@ -24,11 +20,7 @@ pub struct CompositeCondition {
 pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
-    CanSwap {
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
-        route: SwapRoute,
-    },
+    CanSwap(Swap),
     LimitOrderFilled {
         pair_address: Addr,
         owner: Addr,
@@ -90,47 +82,7 @@ impl Condition {
                     order.filled >= minimum_filled_amount
                 })
             }
-            Condition::CanSwap {
-                swap_amount,
-                minimum_receive_amount,
-                route,
-            } => {
-                let expected_receive_amount = match route {
-                    SwapRoute::Fin(address) => get_expected_amount_out_fin(
-                        deps,
-                        &FinSwap {
-                            swap_amount: swap_amount.clone(),
-                            minimum_receive_amount: minimum_receive_amount.clone(),
-                            maximum_slippage_bps: 10_000,
-                            pair_address: address.clone(),
-                            adjustment: SwapAmountAdjustment::Fixed,
-                        },
-                    ),
-                    SwapRoute::Thorchain {
-                        streaming_interval,
-                        max_streaming_quantity,
-                        affiliate_code,
-                        affiliate_bps,
-                        previous_swap,
-                    } => get_expected_amount_out_thorchain(
-                        deps,
-                        env,
-                        &ThorSwap {
-                            swap_amount: swap_amount.clone(),
-                            minimum_receive_amount: minimum_receive_amount.clone(),
-                            maximum_slippage_bps: 10_000,
-                            adjustment: SwapAmountAdjustment::Fixed,
-                            streaming_interval: *streaming_interval,
-                            max_streaming_quantity: *max_streaming_quantity,
-                            affiliate_code: affiliate_code.clone(),
-                            affiliate_bps: *affiliate_bps,
-                            previous_swap: previous_swap.clone(),
-                        },
-                    ),
-                }?;
-
-                expected_receive_amount.amount >= minimum_receive_amount.amount
-            }
+            Condition::CanSwap(swap) => swap.best_route(deps, env)?.is_some(),
             Condition::BalanceAvailable { address, amount } => {
                 let balance = deps.querier.query_balance(address, amount.denom.clone())?;
                 balance.amount >= amount.amount
@@ -174,60 +126,6 @@ impl Condition {
             },
         })
     }
-
-    pub fn description(&self, env: &Env) -> String {
-        match self {
-            Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {timestamp}, current time: {}", env.block.time),
-            Condition::BlocksCompleted(height) => format!("blocks completed: {height}, current height: {}", env.block.height),
-            Condition::CanSwap {
-                swap_amount,
-                minimum_receive_amount,
-                ..
-            } => format!(
-                "can perform swap: swap_amount={swap_amount}, minimum_receive_amount={minimum_receive_amount}"
-            ),
-            Condition::LimitOrderFilled {
-                pair_address,
-                owner,
-                side,
-                price,
-                ..
-            } => format!(
-                "limit order filled: pair_address={pair_address}, owner={owner}, side={side:?}, price={price}"
-            ),
-            Condition::BalanceAvailable { address, amount } => format!(
-                "balance available: address={address}, amount={amount}"
-            ),
-            Condition::StrategyBalanceAvailable { amount } => {
-                format!("balance available: address={}, amount={}", env.contract.address, amount)
-            }
-            Condition::StrategyStatus {
-                contract_address,
-                status,
-                ..
-            } => format!(
-                "strategy ({contract_address}) is in status: {status:?}"
-            ),
-            Condition::Not(condition) => format!("not ({})", condition.description(env)),
-            Condition::Composite(CompositeCondition {
-                conditions,
-                threshold,
-            }) => {
-                let conditions_desc: Vec<String> = conditions
-                    .iter()
-                    .map(|c| c.description(env))
-                    .collect();
-                let threshold_desc = match threshold {
-                    Threshold::All => "all",
-                    Threshold::Any => "any",
-                };
-                format!(
-                    "composite condition ({threshold_desc}): [{}]",
-                    conditions_desc.join(", ")
-                )
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -241,7 +139,10 @@ mod conditions_tests {
     };
     use rujira_rs::fin::{OrderResponse, Price, Side, SimulationResponse};
 
-    use crate::{manager::StrategyHandle, manager::StrategyStatus};
+    use crate::{
+        actions::swap::{FinRoute, SwapAmountAdjustment, SwapRoute},
+        manager::{StrategyHandle, StrategyStatus},
+    };
 
     #[test]
     fn timestamp_elapsed_check() {
@@ -341,27 +242,39 @@ mod conditions_tests {
             ))
         });
 
-        assert!(!Condition::CanSwap {
+        assert!(!Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(101u128, "rune"),
-            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
-        }
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: Addr::unchecked("fin_pair")
+            })],
+            maximum_slippage_bps: 100,
+            adjustment: SwapAmountAdjustment::Fixed
+        })
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
 
-        assert!(Condition::CanSwap {
+        assert!(!Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(100u128, "rune"),
-            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
-        }
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: Addr::unchecked("fin_pair")
+            })],
+            maximum_slippage_bps: 100,
+            adjustment: SwapAmountAdjustment::Fixed
+        })
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
 
-        assert!(Condition::CanSwap {
+        assert!(!Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(99u128, "rune"),
-            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
-        }
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: Addr::unchecked("fin_pair")
+            })],
+            maximum_slippage_bps: 100,
+            adjustment: SwapAmountAdjustment::Fixed
+        })
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
     }
