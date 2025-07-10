@@ -79,6 +79,23 @@ pub enum OrderPriceStrategy {
     },
 }
 
+impl OrderPriceStrategy {
+    pub fn should_reset(&self, current_price: Decimal, new_price: Decimal) -> bool {
+        match self {
+            OrderPriceStrategy::Fixed(_) => current_price != new_price,
+            OrderPriceStrategy::Offset { tolerance, .. } => {
+                let price_delta = current_price.abs_diff(new_price);
+                match tolerance {
+                    Offset::Exact(value) => price_delta > *value,
+                    Offset::Percent(percent) => {
+                        current_price.saturating_mul(Decimal::percent(*percent)) < price_delta
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cw_serde]
 pub struct UnsetOrder {
     remaining: Uint128,
@@ -168,6 +185,22 @@ impl LimitOrderState<UnsetOrder> {
         let final_offer = min(available, self.config.max_bid_amount.unwrap_or(available));
         let funding = min(balance.amount + self.state.withdrawing, final_offer);
 
+        if funding.is_zero() && !self.config.needs_reset(price) {
+            return Ok(LimitOrderState {
+                config: self.config,
+                state: SettingOrder {
+                    price,
+                    offer: Uint128::zero(),
+                    messages: vec![],
+                    events: vec![LimitOrderEvent::SetOrderSkipped {
+                        reason: "No additional funding available and no price reset needed"
+                            .to_string(),
+                    }
+                    .into()],
+                },
+            });
+        }
+
         let set_order_msg = StrategyMsg::with_payload(
             Contract(self.config.pair_address.clone()).call(
                 to_json_binary(&ExecuteMsg::Order((
@@ -243,7 +276,8 @@ impl LimitOrderState<SetOrder> {
                     self.config.get_pair(deps)?.denoms.ask(&self.config.side),
                 )],
                 swapped: vec![Coin::new(
-                    self.state.offer - self.state.remaining,
+                    // Weird if this is smaller than 0, but we handle it anyway
+                    self.state.offer.saturating_sub(self.state.remaining),
                     self.config.bid_denom.clone(),
                 )],
                 ..Statistics::default()
@@ -271,20 +305,8 @@ impl LimitOrderState<SetOrder> {
     pub fn saturating_withdraw(self, deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
         let new_price = self.config.get_new_price(deps)?;
 
-        let should_withdraw = self.state.filled.gt(&Uint128::zero())
-            || match self.config.strategy.clone() {
-                OrderPriceStrategy::Offset { tolerance, .. } => {
-                    let price_delta = new_price.abs_diff(self.state.price);
-                    let tolerance_threshold = match tolerance {
-                        Offset::Exact(value) => value,
-                        Offset::Percent(percent) => {
-                            self.state.price.saturating_mul(Decimal::percent(percent))
-                        }
-                    };
-                    price_delta > tolerance_threshold
-                }
-                OrderPriceStrategy::Fixed(_) => new_price != self.state.price,
-            };
+        let should_withdraw =
+            self.state.filled.gt(&Uint128::zero()) || self.config.needs_reset(new_price);
 
         if should_withdraw {
             return self.withdraw(deps);
@@ -374,6 +396,14 @@ impl LimitOrder {
                 }
             }
         })
+    }
+
+    fn needs_reset(&self, new_price: Decimal) -> bool {
+        if let Some(existing_order) = &self.current_order {
+            self.strategy.should_reset(existing_order.price, new_price)
+        } else {
+            true
+        }
     }
 
     fn execute_unsafe(
@@ -542,6 +572,7 @@ impl StatefulOperation for LimitOrder {
             match existing_order.refresh(deps, env, &self) {
                 Ok(_) => self,
                 Err(_) => LimitOrder {
+                    // Wipe the cached order if it does not exist
                     current_order: None,
                     ..self
                 },

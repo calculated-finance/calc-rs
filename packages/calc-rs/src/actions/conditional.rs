@@ -62,9 +62,9 @@ impl StatelessOperation for Conditional {
             ));
         }
 
-        if self.conditions.len() > 10 {
+        if self.conditions.iter().fold(0, |acc, c| acc + c.size()) + self.action.size() > 20 {
             return Err(StdError::generic_err(
-                "Conditional conditions cannot exceed 10",
+                "Conditional action exceeds maximum size",
             ));
         }
 

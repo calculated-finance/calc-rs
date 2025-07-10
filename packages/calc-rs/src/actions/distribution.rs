@@ -103,12 +103,16 @@ impl Distribution {
         for destination in self.destinations.clone() {
             let denom_shares = balances
                 .iter()
-                .map(|coin| {
-                    Coin::new(
-                        coin.amount
-                            .mul_floor(Decimal::from_ratio(destination.shares, total_shares)),
-                        coin.denom.clone(),
-                    )
+                .flat_map(|coin| {
+                    let shares_amount = coin
+                        .amount
+                        .mul_floor(Decimal::from_ratio(destination.shares, total_shares));
+
+                    if shares_amount.is_zero() {
+                        return None;
+                    }
+
+                    Some(Coin::new(shares_amount, coin.denom.clone()))
                 })
                 .collect::<Vec<_>>();
 

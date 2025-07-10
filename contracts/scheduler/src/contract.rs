@@ -108,9 +108,10 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
             start_after,
         } => to_json_binary(&TRIGGERS.owned(deps.storage, owner, limit, start_after)),
         SchedulerQueryMsg::Filtered { filter, limit } => {
-            to_json_binary(&TRIGGERS.filtered(deps.storage, filter, limit)?)
+            let filtered = TRIGGERS.filtered(deps.storage, filter, limit)?;
+            to_json_binary(&filtered)
         }
-        SchedulerQueryMsg::CanExecute { id } => to_json_binary(
+        SchedulerQueryMsg::CanExecute(id) => to_json_binary(
             &TRIGGERS
                 .load(deps.storage, id)?
                 .condition

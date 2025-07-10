@@ -54,5 +54,5 @@ pub enum SchedulerQueryMsg {
         limit: Option<usize>,
     },
     #[returns(bool)]
-    CanExecute { id: u64 },
+    CanExecute(u64),
 }

@@ -266,8 +266,9 @@ pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
             if let Ok(payload) = payload {
                 match reply.result {
                     SubMsgResult::Ok(_) => {
-                        STATS.update(deps.storage, |s| s.update(payload.statistics.clone()))?;
-                        Ok(response.add_events(payload.decorated_events("succeeded")))
+                        let events = payload.decorated_events("succeeded");
+                        STATS.update(deps.storage, |s| s.update(payload.statistics))?;
+                        Ok(response.add_events(events))
                     }
                     SubMsgResult::Err(err) => Ok(response
                         .add_events(payload.decorated_events("failed"))

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, vec};
 
 use calc_rs::{
-    manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle},
+    manager::{Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle},
     scheduler::{
         ConditionFilter, SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger,
     },
@@ -229,11 +229,12 @@ impl CalcTestApp {
         &mut self,
         label: &str,
         strategy: Strategy<Json>,
+        affiliates: Vec<Affiliate>,
         funds: &[Coin],
     ) -> AnyResult<Addr> {
         let msg = ManagerExecuteMsg::InstantiateStrategy {
             label: label.to_string(),
-            affiliates: vec![],
+            affiliates,
             strategy,
         };
 

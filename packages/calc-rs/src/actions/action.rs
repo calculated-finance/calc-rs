@@ -119,10 +119,16 @@ impl StatefulOperation for Action {
 
     fn commit(self, deps: Deps, env: &Env) -> Action {
         match self {
-            Action::LimitOrder(action) => action.commit(deps, env),
-            Action::Conditional(conditional) => conditional.action.commit(deps, env),
+            Action::LimitOrder(limit_order) => limit_order.commit(deps, env),
+            Action::Conditional(conditional) => Action::Conditional(Conditional {
+                action: Box::new(conditional.action.commit(deps, env)),
+                ..conditional
+            }),
+            Action::Schedule(schedule) => Action::Schedule(Schedule {
+                action: Box::new(schedule.action.commit(deps, env)),
+                ..schedule
+            }),
             Action::Many(actions) => actions.commit(deps, env),
-            Action::Schedule(schedule) => schedule.action.commit(deps, env),
             _ => self,
         }
     }

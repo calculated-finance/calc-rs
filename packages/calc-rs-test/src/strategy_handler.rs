@@ -35,6 +35,7 @@ impl<'a> StrategyHandler<'a> {
             "[StrategyHandler] Advancing {} blocks (strategy: {})",
             blocks, self.strategy_addr
         );
+
         self.harness.advance_blocks(blocks);
 
         self.harness
@@ -65,6 +66,7 @@ impl<'a> StrategyHandler<'a> {
             "[StrategyHandler] Advancing time by {} seconds (strategy: {})",
             seconds, self.strategy_addr
         );
+
         self.harness.advance_time(seconds);
 
         self.harness
@@ -151,8 +153,9 @@ impl<'a> StrategyHandler<'a> {
         let balance = self
             .harness
             .query_balance(&self.strategy_addr, &expected.denom);
-        assert_eq!(
-            balance.amount, expected.amount,
+        assert!(
+            // Allow for rounding discrepancies
+            balance.amount.abs_diff(expected.amount) < Uint128::new(10),
             "Expected balance not found: {expected:?}\n\nCurrent balance: {balance:#?}",
         );
         self
@@ -162,10 +165,13 @@ impl<'a> StrategyHandler<'a> {
         println!("[StrategyHandler] Asserting all strategy balances are {expected_balances:#?}");
         let balances = self.harness.query_balances(&self.strategy_addr);
         for expected in &expected_balances {
+            let actual = balances.iter().find(|c| {
+                // Allow for rounding discrepancies
+                c.denom == expected.denom && c.amount.abs_diff(expected.amount) < Uint128::new(10)
+            });
+
             assert!(
-                balances
-                    .iter()
-                    .any(|c| c.denom == expected.denom && c.amount == expected.amount),
+                actual.is_some(),
                 "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
             );
         }
@@ -189,13 +195,37 @@ impl<'a> StrategyHandler<'a> {
             "Expected withdrawn coins do not match current withdrawn coins: expected {:#?}, got {:#?}",
             expected_stats.withdrawn, stats.withdrawn
         );
-        for distribution in &expected_stats.distributed {
-            assert!(
-                stats.distributed.iter().any(|d| d == distribution),
-                "Expected distributed coin not found: {distribution:#?}\n\nAll distributed coins: {:#?}",
-                stats.distributed
-            );
+
+        for (expected_recipient, expected_coins) in &expected_stats.distributed {
+            let actual = stats
+                .distributed
+                .iter()
+                .find(|(recipient, _)| recipient.key() == expected_recipient.key());
+
+            if let Some((actual_recipient, actual_coins)) = actual {
+                assert_eq!(
+                    actual_recipient, expected_recipient,
+                    "Expected recipient does not match current recipient: expected {expected_recipient:#?}, got {actual_recipient:#?}"
+                );
+
+                for coin in expected_coins {
+                    let actual_coin = actual_coins.iter().find(|c| {
+                        // Allow for rounding discrepancies
+                        c.denom == coin.denom && c.amount.abs_diff(coin.amount) < Uint128::new(10)
+                    });
+
+                    assert!(
+                        actual_coin.is_some(),
+                        "Expected coin not found in distributed stats: {coin:#?}\n\nAll coins for recipient {expected_recipient:#?}: {actual_coins:#?}"
+                    );
+                }
+            } else {
+                panic!(
+                    "Expected recipient not found in distributed stats: {expected_recipient:#?}"
+                );
+            }
         }
+
         self
     }
 

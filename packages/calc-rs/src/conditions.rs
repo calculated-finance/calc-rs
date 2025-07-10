@@ -222,6 +222,23 @@ impl Condition {
             }
         }
     }
+
+    pub fn size(&self) -> usize {
+        match self {
+            Condition::TimestampElapsed(_) => 1,
+            Condition::BlocksCompleted(_) => 1,
+            Condition::CanSwap { .. } => 1,
+            Condition::LimitOrderFilled { .. } => 1,
+            Condition::BalanceAvailable { .. } => 1,
+            Condition::StrategyBalanceAvailable { .. } => 1,
+            Condition::StrategyStatus { .. } => 1,
+            Condition::Not(condition) => condition.size() + 1,
+            Condition::Composite(CompositeCondition {
+                conditions,
+                threshold: _,
+            }) => conditions.iter().map(|c| c.size()).sum::<usize>() + 1,
+        }
+    }
 }
 
 #[cfg(test)]

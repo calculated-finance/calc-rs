@@ -46,9 +46,9 @@ impl Schedule {
         env: &Env,
     ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.cadence.is_due(env)? {
-            let (mut messages, events, action) = self.action.execute(deps, env);
-            let next = self.cadence.next(env)?;
-            let condition = next.into_condition(env)?;
+            let (mut messages, mut events, action) = self.action.execute(deps, env);
+
+            let condition = self.cadence.into_condition(env)?;
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
@@ -58,16 +58,21 @@ impl Schedule {
             messages.push(StrategyMsg::with_payload(
                 create_trigger_msg,
                 StrategyMsgPayload {
-                    events: vec![ScheduleEvent::CreateTrigger { condition }.into()],
+                    events: vec![ScheduleEvent::CreateTrigger {
+                        condition: condition.clone(),
+                    }
+                    .into()],
                     ..StrategyMsgPayload::default()
                 },
             ));
+
+            events.push(ScheduleEvent::CreateTrigger { condition }.into());
 
             Ok((
                 messages,
                 events,
                 Action::Schedule(Schedule {
-                    cadence: next,
+                    cadence: self.cadence.next(env)?,
                     action: Box::new(action),
                     ..self
                 }),
@@ -84,6 +89,10 @@ impl Schedule {
                 reason: format!("Schedule not due: {:?}", self.cadence.clone()),
             };
 
+            let trigger_created_event = ScheduleEvent::CreateTrigger {
+                condition: condition.clone(),
+            };
+
             Ok((
                 vec![StrategyMsg::with_payload(
                     create_trigger_msg,
@@ -92,7 +101,7 @@ impl Schedule {
                         ..StrategyMsgPayload::default()
                     },
                 )],
-                vec![skipped_event.into()],
+                vec![skipped_event.into(), trigger_created_event.into()],
                 Action::Schedule(self),
             ))
         }
@@ -112,7 +121,7 @@ impl StatelessOperation for Schedule {
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((action, messages, events)) => (action, messages, events),
+            Ok((messages, events, action)) => (messages, events, action),
             Err(err) => (
                 vec![],
                 vec![ScheduleEvent::ExecutionSkipped {
