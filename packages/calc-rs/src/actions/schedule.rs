@@ -5,7 +5,10 @@ use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResul
 use cron::Schedule as CronSchedule;
 
 use crate::{
-    actions::{action::Action, operation::Operation},
+    actions::{
+        action::Action,
+        operation::{StatefulOperation, StatelessOperation},
+    },
     cadence::Cadence,
     conditions::Condition,
     core::Contract,
@@ -46,9 +49,9 @@ impl Schedule {
         env: &Env,
     ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.cadence.is_due(env)? {
-            let (mut messages, events, action) = self.action.execute(deps, env);
-            let next = self.cadence.next(env)?;
-            let condition = next.into_condition(env)?;
+            let (mut messages, mut events, action) = self.action.execute(deps, env);
+
+            let condition = self.cadence.into_condition(env)?;
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
@@ -58,16 +61,21 @@ impl Schedule {
             messages.push(StrategyMsg::with_payload(
                 create_trigger_msg,
                 StrategyMsgPayload {
-                    events: vec![ScheduleEvent::CreateTrigger { condition }.into()],
+                    events: vec![ScheduleEvent::CreateTrigger {
+                        condition: condition.clone(),
+                    }
+                    .into()],
                     ..StrategyMsgPayload::default()
                 },
             ));
+
+            events.push(ScheduleEvent::CreateTrigger { condition }.into());
 
             Ok((
                 messages,
                 events,
                 Action::Schedule(Schedule {
-                    cadence: next,
+                    cadence: self.cadence.next(env)?,
                     action: Box::new(action),
                     ..self
                 }),
@@ -84,6 +92,10 @@ impl Schedule {
                 reason: format!("Schedule not due: {:?}", self.cadence.clone()),
             };
 
+            let trigger_created_event = ScheduleEvent::CreateTrigger {
+                condition: condition.clone(),
+            };
+
             Ok((
                 vec![StrategyMsg::with_payload(
                     create_trigger_msg,
@@ -92,14 +104,14 @@ impl Schedule {
                         ..StrategyMsgPayload::default()
                     },
                 )],
-                vec![skipped_event.into()],
+                vec![skipped_event.into(), trigger_created_event.into()],
                 Action::Schedule(self),
             ))
         }
     }
 }
 
-impl Operation for Schedule {
+impl StatelessOperation for Schedule {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if let Cadence::Cron { expr, .. } = self.cadence.clone() {
             CronSchedule::from_str(&expr).map_err(|e| {
@@ -112,7 +124,7 @@ impl Operation for Schedule {
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((action, messages, events)) => (action, messages, events),
+            Ok((messages, events, action)) => (messages, events, action),
             Err(err) => (
                 vec![],
                 vec![ScheduleEvent::ExecutionSkipped {
@@ -127,21 +139,51 @@ impl Operation for Schedule {
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::new())
     }
+}
 
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
-        Ok(Coins::default())
+impl StatefulOperation for Schedule {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let (messages, events, action) = self.action.commit(deps, env)?;
+        Ok((
+            messages,
+            events,
+            Action::Schedule(Schedule {
+                action: Box::new(action),
+                ..self
+            }),
+        ))
+    }
+
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+        self.action.balances(deps, env, denoms)
     }
 
     fn withdraw(
         self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
+        deps: Deps,
+        env: &Env,
+        desired: &HashSet<String>,
     ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::Schedule(self)))
+        let (messages, events, action) = self.action.withdraw(deps, env, desired)?;
+        Ok((
+            messages,
+            events,
+            Action::Schedule(Schedule {
+                action: Box::new(action),
+                ..self
+            }),
+        ))
     }
 
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::Schedule(self)))
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let (messages, events, action) = self.action.cancel(deps, env)?;
+        Ok((
+            messages,
+            events,
+            Action::Schedule(Schedule {
+                action: Box::new(action),
+                ..self
+            }),
+        ))
     }
 }

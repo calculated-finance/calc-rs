@@ -77,7 +77,16 @@ impl Stargate for RujiraStargate {
         ExecC: CustomMsg + DeserializeOwned + 'static,
         QueryC: CustomQuery + DeserializeOwned + 'static,
     {
-        anyhow::bail!("Unexpected any execute: msg={:?} from {}", msg, sender)
+        match msg.type_url.clone().as_str() {
+            "/types.MsgDeposit" => Ok(AppResponse {
+                events: vec![],
+                data: None,
+            }),
+
+            _ => {
+                anyhow::bail!("Unexpected any execute: msg={:?} from {}", msg, sender)
+            }
+        }
     }
 
     fn query_grpc(

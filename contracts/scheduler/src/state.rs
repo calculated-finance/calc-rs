@@ -4,6 +4,7 @@ use calc_rs::{
 };
 use cosmwasm_std::{Addr, Coin, Decimal, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
+use rujira_rs::fin::Price;
 
 pub const MANAGER: Item<Addr> = Item::new("manager");
 pub const TRIGGER_COUNTER: Item<u64> = Item::new("trigger_counter");
@@ -175,8 +176,16 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
             limit_order_pair_rate: MultiIndex::new(
                 |_, t| match t.condition.clone() {
                     Condition::LimitOrderFilled {
-                        pair_address, rate, ..
-                    } => (pair_address, rate.to_string()),
+                        pair_address,
+                        price,
+                        ..
+                    } => (
+                        pair_address,
+                        match price {
+                            Price::Fixed(rate) => rate.to_string(),
+                            _ => Decimal::zero().to_string(),
+                        },
+                    ),
                     _ => (Addr::unchecked(""), Decimal::zero().to_string()),
                 },
                 "triggers",

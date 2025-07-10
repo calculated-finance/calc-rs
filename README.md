@@ -1,130 +1,47 @@
-# CALC Protocol Smart Contracts
-
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-
-This repository contains the core smart contracts for the CALC protocol, a decentralized application for creating, managing, and executing complex, automated trading strategies on the Rujira blockchain.
+# CALC Protocol
 
 ## Overview
 
-The CALC protocol provides a framework for building automated trading strategies on the Rujira blockchain. It features a composable, modular architecture designed for customization and extensibility.
+The CALC protocol is a decentralized framework for creating, managing, and automating on-chain trading strategies. It is built around three core contracts that provide a clear separation of concerns:
 
-At its core, a user defines a **Strategy** as a series of interconnected **Actions**, which are the fundamental units of work. These Actions, implemented via the `Operation` trait, can be atomic operations or complex, nested behaviors. Each Action is gated by **Conditions** (e.g., time, price, balance), ensuring that operations only proceed when specific criteria are met. Strategies are then executed automatically by the protocol's interconnected smart contracts, enabling workflows such as Time-Weighted Average Price (TWAP) orders, Dollar-Cost Averaging (DCA), and dynamic portfolio rebalancing.
+- **Strategy:** The runtime environment for a single, declarative trading strategy.
+- **Manager:** A factory and registry for creating and managing multiple strategy contracts.
+- **Scheduler:** A decentralized automation engine that executes strategies based on predefined conditions.
 
-## Architecture
+## How It Works
 
-The protocol follows a hub-and-spoke model, with a central `Manager` contract orchestrating the lifecycle of various modular, special-purpose contracts.
+The protocol enables users to define trading strategies as a tree of `Action`s. This declarative approach separates the user's desired actions (the _what_) from the contract's execution logic (the _how_).
 
-```
-+-------------------+       +------------------+
-|       User        |------>|     Manager      |
-+-------------------+       +--------+---------+
-                                     |
-                                     v
-+-------------------+       +--------+---------+       +------------------+
-|     Scheduler     |<----->|     Strategy     |<----->|    Exchanger     |
-+---------+---------+       +--------+---------+       +------------------+
-          ^                          |
-          |                          v
-+---------+---------+       +--------+--------+
-|      Executor     |       |   Recipients    |
-+-------------------+       +-----------------+
-```
+### 1. Defining a Strategy
 
-### Contract Responsibilities
+A strategy is defined using a recursive `Action` enum, which can represent:
 
-- **Manager (`manager`)**: The central hub of the protocol.
-  - **Factory**: Instantiates new `Strategy` contracts using a predictable address (`instantiate2`).
-  - **Registry**: Maintains a directory of all strategies, indexed by owner and status for efficient querying.
-  - **Lifecycle Control**: Manages the high-level status of strategies (e.g., `Active`, `Paused`, `Archived`).
-  - **Affiliate Management**: Handles the registration and fee configuration for protocol affiliates.
+- **`Swap`:** A token swap.
+- **`Distribute`:** Distributing funds to multiple destinations.
+- **`LimitOrder`:** Placing and managing a limit order on a DEX.
+- **`Schedule`:** Executing another `Action` on a recurring basis.
+- **`Conditional`:** Executing another `Action` only when a specific `Condition` is met.
+- **`Many`:** A container for executing multiple `Action`s in sequence.
 
-- **Strategy (`strategy`)**: Manages an individual user's automated workflow.
-  - **Execution Engine**: Contains the core logic for a single strategy, defined as a tree of `Action`s.
-  - **State Machine**: Manages the state of the user's strategy, updating it as actions are executed.
-  - **Fund Custody**: Holds the funds required for the strategy's operations.
-  - **Composability**: Interacts with other modules like the `Scheduler` and `Exchanger` to execute its defined actions.
+### 2. Instantiating a Strategy
 
-- **Scheduler (`scheduler`)**: The protocol's decentralized cron job service.
-  - **Trigger Registration**: Allows `Strategy` contracts to register `Triggers`—a message to be executed when a specific set of on-chain `Condition`s are met.
-  - **Condition Checking**: When prompted by an external keeper, it checks if any registered triggers are ready to be executed.
-  - **Execution**: Dispatches the stored message for any valid trigger. This is the mechanism that enables time-based and recurring actions.
+Strategies are instantiated on-chain via the `manager` contract. The `manager` acts as a factory, creating a new, isolated `strategy` contract for each unique strategy definition.
 
-- **Exchanger (`exchanger`)**: A DEX aggregator that provides a unified interface for token swaps.
-  - **Abstraction**: Hides the complexity of interacting with various underlying DEX protocols (e.g., FIN, THORChain).
-  - **Quote Aggregation**: Provides a query to find the best possible swap rate across all integrated liquidity sources.
-  - **Smart Routing**: Executes swaps against the optimal liquidity source to ensure the best execution price.
+### 3. Executing a Strategy
 
-### Core Concepts: Actions & Conditions
+Strategies can be executed in two ways:
 
-The CALC protocol utilizes a composable `Action` and `Condition` system.
+- **Manually:** Anyone can call the `ExecuteStrategy` message on the `manager` contract to trigger a strategy's execution.
+- **Automatically:** The `scheduler` contract automates execution. Users create `Triggers` that link a `Condition` to a strategy. Keepers are incentivized to monitor the `scheduler` and execute these triggers when their conditions are met, creating a decentralised and reliable automation system.
 
-- **`Condition`**: A simple, readable enum that defines a specific on-chain state that must be true for an action to proceed. Examples include:
-  - `TimestampElapsed(timestamp)`: Checks if a specific timestamp has been reached.
-  - `BlocksCompleted(height)`: Verifies if a certain block height has been surpassed.
-  - `BalanceAvailable { ... }`: Ensures a minimum balance of a specific token is available.
-  - `LimitOrderFilled { ... }`: Confirms if a previously placed limit order has been filled.
-  - `StrategyStatus { ... }`: Checks the current lifecycle status of another strategy.
-  - `Compound { ... }`: Combines multiple conditions with logical `AND` (`All`) or `OR` (`Any`) operators.
+### 4. State Management
 
-- **`Action`**: The core building block of a strategy. It is a versatile enum that implements the `Operation` trait, providing a consistent interface for initialization, execution, and state management.
-  - **`Check(Condition)`**: Evaluates a given `Condition`.
-  - **`Crank(Schedule)`**: Manages scheduled executions, allowing for recurring actions based on block height, time, or cron expressions.
-  - **`Perform(Swap)`**: Executes a token swap via the `Exchanger` contract.
-  - **`Set(Order)`**: Places or modifies a limit order on a FIN market.
-  - **`DistributeTo(Recipients)`**: Distributes funds to predefined recipients.
-  - **`Exhibit(Behaviour)`**: A powerful composite action that groups multiple `Action`s.
+The `strategy` contract is stateful and uses a two-phase commit process to manage state transitions. This ensures that the execution of all actions is atomic and that the strategy is always in a consistent state, even when interacting with external protocols.
 
-- **`Behaviour`**: A composite `Action` that groups a vector of other `Action`s. It includes a `Threshold` (`All` or `Any`), determining whether all nested actions must succeed or if any one is sufficient for the `Behaviour` to be considered successful. This supports complex sequential or conditional workflows.
+## Core Features
 
-### Control Flow Paradigms
-
-The CALC protocol employs several control flow paradigms to enable sophisticated automated strategies:
-
-1.  **Event-Driven Execution**: The system responds to external messages (e.g., `ExecuteStrategy` from the Manager) and internal events (e.g., a `Scheduler` trigger firing).
-2.  **Conditional Gating**: `Condition`s are extensively used to ensure actions only proceed when specific criteria are met, preventing unwanted or invalid operations.
-3.  **Hierarchical Composition**: The `Action::Exhibit(Behaviour)` construct allows for building complex, nested execution flows. A `Behaviour` can contain other `Behaviour`s, creating a tree-like structure of operations.
-4.  **Stateful Operations**: Strategies maintain their internal state (`StrategyConfig`, `Statistics`), which is updated by executed actions.
-5.  **Inter-Contract Communication**: Strategies interact with other contracts (Exchanger, FIN market, Scheduler) using `SubMsg`s, enabling asynchronous operations and handling of replies for result processing (e.g., updating statistics after a swap).
-6.  **Lifecycle Management**: The Manager contract provides clear lifecycle states for strategies (Active, Paused, Archived), and state transitions can trigger specific actions (e.g., canceling open orders when archiving).
-
-This combination of modular `Action`s, robust `Condition`s, and flexible control flow mechanisms allows for the creation of highly sophisticated and adaptive automated trading strategies.
-
-## Getting Started
-
-### Prerequisites
-
-- [Rust & Cargo](https://www.rust-lang.org/tools/install)
-- [CosmWasm](https://docs.cosmwasm.com/docs/1.0/getting-started/installation)
-- [Node.js](https://nodejs.org/en/download/)
-- [bun](https://bun.sh/docs/installation)
-
-### Build & Test
-
-1.  **Install dependencies and build contracts:**
-
-    ```bash
-    cargo build
-    ```
-
-2.  **Run unit and integration tests:**
-
-    ```bash
-    cargo test
-    ```
-
-3.  **Generate TypeScript types from contract schemas:**
-    This command is used by the testing environment and any off-chain clients to ensure type safety.
-
-    ```bash
-    bun types
-    ```
-
-4.  **Compile contracts to Wasm:**
-    This produces the optimized `.wasm` files ready for deployment.
-    ```bash
-    bun compile
-    ```
-
-## License
-
-This project is licensed under the Apache License 2.0. See the [LICENSE](./LICENSE) file for details.
+- **Declarative Strategies:** Define strategies by composing modular `Action` blocks, separating the logic from the execution, enabling complex trading strategies to be built easily.
+- **Automated Execution:** The `scheduler` contract provides decentralized automation, incentivizing third-party keepers to execute strategies when their conditions are met.
+- **Isolated State:** Each strategy is its own contract, ensuring its state and funds are isolated from others.
+- **Centralized Management:** The `manager` contract acts as a central registry, providing a single point for instantiating and discovering strategies.
+- **Flexible Conditions:** Strategies can be executed based on time, events, or other conditions, allowing for complex trading strategies that adapt to market conditions.

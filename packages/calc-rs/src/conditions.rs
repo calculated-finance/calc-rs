@@ -1,39 +1,32 @@
 use std::vec;
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, Timestamp};
+use cosmwasm_std::{Addr, Coin, Deps, Env, StdResult, Timestamp, Uint128};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
-    actions::{
-        fin_swap::{get_expected_amount_out as get_expected_amount_out_fin, FinSwap},
-        optimal_swap::{SwapAmountAdjustment, SwapRoute},
-        thor_swap::{get_expected_amount_out as get_expected_amount_out_thorchain, ThorSwap},
-    },
+    actions::swaps::swap::Swap,
+    core::Threshold,
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
 };
 
 #[cw_serde]
-pub enum Threshold {
-    All,
-    Any,
+pub struct CompositeCondition {
+    pub conditions: Vec<Condition>,
+    pub threshold: Threshold,
 }
 
 #[cw_serde]
 pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
-    CanSwap {
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
-        route: SwapRoute,
-    },
+    CanSwap(Swap),
     LimitOrderFilled {
         pair_address: Addr,
         owner: Addr,
         side: Side,
         price: Price,
-        rate: Decimal,
+        minimum_filled_amount: Option<Uint128>,
     },
     BalanceAvailable {
         address: Addr,
@@ -47,11 +40,30 @@ pub enum Condition {
         contract_address: Addr,
         status: StrategyStatus,
     },
+    Not(Box<Condition>),
+    Composite(CompositeCondition),
 }
 
 impl Condition {
-    pub fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
+    pub fn size(&self) -> usize {
         match self {
+            Condition::TimestampElapsed(_) => 1,
+            Condition::BlocksCompleted(_) => 1,
+            Condition::CanSwap { .. } => 2,
+            Condition::LimitOrderFilled { .. } => 2,
+            Condition::BalanceAvailable { .. } => 1,
+            Condition::StrategyBalanceAvailable { .. } => 1,
+            Condition::StrategyStatus { .. } => 2,
+            Condition::Not(condition) => condition.size(),
+            Condition::Composite(CompositeCondition {
+                conditions,
+                threshold: _,
+            }) => conditions.iter().map(|c| c.size()).sum::<usize>() + 1,
+        }
+    }
+
+    pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {
+        Ok(match self {
             Condition::TimestampElapsed(timestamp) => env.block.time > *timestamp,
             Condition::BlocksCompleted(height) => env.block.height > *height,
             Condition::LimitOrderFilled {
@@ -59,83 +71,27 @@ impl Condition {
                 owner,
                 side,
                 price,
-                ..
+                minimum_filled_amount,
             } => {
                 let order = deps.querier.query_wasm_smart::<OrderResponse>(
                     pair_address,
                     &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
-                );
+                )?;
 
-                if let Ok(order) = order {
-                    order.remaining.is_zero()
-                } else {
-                    false
-                }
+                minimum_filled_amount.map_or(order.remaining.is_zero(), |minimum_filled_amount| {
+                    order.filled >= minimum_filled_amount
+                })
             }
-            Condition::CanSwap {
-                swap_amount,
-                minimum_receive_amount,
-                route,
-            } => {
-                let expected_receive_amount = match route {
-                    SwapRoute::Fin(address) => get_expected_amount_out_fin(
-                        deps,
-                        &FinSwap {
-                            swap_amount: swap_amount.clone(),
-                            minimum_receive_amount: minimum_receive_amount.clone(),
-                            maximum_slippage_bps: 10_000,
-                            pair_address: address.clone(),
-                            adjustment: SwapAmountAdjustment::Fixed,
-                        },
-                    ),
-                    SwapRoute::Thorchain {
-                        streaming_interval,
-                        max_streaming_quantity,
-                        affiliate_code,
-                        affiliate_bps,
-                        previous_swap,
-                    } => get_expected_amount_out_thorchain(
-                        deps,
-                        env,
-                        &ThorSwap {
-                            swap_amount: swap_amount.clone(),
-                            minimum_receive_amount: minimum_receive_amount.clone(),
-                            maximum_slippage_bps: 10_000,
-                            adjustment: SwapAmountAdjustment::Fixed,
-                            streaming_interval: *streaming_interval,
-                            max_streaming_quantity: *max_streaming_quantity,
-                            affiliate_code: affiliate_code.clone(),
-                            affiliate_bps: *affiliate_bps,
-                            previous_swap: previous_swap.clone(),
-                        },
-                    ),
-                };
-
-                if let Ok(expected_receive_amount) = expected_receive_amount {
-                    expected_receive_amount.amount >= minimum_receive_amount.amount
-                } else {
-                    false
-                }
-            }
+            Condition::CanSwap(swap) => swap.best_route(deps, env)?.is_some(),
             Condition::BalanceAvailable { address, amount } => {
-                let balance = deps.querier.query_balance(address, amount.denom.clone());
-
-                if let Ok(balance) = balance {
-                    balance.amount >= amount.amount
-                } else {
-                    false
-                }
+                let balance = deps.querier.query_balance(address, amount.denom.clone())?;
+                balance.amount >= amount.amount
             }
             Condition::StrategyBalanceAvailable { amount } => {
                 let balance = deps
                     .querier
-                    .query_balance(&env.contract.address, amount.denom.clone());
-
-                if let Ok(balance) = balance {
-                    balance.amount >= amount.amount
-                } else {
-                    false
-                }
+                    .query_balance(&env.contract.address, amount.denom.clone())?;
+                balance.amount >= amount.amount
             }
             Condition::StrategyStatus {
                 manager_contract,
@@ -147,51 +103,28 @@ impl Condition {
                     &ManagerQueryMsg::Strategy {
                         address: contract_address.clone(),
                     },
-                );
-
-                if let Ok(strategy) = strategy {
-                    strategy.status == *status
-                } else {
-                    false
-                }
+                )?;
+                strategy.status == *status
             }
-        }
-    }
-
-    pub fn description(&self, env: &Env) -> String {
-        match self {
-            Condition::TimestampElapsed(timestamp) => format!("timestamp elapsed: {timestamp}, current time: {}", env.block.time),
-            Condition::BlocksCompleted(height) => format!("blocks completed: {height}, current height: {}", env.block.height),
-            Condition::CanSwap {
-                swap_amount,
-                minimum_receive_amount,
-                ..
-            } => format!(
-                "can perform swap: swap_amount={swap_amount}, minimum_receive_amount={minimum_receive_amount}"
-            ),
-            Condition::LimitOrderFilled {
-                pair_address,
-                owner,
-                side,
-                price,
-                ..
-            } => format!(
-                "limit order filled: pair_address={pair_address}, owner={owner}, side={side:?}, price={price}"
-            ),
-            Condition::BalanceAvailable { address, amount } => format!(
-                "balance available: address={address}, amount={amount}"
-            ),
-            Condition::StrategyBalanceAvailable { amount } => {
-                format!("balance available: address={}, amount={}", env.contract.address, amount)
-            }
-            Condition::StrategyStatus {
-                contract_address,
-                status,
-                ..
-            } => format!(
-                "strategy ({contract_address}) is in status: {status:?}"
-            ),
-        }
+            Condition::Not(condition) => !condition.is_satisfied(deps, env)?,
+            Condition::Composite(CompositeCondition {
+                conditions,
+                threshold,
+            }) => match threshold {
+                Threshold::All => conditions
+                    .iter()
+                    .map(|c| c.is_satisfied(deps, env))
+                    .collect::<StdResult<Vec<bool>>>()?
+                    .into_iter()
+                    .all(|b| b),
+                Threshold::Any => conditions
+                    .iter()
+                    .map(|c| c.is_satisfied(deps, env))
+                    .collect::<StdResult<Vec<bool>>>()?
+                    .into_iter()
+                    .any(|b| b),
+            },
+        })
     }
 }
 
@@ -206,7 +139,13 @@ mod conditions_tests {
     };
     use rujira_rs::fin::{OrderResponse, Price, Side, SimulationResponse};
 
-    use crate::{manager::StrategyHandle, manager::StrategyStatus};
+    use crate::{
+        actions::{
+            swaps::fin::FinRoute,
+            swaps::swap::{SwapAmountAdjustment, SwapRoute},
+        },
+        manager::{StrategyHandle, StrategyStatus},
+    };
 
     #[test]
     fn timestamp_elapsed_check() {
@@ -214,12 +153,16 @@ mod conditions_tests {
         let env = mock_env();
 
         assert!(Condition::TimestampElapsed(env.block.time.minus_seconds(1))
-            .is_satisfied(deps.as_ref(), &env));
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
 
-        assert!(!Condition::TimestampElapsed(env.block.time).is_satisfied(deps.as_ref(), &env));
+        assert!(!Condition::TimestampElapsed(env.block.time)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
 
         assert!(!Condition::TimestampElapsed(env.block.time.plus_seconds(1))
-            .is_satisfied(deps.as_ref(), &env));
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
     }
 
     #[test]
@@ -227,13 +170,18 @@ mod conditions_tests {
         let deps = mock_dependencies();
         let env = mock_env();
 
-        assert!(Condition::BlocksCompleted(0).is_satisfied(deps.as_ref(), &env));
-
-        assert!(Condition::BlocksCompleted(env.block.height - 1).is_satisfied(deps.as_ref(), &env));
-
-        assert!(!Condition::BlocksCompleted(env.block.height).is_satisfied(deps.as_ref(), &env));
-
-        assert!(!Condition::BlocksCompleted(env.block.height + 1).is_satisfied(deps.as_ref(), &env));
+        assert!(Condition::BlocksCompleted(0)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
+        assert!(Condition::BlocksCompleted(env.block.height - 1)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
+        assert!(!Condition::BlocksCompleted(env.block.height)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
+        assert!(!Condition::BlocksCompleted(env.block.height + 1)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
     }
 
     #[test]
@@ -245,13 +193,15 @@ mod conditions_tests {
             address: env.contract.address.clone(),
             amount: Coin::new(0u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(!Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(1u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         deps.querier.bank.update_balance(
             env.contract.address.clone(),
@@ -262,19 +212,22 @@ mod conditions_tests {
             address: env.contract.address.clone(),
             amount: Coin::new(99u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(100u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(!Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(101u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 
     #[test]
@@ -292,26 +245,41 @@ mod conditions_tests {
             ))
         });
 
-        assert!(!Condition::CanSwap {
+        assert!(!Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(101u128, "rune"),
-            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
-        }
-        .is_satisfied(deps.as_ref(), &env));
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: Addr::unchecked("fin_pair")
+            })],
+            maximum_slippage_bps: 100,
+            adjustment: SwapAmountAdjustment::Fixed
+        })
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
-        assert!(Condition::CanSwap {
+        assert!(!Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(100u128, "rune"),
-            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
-        }
-        .is_satisfied(deps.as_ref(), &env));
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: Addr::unchecked("fin_pair")
+            })],
+            maximum_slippage_bps: 100,
+            adjustment: SwapAmountAdjustment::Fixed
+        })
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
-        assert!(Condition::CanSwap {
+        assert!(!Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(99u128, "rune"),
-            route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
-        }
-        .is_satisfied(deps.as_ref(), &env));
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: Addr::unchecked("fin_pair")
+            })],
+            maximum_slippage_bps: 100,
+            adjustment: SwapAmountAdjustment::Fixed
+        })
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 
     #[test]
@@ -340,9 +308,20 @@ mod conditions_tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            rate: Decimal::from_str("1.0").unwrap(),
+            minimum_filled_amount: None
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
+
+        assert!(Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+            minimum_filled_amount: Some(Uint128::new(100)),
+        }
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
@@ -365,9 +344,10 @@ mod conditions_tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            rate: Decimal::from_str("1.0").unwrap(),
+            minimum_filled_amount: None
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 
     #[test]
@@ -398,13 +378,58 @@ mod conditions_tests {
             contract_address: strategy_address.clone(),
             status: StrategyStatus::Active,
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(!Condition::StrategyStatus {
             manager_contract: Addr::unchecked("manager"),
             contract_address: strategy_address.clone(),
             status: StrategyStatus::Paused,
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
+    }
+
+    #[test]
+    fn not_satisfied_check() {
+        let deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(
+            !Condition::Not(Box::new(Condition::BlocksCompleted(env.block.height - 1)))
+                .is_satisfied(deps.as_ref(), &env)
+                .unwrap()
+        );
+        assert!(
+            Condition::Not(Box::new(Condition::BlocksCompleted(env.block.height)))
+                .is_satisfied(deps.as_ref(), &env)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn composite_condition_check() {
+        let deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(!Condition::Composite(CompositeCondition {
+            conditions: vec![
+                Condition::BlocksCompleted(env.block.height - 1),
+                Condition::BlocksCompleted(env.block.height),
+            ],
+            threshold: Threshold::All,
+        })
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
+
+        assert!(Condition::Composite(CompositeCondition {
+            conditions: vec![
+                Condition::BlocksCompleted(env.block.height - 1),
+                Condition::BlocksCompleted(env.block.height),
+            ],
+            threshold: Threshold::Any,
+        })
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 }

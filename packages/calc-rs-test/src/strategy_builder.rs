@@ -1,5 +1,6 @@
 use calc_rs::{
     actions::action::Action,
+    manager::Affiliate,
     strategy::{Json, Strategy},
 };
 use cosmwasm_std::{Addr, Coin};
@@ -11,6 +12,7 @@ pub struct StrategyBuilder<'a> {
     app: &'a mut CalcTestApp,
     owner: Addr,
     label: String,
+    affiliates: Vec<Affiliate>,
     action: Option<Action>,
     keeper: Addr,
 }
@@ -24,6 +26,7 @@ impl<'a> StrategyBuilder<'a> {
             app,
             owner,
             label: "Test Strategy".to_string(),
+            affiliates: vec![],
             action: None,
             keeper,
         }
@@ -31,6 +34,11 @@ impl<'a> StrategyBuilder<'a> {
 
     pub fn with_action(mut self, action: Action) -> Self {
         self.action = Some(action);
+        self
+    }
+
+    pub fn with_affiliates(mut self, affiliates: Vec<Affiliate>) -> Self {
+        self.affiliates = affiliates;
         self
     }
 
@@ -43,7 +51,7 @@ impl<'a> StrategyBuilder<'a> {
 
         let strategy_addr = self
             .app
-            .create_strategy(&self.owner, &self.owner, &self.label, strategy, funds)
+            .create_strategy(&self.label, strategy, self.affiliates, funds)
             .unwrap();
 
         StrategyHandler {
@@ -63,7 +71,7 @@ impl<'a> StrategyBuilder<'a> {
 
         let strategy_addr =
             self.app
-                .create_strategy(&self.owner, &self.owner, &self.label, strategy, funds)?;
+                .create_strategy(&self.label, strategy, self.affiliates, funds)?;
 
         Ok(StrategyHandler {
             strategy_addr,

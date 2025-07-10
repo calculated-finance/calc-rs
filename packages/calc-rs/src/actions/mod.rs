@@ -1,10 +1,8 @@
 pub mod action;
 pub mod conditional;
 pub mod distribution;
-pub mod fin_swap;
 pub mod limit_order;
 pub mod many;
 pub mod operation;
-pub mod optimal_swap;
 pub mod schedule;
-pub mod thor_swap;
+pub mod swaps;

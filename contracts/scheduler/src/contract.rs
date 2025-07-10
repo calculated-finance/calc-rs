@@ -62,14 +62,23 @@ pub fn execute(
                     ContractError::generic_err(format!("Failed to load trigger: {e}"))
                 })?;
 
-                if !trigger.condition.is_satisfied(deps.as_ref(), &env) {
+                let check_result = trigger.condition.is_satisfied(deps.as_ref(), &env);
+
+                if let Ok(check_result) = check_result {
+                    if !check_result {
+                        continue;
+                    }
+                } else {
+                    // The condition itself is invalid, so we
+                    // just delete the associated trigger.
+                    TRIGGERS.delete(deps.storage, trigger.id)?;
                     continue;
                 }
 
                 TRIGGERS.delete(deps.storage, trigger.id)?;
 
                 // swallow errors from execute trigger replies to prevent
-                // hanging triggers due to a misconfigured downstream contract
+                // hanging triggers due to a misconfigured downstream contract.
                 let execute_msg = SubMsg::reply_on_error(
                     Contract(MANAGER.load(deps.storage)?).call(
                         to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
@@ -108,13 +117,15 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
             start_after,
         } => to_json_binary(&TRIGGERS.owned(deps.storage, owner, limit, start_after)),
         SchedulerQueryMsg::Filtered { filter, limit } => {
-            to_json_binary(&TRIGGERS.filtered(deps.storage, filter, limit)?)
+            let filtered = TRIGGERS.filtered(deps.storage, filter, limit)?;
+            to_json_binary(&filtered)
         }
-        SchedulerQueryMsg::CanExecute { id } => to_json_binary(
+        SchedulerQueryMsg::CanExecute(id) => to_json_binary(
             &TRIGGERS
                 .load(deps.storage, id)?
                 .condition
-                .is_satisfied(deps, &env),
+                .is_satisfied(deps, &env)
+                .is_ok(),
         ),
     }
 }
@@ -140,7 +151,7 @@ mod create_trigger_tests {
     };
 
     #[test]
-    fn creates_trigger() {
+    fn creates_trigger_correctly() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let owner = deps.api.addr_make("creator");
@@ -801,7 +812,7 @@ mod filtered_triggers_tests {
                         owner: Addr::unchecked("owner"),
                         side: Side::Base,
                         price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        rate: Decimal::from_str("1.0").unwrap(),
+                        minimum_filled_amount: None,
                     },
                     vec![],
                 )
@@ -838,7 +849,7 @@ mod filtered_triggers_tests {
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            rate: Decimal::from_str("1.0").unwrap(),
+                            minimum_filled_amount: None,
                         },
                         execution_rebate: vec![],
                     }
@@ -864,7 +875,7 @@ mod filtered_triggers_tests {
                         owner: Addr::unchecked("owner"),
                         side: Side::Base,
                         price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        rate: Decimal::from_str(&i.to_string()).unwrap(),
+                        minimum_filled_amount: None,
                     },
                     vec![],
                 )
@@ -904,7 +915,7 @@ mod filtered_triggers_tests {
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            rate: Decimal::from_str(&j.to_string()).unwrap(),
+                            minimum_filled_amount: None,
                         },
                         execution_rebate: vec![],
                     }
@@ -930,7 +941,7 @@ mod filtered_triggers_tests {
                         owner: Addr::unchecked("owner"),
                         side: Side::Base,
                         price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        rate: Decimal::from_str(&i.to_string()).unwrap(),
+                        minimum_filled_amount: None,
                     },
                     vec![],
                 )
@@ -970,7 +981,7 @@ mod filtered_triggers_tests {
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            rate: Decimal::from_str(&j.to_string()).unwrap(),
+                            minimum_filled_amount: None,
                         },
                         execution_rebate: vec![],
                     }
@@ -996,7 +1007,7 @@ mod filtered_triggers_tests {
                         owner: Addr::unchecked("owner"),
                         side: Side::Base,
                         price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        rate: Decimal::from_str(&i.to_string()).unwrap(),
+                        minimum_filled_amount: None,
                     },
                     vec![],
                 )
@@ -1036,7 +1047,7 @@ mod filtered_triggers_tests {
                             owner: Addr::unchecked("owner"),
                             side: Side::Base,
                             price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            rate: Decimal::from_str(&j.to_string()).unwrap(),
+                            minimum_filled_amount: None,
                         },
                         execution_rebate: vec![],
                     }

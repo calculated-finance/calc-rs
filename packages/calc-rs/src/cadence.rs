@@ -27,10 +27,10 @@ impl Cadence {
     pub fn is_due(&self, env: &Env) -> StdResult<bool> {
         Ok(match self {
             Cadence::Blocks { interval, previous } => {
-                previous.is_none_or(|previous| env.block.height > previous + interval)
+                previous.map_or(true, |previous| env.block.height >= previous + interval)
             }
-            Cadence::Time { duration, previous } => previous.is_none_or(|previous| {
-                env.block.time.seconds() > previous.seconds() + duration.as_secs()
+            Cadence::Time { duration, previous } => previous.map_or(true, |previous| {
+                env.block.time.seconds() >= previous.seconds() + duration.as_secs()
             }),
             Cadence::Cron { expr, previous } => {
                 if previous.is_none() {
@@ -48,7 +48,7 @@ impl Cadence {
                     .next();
 
                 if let Some(next) = next {
-                    env.block.time.seconds() > next.timestamp() as u64
+                    env.block.time.seconds() >= next.timestamp() as u64
                 } else {
                     false
                 }
@@ -459,7 +459,14 @@ mod tests {
         .unwrap());
 
         assert!(!Cadence::Blocks {
-            interval: 10,
+            interval: 5,
+            previous: Some(env.block.height - 4)
+        }
+        .is_due(&env)
+        .unwrap());
+
+        assert!(Cadence::Blocks {
+            interval: 5,
             previous: Some(env.block.height - 5)
         }
         .is_due(&env)
@@ -468,13 +475,6 @@ mod tests {
         assert!(Cadence::Blocks {
             interval: 5,
             previous: Some(env.block.height - 6)
-        }
-        .is_due(&env)
-        .unwrap());
-
-        assert!(!Cadence::Blocks {
-            interval: 5,
-            previous: Some(env.block.height - 5)
         }
         .is_due(&env)
         .unwrap());
@@ -492,7 +492,7 @@ mod tests {
         .unwrap());
 
         assert!(!Cadence::Time {
-            duration: Duration::from_secs(10),
+            duration: Duration::from_secs(6),
             previous: Some(env.block.time.minus_seconds(5))
         }
         .is_due(&env)
@@ -500,13 +500,13 @@ mod tests {
 
         assert!(Cadence::Time {
             duration: Duration::from_secs(5),
-            previous: Some(env.block.time.minus_seconds(6))
+            previous: Some(env.block.time.minus_seconds(5))
         }
         .is_due(&env)
         .unwrap());
 
-        assert!(!Cadence::Time {
-            duration: Duration::from_secs(5),
+        assert!(Cadence::Time {
+            duration: Duration::from_secs(4),
             previous: Some(env.block.time.minus_seconds(5))
         }
         .is_due(&env)

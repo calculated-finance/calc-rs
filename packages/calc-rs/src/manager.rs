@@ -56,7 +56,6 @@ pub struct StrategyHandle {
 #[cw_serde]
 pub enum ManagerExecuteMsg {
     InstantiateStrategy {
-        owner: Addr,
         label: String,
         affiliates: Vec<Affiliate>,
         strategy: Strategy<Json>,

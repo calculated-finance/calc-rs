@@ -9,7 +9,10 @@ use rujira_rs::fin::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation},
+    actions::{
+        action::Action,
+        operation::{StatefulOperation, StatelessOperation},
+    },
     conditions::Condition,
     core::Contract,
     scheduler::SchedulerExecuteMsg,
@@ -37,6 +40,8 @@ impl LimitOrderEventData {
 enum LimitOrderEvent {
     SetOrderSkipped { reason: String },
     SetOrder(LimitOrderEventData),
+    CreateTrigger { condition: Condition },
+    WithdrawOrderSkipped { reason: String },
     WithdrawOrder(LimitOrderEventData),
 }
 
@@ -47,6 +52,12 @@ impl From<LimitOrderEvent> for Event {
                 Event::new("set_order_skipped").add_attribute("reason", reason)
             }
             LimitOrderEvent::SetOrder(data) => data.to_event("set_order"),
+            LimitOrderEvent::CreateTrigger { condition } => {
+                Event::new("trigger_created").add_attribute("condition", format!("{condition:?}"))
+            }
+            LimitOrderEvent::WithdrawOrderSkipped { reason } => {
+                Event::new("withdraw_order_skipped").add_attribute("reason", reason)
+            }
             LimitOrderEvent::WithdrawOrder(data) => data.to_event("withdraw_order"),
         }
     }
@@ -61,7 +72,7 @@ pub enum Direction {
 #[cw_serde]
 pub enum Offset {
     Exact(Decimal),
-    Bps(u64),
+    Percent(u64),
 }
 
 #[cw_serde]
@@ -75,40 +86,16 @@ pub enum OrderPriceStrategy {
 }
 
 impl OrderPriceStrategy {
-    pub fn existing_order(
-        &self,
-        deps: Deps,
-        env: &Env,
-        pair_address: &Addr,
-        side: &Side,
-        current_price: &Option<Decimal>,
-    ) -> Option<OrderResponse> {
+    pub fn should_reset(&self, current_price: Decimal, new_price: Decimal) -> bool {
         match self {
-            OrderPriceStrategy::Fixed(price) => deps
-                .querier
-                .query_wasm_smart::<OrderResponse>(
-                    pair_address,
-                    &QueryMsg::Order((
-                        env.contract.address.to_string(),
-                        side.clone(),
-                        Price::Fixed(*price),
-                    )),
-                )
-                .ok(),
-            OrderPriceStrategy::Offset { .. } => {
-                if let Some(price) = current_price {
-                    deps.querier
-                        .query_wasm_smart::<OrderResponse>(
-                            pair_address,
-                            &QueryMsg::Order((
-                                env.contract.address.to_string(),
-                                side.clone(),
-                                Price::Fixed(*price),
-                            )),
-                        )
-                        .ok()
-                } else {
-                    None
+            OrderPriceStrategy::Fixed(_) => current_price != new_price,
+            OrderPriceStrategy::Offset { tolerance, .. } => {
+                let price_delta = current_price.abs_diff(new_price);
+                match tolerance {
+                    Offset::Exact(value) => price_delta > *value,
+                    Offset::Percent(percent) => {
+                        current_price.saturating_mul(Decimal::percent(*percent)) < price_delta
+                    }
                 }
             }
         }
@@ -116,13 +103,256 @@ impl OrderPriceStrategy {
 }
 
 #[cw_serde]
+pub struct UnsetOrder {
+    remaining: Uint128,
+    withdrawing: Uint128,
+}
+
+#[cw_serde]
+pub struct SettingOrder {
+    pub price: Decimal,
+    pub offer: Uint128,
+    pub messages: Vec<StrategyMsg>,
+    pub events: Vec<Event>,
+}
+
+#[cw_serde]
+pub struct SetOrder {
+    pub price: Decimal,
+    pub offer: Uint128,
+    pub remaining: Uint128,
+    pub filled: Uint128,
+}
+
+#[cw_serde]
+pub struct StaleOrder {
+    pub price: Decimal,
+}
+
+impl StaleOrder {
+    pub fn refresh(self, deps: Deps, env: &Env, config: &LimitOrder) -> StdResult<SetOrder> {
+        let order = deps.querier.query_wasm_smart::<OrderResponse>(
+            config.pair_address.clone(),
+            &QueryMsg::Order((
+                env.contract.address.to_string(),
+                config.side.clone(),
+                Price::Fixed(self.price),
+            )),
+        )?;
+
+        Ok(SetOrder {
+            price: self.price,
+            offer: order.offer,
+            remaining: order.remaining,
+            filled: order.filled,
+        })
+    }
+}
+
+impl SetOrder {
+    pub fn cached(self) -> StaleOrder {
+        StaleOrder { price: self.price }
+    }
+}
+
+#[cw_serde]
+pub struct WithdrawingOrder {
+    pub withdrawing: Uint128,
+    pub remaining: Uint128,
+    pub messages: Vec<StrategyMsg>,
+    pub events: Vec<Event>,
+}
+
+#[cw_serde]
+pub struct LimitOrderState<S> {
+    pub config: LimitOrder,
+    pub state: S,
+}
+
+impl LimitOrderState<UnsetOrder> {
+    pub fn new(config: LimitOrder) -> Self {
+        LimitOrderState {
+            config,
+            state: UnsetOrder {
+                remaining: Uint128::zero(),
+                withdrawing: Uint128::zero(),
+            },
+        }
+    }
+
+    pub fn set(self, deps: Deps, env: &Env) -> StdResult<LimitOrderState<SettingOrder>> {
+        let price = self.config.get_new_price(deps)?;
+
+        let balance = deps
+            .querier
+            .query_balance(env.contract.address.clone(), self.config.bid_denom.clone())?;
+
+        let available = balance.amount + self.state.withdrawing + self.state.remaining;
+        let final_offer = min(available, self.config.max_bid_amount.unwrap_or(available));
+        let funding = min(balance.amount + self.state.withdrawing, final_offer);
+
+        if funding.is_zero() && !self.config.needs_reset(price) {
+            return Ok(LimitOrderState {
+                config: self.config,
+                state: SettingOrder {
+                    price,
+                    offer: Uint128::zero(),
+                    messages: vec![],
+                    events: vec![LimitOrderEvent::SetOrderSkipped {
+                        reason: "No additional funding available and no price reset needed"
+                            .to_string(),
+                    }
+                    .into()],
+                },
+            });
+        }
+
+        let set_order_msg = StrategyMsg::with_payload(
+            Contract(self.config.pair_address.clone()).call(
+                to_json_binary(&ExecuteMsg::Order((
+                    vec![(
+                        self.config.side.clone(),
+                        Price::Fixed(price),
+                        Some(final_offer),
+                    )],
+                    None,
+                )))?,
+                vec![Coin::new(funding, self.config.bid_denom.clone())],
+            ),
+            StrategyMsgPayload {
+                statistics: Statistics::default(),
+                events: vec![LimitOrderEvent::SetOrder(LimitOrderEventData {
+                    pair_address: self.config.pair_address.clone(),
+                    side: self.config.side.clone(),
+                    price: Price::Fixed(price),
+                    amount: final_offer,
+                })
+                .into()],
+            },
+        );
+
+        Ok(LimitOrderState {
+            config: self.config,
+            state: SettingOrder {
+                price,
+                offer: final_offer,
+                messages: vec![set_order_msg],
+                events: vec![],
+            },
+        })
+    }
+}
+
+impl LimitOrderState<SettingOrder> {
+    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, LimitOrderState<SetOrder>) {
+        (
+            self.state.messages,
+            self.state.events,
+            LimitOrderState {
+                config: self.config,
+                state: SetOrder {
+                    price: self.state.price,
+                    offer: self.state.offer,
+                    remaining: self.state.offer,
+                    filled: Uint128::zero(),
+                },
+            },
+        )
+    }
+}
+
+impl LimitOrderState<SetOrder> {
+    pub fn withdraw(self, _deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
+        let withdraw_message = Contract(self.config.pair_address.clone()).call(
+            to_json_binary(&ExecuteMsg::Order((
+                vec![(
+                    self.config.side.clone(),
+                    Price::Fixed(self.state.price),
+                    Some(Uint128::zero()),
+                )],
+                None,
+            )))?,
+            vec![],
+        );
+
+        let payload = StrategyMsgPayload {
+            statistics: Statistics {
+                outgoing: vec![Coin::new(
+                    // Weird if this is smaller than 0, but we handle it safely regardless.
+                    self.state.offer.saturating_sub(self.state.remaining),
+                    self.config.bid_denom.clone(),
+                )],
+                ..Statistics::default()
+            },
+            events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
+                pair_address: self.config.pair_address.clone(),
+                side: self.config.side.clone(),
+                price: Price::Fixed(self.state.price),
+                amount: self.state.remaining,
+            })
+            .into()],
+        };
+
+        Ok(LimitOrderState {
+            config: self.config,
+            state: WithdrawingOrder {
+                withdrawing: self.state.remaining,
+                remaining: Uint128::zero(),
+                messages: vec![StrategyMsg::with_payload(withdraw_message, payload)],
+                events: vec![],
+            },
+        })
+    }
+
+    pub fn saturating_withdraw(self, deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
+        let new_price = self.config.get_new_price(deps)?;
+
+        let should_withdraw =
+            self.state.filled.gt(&Uint128::zero()) || self.config.needs_reset(new_price);
+
+        if should_withdraw {
+            return self.withdraw(deps);
+        }
+
+        Ok(LimitOrderState {
+            config: self.config,
+            state: WithdrawingOrder {
+                withdrawing: Uint128::zero(),
+                remaining: self.state.remaining,
+                messages: vec![],
+                events: vec![LimitOrderEvent::WithdrawOrderSkipped {
+                    reason: "No change in target price and no filled amount to claim".to_string(),
+                }
+                .into()],
+            },
+        })
+    }
+}
+
+impl LimitOrderState<WithdrawingOrder> {
+    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, LimitOrderState<UnsetOrder>) {
+        (
+            self.state.messages,
+            self.state.events,
+            LimitOrderState {
+                config: self.config,
+                state: UnsetOrder {
+                    remaining: self.state.remaining,
+                    withdrawing: self.state.withdrawing,
+                },
+            },
+        )
+    }
+}
+
+#[cw_serde]
 pub struct LimitOrder {
     pub pair_address: Addr,
     pub bid_denom: String,
-    pub bid_amount: Option<Uint128>,
+    pub max_bid_amount: Option<Uint128>,
     pub side: Side,
     pub strategy: OrderPriceStrategy,
-    pub current_price: Option<Decimal>,
+    pub current_order: Option<StaleOrder>,
     pub scheduler: Addr,
     pub execution_rebate: Vec<Coin>,
 }
@@ -133,41 +363,8 @@ impl LimitOrder {
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
     }
 
-    fn statistics(&self, deps: Deps, order: &OrderResponse) -> StdResult<Statistics> {
-        let mut statistics = Statistics {
-            swapped: vec![Coin::new(
-                order.offer.abs_diff(order.remaining),
-                self.bid_denom.clone(),
-            )],
-            ..Statistics::default()
-        };
-
-        if order.filled.gt(&Uint128::zero()) {
-            let pair = self.get_pair(deps)?;
-            statistics.filled = vec![Coin::new(order.filled, pair.denoms.ask(&order.side))];
-        }
-
-        Ok(statistics)
-    }
-
-    fn execute_unsafe(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        let existing_order = self.strategy.existing_order(
-            deps,
-            env,
-            &self.pair_address,
-            &self.side,
-            &self.current_price,
-        );
-
-        let bid_denom_balance = deps
-            .querier
-            .query_balance(env.contract.address.clone(), self.bid_denom.clone())?;
-
-        let new_price = match self.strategy.clone() {
+    fn get_new_price(&self, deps: Deps) -> StdResult<Decimal> {
+        Ok(match self.strategy.clone() {
             OrderPriceStrategy::Fixed(price) => price,
             OrderPriceStrategy::Offset {
                 direction, offset, ..
@@ -175,7 +372,7 @@ impl LimitOrder {
                 let book = deps.querier.query_wasm_smart::<BookResponse>(
                     self.pair_address.clone(),
                     &QueryMsg::Book {
-                        limit: Some(1),
+                        limit: Some(10),
                         offset: None,
                     },
                 )?;
@@ -192,174 +389,69 @@ impl LimitOrder {
                         Direction::Up => book_price.saturating_add(offset),
                         Direction::Down => book_price.saturating_sub(offset),
                     },
-                    Offset::Bps(offset) => match direction {
+                    Offset::Percent(offset) => match direction {
                         Direction::Up => book_price
-                            .saturating_mul(Decimal::one().saturating_add(Decimal::bps(offset))),
+                            .saturating_mul(Decimal::percent(100u64.saturating_add(offset))),
                         Direction::Down => book_price
-                            .saturating_mul(Decimal::one().saturating_sub(Decimal::bps(offset))),
+                            .saturating_mul(Decimal::percent(100u64.saturating_sub(offset))),
                     },
                 }
             }
-        };
+        })
+    }
 
-        let (offer, remaining, filled) = existing_order
-            .clone()
-            .map_or((Uint128::zero(), Uint128::zero(), Uint128::zero()), |o| {
-                (o.offer, o.remaining, o.filled)
-            });
-
-        // If we have no balance and no filled amount, we can
-        // return early if the price does not need to change.
-        if bid_denom_balance.amount.is_zero() && filled.is_zero() {
-            if let Some(current_price) = self.current_price {
-                if new_price == current_price {
-                    return Ok((
-                        vec![],
-                        vec![LimitOrderEvent::SetOrderSkipped {
-                            reason: "No balance available to deposit".to_string(),
-                        }
-                        .into()],
-                        Action::LimitOrder(self),
-                    ));
-                }
-
-                if let OrderPriceStrategy::Offset { tolerance, .. } = self.strategy.clone() {
-                    let price_delta = new_price.abs_diff(current_price);
-
-                    let tolerance_threshold = match tolerance {
-                        Offset::Exact(tolerance_val) => tolerance_val,
-                        Offset::Bps(tolerance_bps) => {
-                            current_price.saturating_mul(Decimal::bps(tolerance_bps))
-                        }
-                    };
-
-                    if price_delta <= tolerance_threshold {
-                        return Ok((
-                            vec![],
-                            vec![LimitOrderEvent::SetOrderSkipped {
-                                reason: "Current price is within deviation tolerance".to_string(),
-                            }
-                            .into()],
-                            Action::LimitOrder(self),
-                        ));
-                    }
-                }
-            }
-        }
-
-        // Total available bid denom includes balance and order remaining.
-        let available = bid_denom_balance.amount + remaining;
-
-        // Bid amount is total available, unless constrained by configured bid amount.
-        let final_bid_amount = min(self.bid_amount.unwrap_or(available), available);
-
-        // Balance to send is final bid amount - remaining
-        let balance_to_send = final_bid_amount.saturating_sub(remaining);
-
-        let funds_to_send = if balance_to_send.is_zero() {
-            vec![]
+    fn needs_reset(&self, new_price: Decimal) -> bool {
+        if let Some(existing_order) = &self.current_order {
+            self.strategy.should_reset(existing_order.price, new_price)
         } else {
-            vec![Coin::new(balance_to_send, self.bid_denom.clone())]
+            true
+        }
+    }
+
+    fn execute_unsafe(
+        self,
+        deps: Deps,
+        env: &Env,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let mut messages = vec![];
+        let mut events: Vec<Event> = vec![];
+
+        let order = if let Some(existing_order) = self.current_order.clone() {
+            let existing_order_state = LimitOrderState {
+                config: self.clone(),
+                state: existing_order.refresh(deps, env, &self)?,
+            };
+
+            let (withdraw_messages, withdraw_events, withdrawn_order_state) =
+                existing_order_state.saturating_withdraw(deps)?.execute();
+
+            messages.extend(withdraw_messages);
+            events.extend(withdraw_events);
+
+            withdrawn_order_state
+        } else {
+            LimitOrderState::new(self)
         };
 
-        let mut messages = vec![];
-        let mut orders = vec![];
+        let (set_messages, set_events, set_order_state) = order.set(deps, env)?.execute();
 
-        if let Some(o) = existing_order.clone() {
-            let withdraw_order_msg = StrategyMsg::with_payload(
-                Contract(self.pair_address.clone()).call(
-                    to_json_binary(&ExecuteMsg::Order((
-                        vec![(o.side, o.price, Some(Uint128::zero()))],
-                        None,
-                    )))?,
-                    vec![],
-                ),
-                StrategyMsgPayload {
-                    statistics: Statistics {
-                        filled: vec![Coin::new(
-                            o.filled,
-                            self.get_pair(deps)?.denoms.ask(&self.side),
-                        )],
-                        ..Statistics::default()
-                    },
-                    events: vec![LimitOrderEvent::SetOrder(LimitOrderEventData {
-                        pair_address: self.pair_address.clone(),
-                        side: self.side.clone(),
-                        price: Price::Fixed(new_price),
-                        amount: final_bid_amount,
-                    })
-                    .into()],
-                    ..StrategyMsgPayload::default()
-                },
-            );
-
-            // We send a withdraw message separately to ensure
-            // that we don't double count swapped amounts for the stats.
-            messages.push(withdraw_order_msg);
-        }
-
-        if new_price.gt(&Decimal::zero()) && final_bid_amount.gt(&Uint128::zero()) {
-            orders.push((
-                self.side.clone(),
-                Price::Fixed(new_price),
-                Some(final_bid_amount),
-            ));
-        }
-
-        let set_order_msg = StrategyMsg::with_payload(
-            Contract(self.pair_address.clone()).call(
-                to_json_binary(&ExecuteMsg::Order((orders, None)))?,
-                funds_to_send,
-            ),
-            StrategyMsgPayload {
-                statistics: Statistics {
-                    swapped: vec![Coin::new(
-                        offer.saturating_sub(remaining),
-                        self.bid_denom.clone(),
-                    )],
-                    ..Statistics::default()
-                },
-                events: vec![LimitOrderEvent::SetOrder(LimitOrderEventData {
-                    pair_address: self.pair_address.clone(),
-                    side: self.side.clone(),
-                    price: Price::Fixed(new_price),
-                    amount: final_bid_amount,
-                })
-                .into()],
-                ..StrategyMsgPayload::default()
-            },
-        );
-
-        messages.push(set_order_msg);
-
-        let create_trigger_msg =
-            StrategyMsg::without_payload(Contract(self.scheduler.clone()).call(
-                to_json_binary(&SchedulerExecuteMsg::Create(Condition::LimitOrderFilled {
-                    pair_address: self.pair_address.clone(),
-                    owner: env.contract.address.clone(),
-                    side: self.side.clone(),
-                    price: Price::Fixed(new_price),
-                    rate: new_price,
-                }))?,
-                vec![],
-            ));
-
-        messages.push(create_trigger_msg);
+        messages.extend(set_messages);
+        events.extend(set_events);
 
         Ok((
             messages,
-            vec![],
+            events,
             Action::LimitOrder(LimitOrder {
-                current_price: Some(new_price),
-                ..self
+                current_order: Some(set_order_state.state.cached()),
+                ..set_order_state.config
             }),
         ))
     }
 }
 
-impl Operation for LimitOrder {
+impl StatelessOperation for LimitOrder {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        if let Some(amount) = self.bid_amount {
+        if let Some(amount) = self.max_bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
                 return Err(StdError::generic_err(
                     "Bid amount cannot be less than 1,000",
@@ -367,7 +459,7 @@ impl Operation for LimitOrder {
             }
         }
 
-        if self.current_price.is_some() {
+        if self.current_order.is_some() {
             return Err(StdError::generic_err(
                 "Cannot initialise a limit order action with a current price already set.",
             ));
@@ -397,30 +489,29 @@ impl Operation for LimitOrder {
 
         Ok(HashSet::from([pair.denoms.ask(&self.side).to_string()]))
     }
+}
 
+impl StatefulOperation for LimitOrder {
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
-        if !denoms.contains(&self.bid_denom) {
-            return Ok(Coins::default());
-        }
-
-        let existing_order = self.strategy.existing_order(
-            deps,
-            env,
-            &self.pair_address,
-            &self.side,
-            &self.current_price,
-        );
-
         let pair = deps
             .querier
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
 
-        Ok(existing_order.map_or(Ok(Coins::default()), |o| {
-            Coins::try_from(vec![
-                Coin::new(o.remaining, self.bid_denom.clone()),
-                Coin::new(o.filled, pair.denoms.ask(&self.side)),
-            ])
-        })?)
+        if !denoms.contains(pair.denoms.base()) && !denoms.contains(pair.denoms.quote()) {
+            return Ok(Coins::default());
+        }
+
+        let (remaining, filled) = if let Some(existing_order) = self.current_order.clone() {
+            let order_state = existing_order.refresh(deps, env, self)?;
+            (order_state.remaining, order_state.filled)
+        } else {
+            (Uint128::zero(), Uint128::zero())
+        };
+
+        Ok(Coins::try_from(vec![
+            Coin::new(remaining, self.bid_denom.clone()),
+            Coin::new(filled, pair.denoms.ask(&self.side)),
+        ])?)
     }
 
     fn withdraw(
@@ -433,107 +524,93 @@ impl Operation for LimitOrder {
             return Ok((vec![], vec![], Action::LimitOrder(self)));
         }
 
-        let existing_order = self.strategy.existing_order(
-            deps,
-            env,
-            &self.pair_address,
-            &self.side,
-            &self.current_price,
-        );
+        if let Some(existing_order) = self.current_order.clone() {
+            let order_state = LimitOrderState {
+                config: self.clone(),
+                state: existing_order.refresh(deps, env, &self)?,
+            };
 
-        if let Some(existing_order) = existing_order {
-            let withdraw_order_msg = StrategyMsg::with_payload(
-                Contract(self.pair_address.clone()).call(
-                    to_json_binary(&ExecuteMsg::Order((
-                        vec![(
-                            self.side.clone(),
-                            existing_order.price.clone(),
-                            Some(Uint128::zero()),
-                        )],
-                        None,
-                    )))?,
-                    vec![],
-                ),
-                StrategyMsgPayload {
-                    statistics: self.statistics(deps, &existing_order)?,
-                    events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
-                        pair_address: self.pair_address.clone(),
-                        side: self.side.clone(),
-                        price: existing_order.price.clone(),
-                        amount: existing_order.remaining,
-                    })
-                    .into()],
-                    ..StrategyMsgPayload::default()
-                },
-            );
+            let (messages, events, _) = order_state.withdraw(deps)?.execute();
 
-            return Ok((
-                vec![withdraw_order_msg],
+            // We let the confirm stage remove the current order
+            Ok((messages, events, Action::LimitOrder(self)))
+        } else {
+            Ok((
                 vec![],
-                Action::LimitOrder(LimitOrder {
-                    current_price: None,
-                    ..self
-                }),
-            ));
+                vec![LimitOrderEvent::SetOrderSkipped {
+                    reason: "No current order to withdraw".to_string(),
+                }
+                .into()],
+                Action::LimitOrder(self),
+            ))
         }
-
-        Ok((
-            vec![],
-            vec![],
-            Action::LimitOrder(LimitOrder {
-                current_price: None,
-                ..self
-            }),
-        ))
     }
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        let existing_order = self.strategy.existing_order(
-            deps,
-            env,
-            &self.pair_address,
-            &self.side,
-            &self.current_price,
-        );
+        if let Some(existing_order) = self.current_order.clone() {
+            let order_state = LimitOrderState {
+                config: self.clone(),
+                state: existing_order.refresh(deps, env, &self)?,
+            };
 
-        let mut messages = vec![];
+            let (messages, events, _) = order_state.withdraw(deps)?.execute();
 
-        if let Some(existing_order) = existing_order {
-            let withdraw_order_msg = StrategyMsg::with_payload(
-                Contract(self.pair_address.clone()).call(
-                    to_json_binary(&ExecuteMsg::Order((
-                        vec![(
-                            self.side.clone(),
-                            existing_order.price.clone(),
-                            Some(Uint128::zero()),
-                        )],
-                        None,
-                    )))?,
-                    vec![],
-                ),
-                StrategyMsgPayload {
-                    statistics: self.statistics(deps, &existing_order)?,
-                    events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
-                        pair_address: self.pair_address.clone(),
-                        side: self.side.clone(),
-                        price: existing_order.price.clone(),
-                        amount: existing_order.remaining,
-                    })
-                    .into()],
-                    ..StrategyMsgPayload::default()
-                },
-            );
-
-            messages.push(withdraw_order_msg);
+            // We let the confirm stage remove the current order
+            Ok((messages, events, Action::LimitOrder(self)))
+        } else {
+            Ok((
+                vec![],
+                vec![LimitOrderEvent::SetOrderSkipped {
+                    reason: "No current order to withdraw".to_string(),
+                }
+                .into()],
+                Action::LimitOrder(self),
+            ))
         }
+    }
 
-        Ok((
-            messages,
-            vec![],
-            Action::LimitOrder(LimitOrder {
-                current_price: None,
-                ..self
-            }),
-        ))
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if let Some(existing_order) = self.current_order.clone() {
+            match existing_order.refresh(deps, env, &self) {
+                Ok(actual_order) => {
+                    let trigger_condition = Condition::LimitOrderFilled {
+                        pair_address: self.pair_address.clone(),
+                        owner: env.contract.address.clone(),
+                        side: self.side.clone(),
+                        price: Price::Fixed(actual_order.price),
+                        minimum_filled_amount: None,
+                    };
+
+                    let set_trigger_msg =
+                        StrategyMsg::without_payload(Contract(self.scheduler.clone()).call(
+                            to_json_binary(&SchedulerExecuteMsg::Create(
+                                trigger_condition.clone(),
+                            ))?,
+                            vec![],
+                        ));
+
+                    let set_trigger_event = LimitOrderEvent::CreateTrigger {
+                        condition: trigger_condition,
+                    };
+
+                    Ok((
+                        vec![set_trigger_msg],
+                        vec![set_trigger_event.into()],
+                        Action::LimitOrder(self),
+                    ))
+                }
+                Err(_) => Ok((
+                    vec![],
+                    vec![],
+                    Action::LimitOrder(LimitOrder {
+                        // Wipe the cached order if it does not exist
+                        current_order: None,
+                        ..self
+                    }),
+                )),
+            }
+        } else {
+            Ok((vec![], vec![], Action::LimitOrder(self)))
+        }
     }
 }

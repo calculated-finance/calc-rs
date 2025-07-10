@@ -1,45 +1,43 @@
-use std::{collections::HashSet, hash::Hasher, vec};
+use std::{
+    collections::HashSet,
+    hash::{DefaultHasher, Hasher},
+    vec,
+};
 
-use ahash::AHasher;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Decimal, Deps,
-    DepsMut, Env, Event, Response, StdError, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Deps, DepsMut, Env,
+    Event, MessageInfo, Response, StdError, StdResult, Storage, SubMsg, WasmMsg,
 };
 
 use crate::{
     actions::{
         action::Action,
-        conditional::Conditional,
-        distribution::{Destination, Distribution, Recipient},
-        operation::Operation,
-        optimal_swap::{OptimalSwap, SwapRoute},
-        schedule::Schedule,
-        thor_swap::ThorSwap,
+        operation::{StatefulOperation, StatelessOperation},
     },
-    constants::PROCESS_PAYLOAD_REPLY_ID,
+    constants::{LOG_ERRORS_REPLY_ID, MAX_STRATEGY_SIZE, PROCESS_PAYLOAD_REPLY_ID},
+    core::Contract,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
 };
 
-pub const MAX_STRATEGY_ACTIONS: usize = 10;
-
 #[cw_serde]
 pub struct StrategyConfig {
     pub manager: Addr,
-    pub strategy: Strategy<Idle>,
+    pub strategy: Strategy<Committed>,
     pub escrowed: HashSet<String>,
 }
 
-pub type StrategyInstantiateMsg = Strategy<Instantiable>;
+pub type StrategyInstantiateMsg = Strategy<Indexed>;
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
-    Execute {},
+    Execute,
     Withdraw(HashSet<String>),
-    Update(Strategy<Instantiable>),
+    Update(Strategy<Indexed>),
     UpdateStatus(StrategyStatus),
-    Clear {},
+    Commit,
+    Clear,
 }
 
 #[cw_serde]
@@ -124,22 +122,29 @@ impl From<StrategyMsg> for SubMsg {
 pub struct Json;
 
 #[cw_serde]
-pub struct New {
-    code_id: u64,
-    creator: Addr,
-    label: String,
-}
+pub struct New;
 
 #[cw_serde]
+pub struct Indexable;
+
 pub struct Instantiable {
     pub contract_address: Addr,
+    label: String,
     salt: Binary,
     code_id: u64,
-    label: String,
+}
+
+pub struct Updatable {
+    pub contract_address: Addr,
 }
 
 #[cw_serde]
-pub struct Idle {
+pub struct Indexed {
+    pub contract_address: Addr,
+}
+
+#[cw_serde]
+pub struct Active {
     pub contract_address: Addr,
 }
 
@@ -150,40 +155,52 @@ pub struct Executable {
     events: Vec<Event>,
 }
 
+#[cw_serde]
+pub struct Committable {
+    pub contract_address: Addr,
+    messages: Vec<StrategyMsg>,
+    events: Vec<Event>,
+}
+
+#[cw_serde]
+pub struct Committed {
+    pub contract_address: Addr,
+}
+
 impl Strategy<Json> {
-    pub fn to_new(self, code_id: u64, creator: Addr, label: String) -> Strategy<New> {
+    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> Strategy<Indexable> {
         Strategy {
             owner: self.owner,
-            action: self.action,
-            state: New {
-                code_id,
-                creator,
-                label,
-            },
+            action: self.action.add_affiliates(affiliates),
+            state: Indexable,
         }
     }
 }
 
-impl Strategy<New> {
-    pub fn with_affiliates(
+impl Strategy<Indexable> {
+    pub fn add_to_index<F>(
         self,
-        deps: Deps,
-        affiliates: &Vec<Affiliate>,
-    ) -> StdResult<Strategy<Instantiable>> {
-        let action_with_affiliates = Self::add_affiliates(deps, self.action.clone(), affiliates)?;
-        let salt_data = to_json_binary(&(self.owner.to_string(), action_with_affiliates.clone()))?;
-
-        let mut hash = AHasher::default();
+        deps: &mut DepsMut,
+        env: &Env,
+        code_id: u64,
+        label: String,
+        save: F,
+    ) -> StdResult<Strategy<Instantiable>>
+    where
+        F: FnOnce(&mut dyn Storage, &Strategy<Instantiable>) -> StdResult<()>,
+    {
+        let salt_data = to_json_binary(&(self.owner.to_string(), self.clone()))?;
+        let mut hash = DefaultHasher::new();
         hash.write(salt_data.as_slice());
         let salt = hash.finish().to_le_bytes();
 
         let contract_address = deps.api.addr_humanize(
             &instantiate2_address(
                 deps.querier
-                    .query_wasm_code_info(self.state.code_id)?
+                    .query_wasm_code_info(code_id)?
                     .checksum
                     .as_slice(),
-                &deps.api.addr_canonicalize(self.state.creator.as_str())?,
+                &deps.api.addr_canonicalize(env.contract.address.as_str())?,
                 &salt,
             )
             .map_err(|e| {
@@ -191,141 +208,87 @@ impl Strategy<New> {
             })?,
         )?;
 
-        Ok(Strategy {
-            owner: self.owner,
-            action: action_with_affiliates,
+        let instantiable_strategy = Strategy {
+            owner: self.owner.clone(),
+            action: self.action.clone(),
             state: Instantiable {
-                code_id: self.state.code_id,
-                salt: Binary::from(salt),
-                label: self.state.label,
                 contract_address,
+                label,
+                salt: Binary::from(salt),
+                code_id,
             },
-        })
+        };
+
+        save(deps.storage, &instantiable_strategy)?;
+
+        Ok(instantiable_strategy)
     }
 
-    fn add_affiliates(
-        deps: Deps,
-        action: Action,
-        affiliates: &Vec<Affiliate>,
-    ) -> StdResult<Action> {
-        Ok(match action {
-            Action::Distribute(Distribution {
-                denoms,
-                destinations,
-            }) => {
-                let total_affiliate_bps = affiliates
-                    .iter()
-                    .fold(0, |acc, affiliate| acc + affiliate.bps);
+    pub fn update_index<F>(
+        self,
+        deps: &mut DepsMut,
+        contract_address: Addr,
+        save: F,
+    ) -> StdResult<Strategy<Updatable>>
+    where
+        F: FnOnce(&mut dyn Storage) -> StdResult<()>,
+    {
+        let indexed_strategy = Strategy {
+            owner: self.owner.clone(),
+            action: self.action.clone(),
+            state: Updatable { contract_address },
+        };
 
-                let total_shares = destinations
-                    .iter()
-                    .filter(|d| match d.recipient {
-                        Recipient::Bank { .. }
-                        | Recipient::Wasm { .. }
-                        | Recipient::Deposit { .. } => true,
-                        // We don't take fees on transfers between strategies
-                        Recipient::Strategy { .. } => false,
-                    })
-                    .fold(Uint128::zero(), |acc, d| acc + d.shares);
+        save(deps.storage)?;
 
-                let total_shares_with_fees =
-                    total_shares.mul_ceil(Decimal::bps(10_000 + total_affiliate_bps));
-
-                Action::Distribute(Distribution {
-                    denoms: denoms.clone(),
-                    destinations: [
-                        destinations.clone(),
-                        affiliates
-                            .iter()
-                            .map(|affiliate| Destination {
-                                recipient: Recipient::Bank {
-                                    address: affiliate.address.clone(),
-                                },
-                                shares: total_shares_with_fees
-                                    .mul_floor(Decimal::bps(affiliate.bps)),
-                                label: Some(affiliate.label.clone()),
-                            })
-                            .collect::<Vec<_>>(),
-                    ]
-                    .concat(),
-                })
-            }
-            Action::ThorSwap(thor_swap) => Action::ThorSwap(ThorSwap {
-                // As per agreement with Rujira
-                affiliate_code: Some("rj".to_string()),
-                affiliate_bps: Some(10),
-                ..thor_swap
-            }),
-            Action::OptimalSwap(swap) => {
-                let routes_with_affiliates = swap
-                    .routes
-                    .into_iter()
-                    .map(|route| match route {
-                        SwapRoute::Thorchain {
-                            streaming_interval,
-                            max_streaming_quantity,
-                            previous_swap,
-                            affiliate_code: _,
-                            affiliate_bps: _,
-                        } => SwapRoute::Thorchain {
-                            streaming_interval,
-                            max_streaming_quantity,
-                            previous_swap,
-                            // As per agreement with Rujira
-                            affiliate_code: Some("rj".to_string()),
-                            affiliate_bps: Some(10),
-                        },
-                        _ => route,
-                    })
-                    .collect::<Vec<_>>();
-
-                Action::OptimalSwap(OptimalSwap {
-                    routes: routes_with_affiliates,
-                    ..swap
-                })
-            }
-            Action::Schedule(schedule) => Action::Schedule(Schedule {
-                action: Box::new(Self::add_affiliates(deps, *schedule.action, affiliates)?),
-                ..schedule
-            }),
-            Action::Conditional(conditional) => Action::Conditional(Conditional {
-                action: Box::new(Self::add_affiliates(deps, *conditional.action, affiliates)?),
-                ..conditional
-            }),
-            Action::Many(actions) => {
-                let mut initialised_actions = vec![];
-
-                for action in actions {
-                    initialised_actions.push(Self::add_affiliates(deps, action, affiliates)?);
-                }
-
-                Action::Many(initialised_actions)
-            }
-            _ => action.clone(),
-        })
+        Ok(indexed_strategy)
     }
 }
 
 impl Strategy<Instantiable> {
-    pub fn instantiate_msg(&self, funds: &[Coin]) -> StdResult<CosmosMsg> {
+    pub fn instantiate_msg(self, info: MessageInfo) -> StdResult<CosmosMsg> {
         Ok(WasmMsg::Instantiate2 {
             admin: Some(self.owner.to_string()),
             code_id: self.state.code_id,
-            label: self.state.label.clone(),
-            salt: self.state.salt.clone(),
-            msg: to_json_binary(&self.clone())?,
-            funds: funds.to_vec(),
+            label: self.state.label,
+            salt: self.state.salt,
+            msg: to_json_binary(&StrategyInstantiateMsg {
+                owner: self.owner,
+                action: self.action,
+                state: Indexed {
+                    contract_address: self.state.contract_address.clone(),
+                },
+            })?,
+            funds: info.funds,
         }
         .into())
     }
+}
 
+impl Strategy<Updatable> {
+    pub fn update_msg(self, info: MessageInfo) -> StdResult<CosmosMsg> {
+        Ok(Contract(self.state.contract_address.clone()).call(
+            to_json_binary(&StrategyExecuteMsg::Update(Strategy {
+                owner: self.owner,
+                action: self.action,
+                state: Indexed {
+                    contract_address: self.state.contract_address,
+                },
+            }))?,
+            info.funds,
+        ))
+    }
+}
+
+impl Strategy<Indexed> {
     pub fn init<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
     where
-        F: FnOnce(&mut dyn Storage, Strategy<Idle>) -> StdResult<()>,
+        F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
     {
-        if self.size() > MAX_STRATEGY_ACTIONS {
+        if self.size() > MAX_STRATEGY_SIZE {
+            println!("Strategy size: {}, max: {}", self.size(), MAX_STRATEGY_SIZE);
             return Err(StdError::generic_err(format!(
-                "Strategy size exceeds maximum limit of {MAX_STRATEGY_ACTIONS} actions"
+                "Strategy size exceeds maximum limit of {MAX_STRATEGY_SIZE} actions"
             )));
         }
 
@@ -336,7 +299,7 @@ impl Strategy<Instantiable> {
             Strategy {
                 owner: self.owner,
                 action,
-                state: Idle {
+                state: Committed {
                     contract_address: self.state.contract_address.clone(),
                 },
             },
@@ -348,7 +311,19 @@ impl Strategy<Instantiable> {
     }
 }
 
-impl Strategy<Idle> {
+impl Strategy<Committed> {
+    pub fn activate(self) -> Strategy<Active> {
+        Strategy {
+            owner: self.owner,
+            action: self.action,
+            state: Active {
+                contract_address: self.state.contract_address,
+            },
+        }
+    }
+}
+
+impl Strategy<Active> {
     pub fn prepare_to_execute(self, deps: Deps, env: &Env) -> StdResult<Strategy<Executable>> {
         let (messages, events, action) = self.action.execute(deps, env);
 
@@ -395,19 +370,33 @@ impl Strategy<Idle> {
             },
         })
     }
+
+    pub fn prepare_to_commit(self, deps: Deps, env: &Env) -> StdResult<Strategy<Committable>> {
+        let (messages, events, action) = self.action.commit(deps, env)?;
+
+        Ok(Strategy {
+            owner: self.owner,
+            action,
+            state: Committable {
+                contract_address: self.state.contract_address.clone(),
+                messages,
+                events,
+            },
+        })
+    }
 }
 
-impl Strategy<Executable> {
-    pub fn execute<F>(self, deps: &mut DepsMut, save: F) -> StdResult<Response>
+impl Strategy<Committable> {
+    pub fn commit<F>(self, deps: &mut DepsMut, save: F) -> StdResult<Response>
     where
-        F: FnOnce(&mut dyn Storage, Strategy<Idle>) -> StdResult<()>,
+        F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
     {
         save(
             deps.storage,
             Strategy {
                 owner: self.owner,
                 action: self.action,
-                state: Idle {
+                state: Committed {
                     contract_address: self.state.contract_address.clone(),
                 },
             },
@@ -421,6 +410,45 @@ impl Strategy<Executable> {
                     .map(SubMsg::from)
                     .collect::<Vec<_>>(),
             )
+            .add_events(self.state.events))
+    }
+}
+
+impl Strategy<Executable> {
+    pub fn execute<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
+    where
+        F: FnOnce(&mut dyn Storage, Strategy<Active>) -> StdResult<()>,
+    {
+        if self.state.messages.is_empty() {
+            return Ok(Response::default().add_events(self.state.events));
+        }
+
+        save(
+            deps.storage,
+            Strategy {
+                owner: self.owner,
+                action: self.action,
+                state: Active {
+                    contract_address: self.state.contract_address.clone(),
+                },
+            },
+        )?;
+
+        let commit_message = SubMsg::reply_always(
+            Contract(env.contract.address.clone())
+                .call(to_json_binary(&StrategyExecuteMsg::Commit)?, vec![]),
+            LOG_ERRORS_REPLY_ID,
+        );
+
+        Ok(Response::default()
+            .add_submessages(
+                self.state
+                    .messages
+                    .into_iter()
+                    .map(SubMsg::from)
+                    .collect::<Vec<_>>(),
+            )
+            .add_submessage(commit_message)
             .add_events(self.state.events))
     }
 }

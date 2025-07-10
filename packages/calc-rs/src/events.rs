@@ -8,12 +8,12 @@ use crate::{statistics::Statistics, strategy::StrategyConfig};
 pub enum DomainEvent {
     StrategyCreated {
         contract_address: Addr,
-        config: StrategyConfig,
+        config: Box<StrategyConfig>,
     },
     StrategyUpdated {
         contract_address: Addr,
-        old_config: StrategyConfig,
-        new_config: StrategyConfig,
+        old_config: Box<StrategyConfig>,
+        new_config: Box<StrategyConfig>,
     },
     StrategyExecuted {
         contract_address: Addr,
