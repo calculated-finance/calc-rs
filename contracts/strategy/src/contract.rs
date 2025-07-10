@@ -242,7 +242,7 @@ pub fn execute(
                     CONFIG.save(store, strategy)
                 })?
         }
-        StrategyExecuteMsg::Clear {} => {
+        StrategyExecuteMsg::Clear => {
             if info.sender != env.contract.address && info.sender != config.strategy.owner {
                 return Err(ContractError::Unauthorized {});
             }

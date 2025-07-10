@@ -12,6 +12,7 @@ use crate::{
         schedule::Schedule,
         swaps::swap::Swap,
     },
+    manager::Affiliate,
     strategy::StrategyMsg,
 };
 
@@ -34,6 +35,33 @@ impl Action {
             Action::Schedule(action) => action.action.size() + 1,
             Action::Conditional(action) => action.action.size() + action.condition.size() + 1,
             Action::Many(actions) => actions.iter().map(|a| a.size()).sum::<usize>() + 1,
+        }
+    }
+
+    pub fn add_affiliates(self, affiliates: &Vec<Affiliate>) -> Action {
+        match self {
+            Action::Distribute(distribution) => {
+                Action::Distribute(distribution.with_affiliates(affiliates))
+            }
+            Action::Swap(swap) => Action::Swap(swap.with_affiliates()),
+            Action::Schedule(schedule) => Action::Schedule(Schedule {
+                action: Box::new(Self::add_affiliates(*schedule.action, affiliates)),
+                ..schedule
+            }),
+            Action::Conditional(conditional) => Action::Conditional(Conditional {
+                action: Box::new(Self::add_affiliates(*conditional.action, affiliates)),
+                ..conditional
+            }),
+            Action::Many(actions) => {
+                let mut initialised_actions = vec![];
+
+                for action in actions {
+                    initialised_actions.push(Self::add_affiliates(action, affiliates));
+                }
+
+                Action::Many(initialised_actions)
+            }
+            _ => self,
         }
     }
 }

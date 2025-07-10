@@ -267,7 +267,7 @@ impl LimitOrderState<SetOrder> {
             to_json_binary(&ExecuteMsg::Order((
                 vec![(
                     self.config.side.clone(),
-                    Price::Fixed(self.state.price.clone()),
+                    Price::Fixed(self.state.price),
                     Some(Uint128::zero()),
                 )],
                 None,
@@ -502,7 +502,7 @@ impl StatefulOperation for LimitOrder {
         }
 
         let (remaining, filled) = if let Some(existing_order) = self.current_order.clone() {
-            let order_state = existing_order.refresh(deps, env, &self)?;
+            let order_state = existing_order.refresh(deps, env, self)?;
             (order_state.remaining, order_state.filled)
         } else {
             (Uint128::zero(), Uint128::zero())
@@ -577,7 +577,7 @@ impl StatefulOperation for LimitOrder {
                         pair_address: self.pair_address.clone(),
                         owner: env.contract.address.clone(),
                         side: self.side.clone(),
-                        price: Price::Fixed(actual_order.price.clone()),
+                        price: Price::Fixed(actual_order.price),
                         minimum_filled_amount: None,
                     };
 

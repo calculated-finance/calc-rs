@@ -1,22 +1,19 @@
-use std::{collections::HashSet, hash::Hasher, vec};
+use std::{
+    collections::HashSet,
+    hash::{DefaultHasher, Hasher},
+    vec,
+};
 
-use ahash::AHasher;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Decimal, Deps,
-    DepsMut, Env, Event, MessageInfo, Response, StdError, StdResult, Storage, SubMsg, Uint128,
-    WasmMsg,
+    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Deps, DepsMut, Env,
+    Event, MessageInfo, Response, StdError, StdResult, Storage, SubMsg, WasmMsg,
 };
 
 use crate::{
     actions::{
         action::Action,
-        conditional::Conditional,
-        distribution::{Destination, Distribution, Recipient},
         operation::{StatefulOperation, StatelessOperation},
-        schedule::Schedule,
-        swaps::swap::{Swap, SwapRoute},
-        swaps::thor::ThorchainRoute,
     },
     constants::{LOG_ERRORS_REPLY_ID, MAX_STRATEGY_SIZE, PROCESS_PAYLOAD_REPLY_ID},
     core::Contract,
@@ -171,113 +168,12 @@ pub struct Committed {
 }
 
 impl Strategy<Json> {
-    pub fn with_affiliates(
-        self,
-        deps: Deps,
-        affiliates: &Vec<Affiliate>,
-    ) -> StdResult<Strategy<Indexable>> {
-        let action_with_affiliates = Self::add_affiliates(deps, self.action.clone(), affiliates)?;
-
-        Ok(Strategy {
+    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> Strategy<Indexable> {
+        Strategy {
             owner: self.owner,
-            action: action_with_affiliates,
+            action: self.action.add_affiliates(affiliates),
             state: Indexable,
-        })
-    }
-
-    fn add_affiliates(
-        deps: Deps,
-        action: Action,
-        affiliates: &Vec<Affiliate>,
-    ) -> StdResult<Action> {
-        Ok(match action {
-            Action::Distribute(Distribution {
-                denoms,
-                destinations,
-            }) => {
-                let total_affiliate_bps = affiliates
-                    .iter()
-                    .fold(0, |acc, affiliate| acc + affiliate.bps);
-
-                let mut total_fee_applied_shares = Uint128::zero();
-                let mut total_fee_exempt_shares = Uint128::zero();
-
-                for destination in destinations.iter() {
-                    match &destination.recipient {
-                        Recipient::Bank { .. }
-                        | Recipient::Contract { .. }
-                        | Recipient::Deposit { .. } => {
-                            total_fee_applied_shares += destination.shares;
-                        }
-                        Recipient::Strategy { .. } => {
-                            total_fee_exempt_shares += destination.shares;
-                        }
-                    }
-                }
-
-                let total_fee_shares =
-                    total_fee_applied_shares.mul_ceil(Decimal::bps(total_affiliate_bps));
-
-                if total_fee_shares.is_zero() {
-                    Action::Distribute(Distribution {
-                        denoms: denoms.clone(),
-                        destinations: destinations,
-                    })
-                } else {
-                    Action::Distribute(Distribution {
-                        denoms: denoms.clone(),
-                        destinations: [
-                            destinations.clone(),
-                            affiliates
-                                .iter()
-                                .map(|affiliate| Destination {
-                                    recipient: Recipient::Bank {
-                                        address: affiliate.address.clone(),
-                                    },
-                                    shares: total_fee_applied_shares
-                                        .mul_ceil(Decimal::bps(affiliate.bps)),
-                                    label: Some(affiliate.label.clone()),
-                                })
-                                .collect(),
-                        ]
-                        .concat(),
-                    })
-                }
-            }
-            Action::Swap(swap) => Action::Swap(Swap {
-                routes: swap
-                    .routes
-                    .into_iter()
-                    .map(|route| match route {
-                        SwapRoute::Thorchain(thor_route) => SwapRoute::Thorchain(ThorchainRoute {
-                            affiliate_code: Some("rj".to_string()),
-                            affiliate_bps: Some(10),
-                            ..thor_route
-                        }),
-                        _ => route,
-                    })
-                    .collect(),
-                ..swap
-            }),
-            Action::Schedule(schedule) => Action::Schedule(Schedule {
-                action: Box::new(Self::add_affiliates(deps, *schedule.action, affiliates)?),
-                ..schedule
-            }),
-            Action::Conditional(conditional) => Action::Conditional(Conditional {
-                action: Box::new(Self::add_affiliates(deps, *conditional.action, affiliates)?),
-                ..conditional
-            }),
-            Action::Many(actions) => {
-                let mut initialised_actions = vec![];
-
-                for action in actions {
-                    initialised_actions.push(Self::add_affiliates(deps, action, affiliates)?);
-                }
-
-                Action::Many(initialised_actions)
-            }
-            _ => action.clone(),
-        })
+        }
     }
 }
 
@@ -294,7 +190,7 @@ impl Strategy<Indexable> {
         F: FnOnce(&mut dyn Storage, &Strategy<Instantiable>) -> StdResult<()>,
     {
         let salt_data = to_json_binary(&(self.owner.to_string(), self.clone()))?;
-        let mut hash = AHasher::default();
+        let mut hash = DefaultHasher::new();
         hash.write(salt_data.as_slice());
         let salt = hash.finish().to_le_bytes();
 

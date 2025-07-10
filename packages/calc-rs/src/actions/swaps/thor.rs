@@ -153,7 +153,7 @@ impl Quotable for ThorchainRoute {
                         route.minimum_receive_amount.denom.clone(),
                     );
 
-                    let quote = get_swap_quote(deps, &route)?;
+                    let quote = get_swap_quote(deps, route)?;
 
                     (
                         new_swap_amount,
@@ -170,7 +170,7 @@ impl Quotable for ThorchainRoute {
                     minimum_swap_amount,
                     scalar,
                 } => {
-                    let quote = get_swap_quote(deps, &route)?;
+                    let quote = get_swap_quote(deps, route)?;
 
                     let base_price =
                         Decimal::from_ratio(base_receive_amount.amount, route.swap_amount.amount);
@@ -250,10 +250,10 @@ impl Quotable for ThorchainRoute {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
 
-        let adjusted_quote = get_swap_quote(deps, &route)?;
+        let adjusted_quote = get_swap_quote(deps, route)?;
 
         if let Some(fees) = adjusted_quote.fees {
-            if fees.slippage_bps as u128 > route.maximum_slippage_bps as u128 {
+            if fees.slippage_bps > route.maximum_slippage_bps {
                 return Err(StdError::generic_err(format!(
                     "Slippage BPS ({}) exceeds maximum allowed ({})",
                     fees.slippage_bps, route.maximum_slippage_bps
@@ -379,11 +379,9 @@ impl<S> TryFrom<&SwapQuote<S>> for SwapQuoteRequest {
                     affiliate_bps: affiliate_bps.map_or_else(Vec::new, |b| vec![b]),
                 })
             }
-            _ => {
-                return Err(StdError::generic_err(
-                    "Cannot convert non-Thorchain route to SwapQuoteRequest",
-                ));
-            }
+            _ => Err(StdError::generic_err(
+                "Cannot convert non-Thorchain route to SwapQuoteRequest",
+            )),
         }
     }
 }

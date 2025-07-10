@@ -3,7 +3,7 @@
  *
  * 1. LOG_ERRORS_REPLY_ID is used to log errors from SubMsgs.
  * 2. PROCESS_PAYLOAD_REPLY_ID is used to process payloads from SubMsgs,
- * including committing cached state and confirming statistics updates.
+ *    including committing cached state and confirming statistics updates.
  *
  * We use hand rolled IDs to avoid accidental reply id collisions
  */

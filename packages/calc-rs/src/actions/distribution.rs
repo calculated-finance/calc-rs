@@ -8,6 +8,7 @@ use cosmwasm_std::{
 
 use crate::actions::action::Action;
 use crate::actions::operation::StatelessOperation;
+use crate::manager::Affiliate;
 use crate::statistics::Statistics;
 use crate::strategy::{StrategyMsg, StrategyMsgPayload};
 use crate::thorchain::MsgDeposit;
@@ -70,6 +71,50 @@ pub struct Distribution {
 }
 
 impl Distribution {
+    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> Self {
+        let total_affiliate_bps = affiliates
+            .iter()
+            .fold(0, |acc, affiliate| acc + affiliate.bps);
+
+        let mut total_fee_applied_shares = Uint128::zero();
+        let mut total_fee_exempt_shares = Uint128::zero();
+
+        for destination in self.destinations.iter() {
+            match &destination.recipient {
+                Recipient::Bank { .. } | Recipient::Contract { .. } | Recipient::Deposit { .. } => {
+                    total_fee_applied_shares += destination.shares;
+                }
+                Recipient::Strategy { .. } => {
+                    total_fee_exempt_shares += destination.shares;
+                }
+            }
+        }
+
+        let total_fee_shares = total_fee_applied_shares.mul_ceil(Decimal::bps(total_affiliate_bps));
+
+        if total_fee_shares.is_zero() {
+            self
+        } else {
+            Distribution {
+                denoms: self.denoms.clone(),
+                destinations: [
+                    self.destinations.clone(),
+                    affiliates
+                        .iter()
+                        .map(|affiliate| Destination {
+                            recipient: Recipient::Bank {
+                                address: affiliate.address.clone(),
+                            },
+                            shares: total_fee_applied_shares.mul_ceil(Decimal::bps(affiliate.bps)),
+                            label: Some(affiliate.label.clone()),
+                        })
+                        .collect(),
+                ]
+                .concat(),
+            }
+        }
+    }
+
     pub fn execute_unsafe(
         self,
         deps: Deps,

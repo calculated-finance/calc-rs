@@ -10,7 +10,6 @@ exclude = []
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ahash = "0.8.12"
 anybuf = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 cosmwasm-schema = { workspace = true }

@@ -5,8 +5,9 @@ use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult};
 
 use crate::{
     actions::{
-        action::Action, operation::StatelessOperation, swaps::fin::FinRoute,
-        swaps::thor::ThorchainRoute,
+        action::Action,
+        operation::StatelessOperation,
+        swaps::{fin::FinRoute, thor::ThorchainRoute},
     },
     strategy::StrategyMsg,
 };
@@ -172,6 +173,25 @@ pub struct Swap {
 }
 
 impl Swap {
+    pub fn with_affiliates(self) -> Self {
+        Swap {
+            routes: self
+                .routes
+                .into_iter()
+                .map(|route| match route {
+                    SwapRoute::Thorchain(thor_route) => SwapRoute::Thorchain(ThorchainRoute {
+                        // As per agreement with Rujira
+                        affiliate_code: Some("rj".to_string()),
+                        affiliate_bps: Some(10),
+                        ..thor_route
+                    }),
+                    _ => route,
+                })
+                .collect(),
+            ..self
+        }
+    }
+
     pub fn best_route(&self, deps: Deps, env: &Env) -> StdResult<Option<SwapQuote<Validated>>> {
         Ok(self
             .routes
@@ -290,7 +310,7 @@ impl StatelessOperation for Swap {
             Err(err) => (
                 vec![],
                 vec![SwapEvent::SwapSkipped {
-                    reason: format!("Swap execution failed: {}", err),
+                    reason: format!("Swap execution failed: {err}"),
                 }
                 .into()],
                 Action::Swap(self),

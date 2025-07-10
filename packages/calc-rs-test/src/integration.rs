@@ -1761,7 +1761,6 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
 
         let actions = (1..=11)
-            .into_iter()
             .map(|_| Action::LimitOrder(default_limit_order_action(&harness)))
             .collect::<Vec<_>>();
 
@@ -1790,7 +1789,7 @@ mod integration_tests {
             .instantiate(&[]);
 
         strategy.assert_config(StrategyConfig {
-            manager: manager,
+            manager,
             strategy: Strategy {
                 action: Action::Many(actions),
                 state: Committed {
@@ -2002,7 +2001,6 @@ mod integration_tests {
                 label: None,
             }],
             denoms: vec!["x/ruji".to_string()],
-            ..default_distribution_action(&harness)
         };
 
         let result = StrategyBuilder::new(&mut harness)
@@ -2096,7 +2094,6 @@ mod integration_tests {
         let distribution_action = Distribution {
             denoms: vec!["x/ruji".to_string()],
             destinations: destinations.clone(),
-            ..default_distribution_action(&harness)
         };
 
         let starting_balances = vec![Coin::new(120_000u128, "x/ruji")];
@@ -2204,7 +2201,6 @@ mod integration_tests {
         let distribution_action = Distribution {
             denoms: vec!["eth-usdc".to_string()],
             destinations: destinations.clone(),
-            ..default_distribution_action(&harness)
         };
 
         let starting_balances = vec![Coin::new(100_000u128, "eth-usdc")];
@@ -2272,7 +2268,6 @@ mod integration_tests {
         let distribution_action = Distribution {
             denoms: vec!["x/ruji".to_string()],
             destinations: destinations.clone(),
-            ..default_distribution_action(&harness)
         };
 
         let starting_balances = vec![Coin::new(100_000u128, "x/ruji")];
@@ -2319,7 +2314,6 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
 
         let nested_actions = (1..=11)
-            .into_iter()
             .map(|_| Action::LimitOrder(default_limit_order_action(&harness)))
             .collect::<Vec<_>>();
 
@@ -2379,10 +2373,10 @@ mod integration_tests {
             .instantiate(&[]);
 
         strategy.assert_config(StrategyConfig {
-            manager: manager,
+            manager,
             strategy: Strategy {
-                owner: owner,
-                action: action,
+                owner,
+                action,
                 state: Committed {
                     contract_address: strategy.strategy_addr.clone(),
                 },
@@ -2670,11 +2664,11 @@ mod integration_tests {
         let manager = harness.manager_addr.clone();
         let strategy_action = Action::Swap(default_swap_action(&harness));
 
-        let mut strategy = StrategyBuilder::new(&mut harness)
+        let strategy = StrategyBuilder::new(&mut harness)
             .with_action(strategy_action)
             .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
 
-        StrategyBuilder::new(&mut strategy.harness)
+        StrategyBuilder::new(strategy.harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::StrategyStatus {
                     manager_contract: manager.clone(),
@@ -2686,7 +2680,7 @@ mod integration_tests {
             .instantiate(&funds)
             .assert_swapped(vec![]);
 
-        StrategyBuilder::new(&mut strategy.harness)
+        StrategyBuilder::new(strategy.harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::StrategyStatus {
                     manager_contract: manager,
@@ -2722,11 +2716,11 @@ mod integration_tests {
         let manager = harness.manager_addr.clone();
         let strategy_action = Action::Swap(default_swap_action(&harness));
 
-        let mut strategy = StrategyBuilder::new(&mut harness)
+        let strategy = StrategyBuilder::new(&mut harness)
             .with_action(strategy_action)
             .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
 
-        StrategyBuilder::new(&mut strategy.harness)
+        StrategyBuilder::new(strategy.harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::StrategyStatus {
                     manager_contract: manager.clone(),
@@ -2738,7 +2732,7 @@ mod integration_tests {
             .instantiate(&funds)
             .assert_swapped(vec![]);
 
-        StrategyBuilder::new(&mut strategy.harness)
+        StrategyBuilder::new(strategy.harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::Not(Box::new(Condition::StrategyStatus {
                     manager_contract: manager,
@@ -2774,11 +2768,11 @@ mod integration_tests {
         let manager = harness.manager_addr.clone();
         let strategy_action = Action::Swap(default_swap_action(&harness));
 
-        let mut strategy = StrategyBuilder::new(&mut harness)
+        let strategy = StrategyBuilder::new(&mut harness)
             .with_action(strategy_action)
             .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
 
-        StrategyBuilder::new(&mut strategy.harness)
+        StrategyBuilder::new(strategy.harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::Composite(CompositeCondition {
                     conditions: vec![
@@ -2798,7 +2792,7 @@ mod integration_tests {
             .instantiate(&funds)
             .assert_swapped(vec![]);
 
-        StrategyBuilder::new(&mut strategy.harness)
+        StrategyBuilder::new(strategy.harness)
             .with_action(Action::Conditional(Conditional {
                 condition: Condition::Composite(CompositeCondition {
                     conditions: vec![
@@ -2847,7 +2841,6 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
 
         let nested_actions = (1..=11)
-            .into_iter()
             .map(|_| Action::LimitOrder(default_limit_order_action(&harness)))
             .collect::<Vec<_>>();
 
