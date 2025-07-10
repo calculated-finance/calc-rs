@@ -310,7 +310,7 @@ mod tests {
     use super::*;
     use crate::state::CONFIG;
     use calc_rs::{
-        actions::{action::Action, optimal_swap::SwapAmountAdjustment},
+        actions::action::Action,
         strategy::{Active, Committed, Indexed, Strategy},
     };
     use cosmwasm_std::{

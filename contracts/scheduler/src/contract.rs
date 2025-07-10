@@ -151,7 +151,7 @@ mod create_trigger_tests {
     };
 
     #[test]
-    fn creates_trigger() {
+    fn creates_trigger_correctly() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let owner = deps.api.addr_make("creator");
