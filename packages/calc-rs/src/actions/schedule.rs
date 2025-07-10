@@ -1,11 +1,14 @@
 use std::{collections::HashSet, str::FromStr};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, Addr, Coin, Deps, Env, Event, StdResult};
+use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult};
 use cron::Schedule as CronSchedule;
 
 use crate::{
-    actions::{action::Action, operation::StatelessOperation},
+    actions::{
+        action::Action,
+        operation::{StatefulOperation, StatelessOperation},
+    },
     cadence::Cadence,
     conditions::Condition,
     core::Contract,
@@ -135,5 +138,52 @@ impl StatelessOperation for Schedule {
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::new())
+    }
+}
+
+impl StatefulOperation for Schedule {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let (messages, events, action) = self.action.commit(deps, env)?;
+        Ok((
+            messages,
+            events,
+            Action::Schedule(Schedule {
+                action: Box::new(action),
+                ..self
+            }),
+        ))
+    }
+
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+        self.action.balances(deps, env, denoms)
+    }
+
+    fn withdraw(
+        self,
+        deps: Deps,
+        env: &Env,
+        desired: &HashSet<String>,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let (messages, events, action) = self.action.withdraw(deps, env, desired)?;
+        Ok((
+            messages,
+            events,
+            Action::Schedule(Schedule {
+                action: Box::new(action),
+                ..self
+            }),
+        ))
+    }
+
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let (messages, events, action) = self.action.cancel(deps, env)?;
+        Ok((
+            messages,
+            events,
+            Action::Schedule(Schedule {
+                action: Box::new(action),
+                ..self
+            }),
+        ))
     }
 }

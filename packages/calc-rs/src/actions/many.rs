@@ -62,14 +62,20 @@ impl StatelessOperation for Vec<Action> {
 }
 
 impl StatefulOperation for Vec<Action> {
-    fn commit(self, deps: Deps, env: &Env) -> Action {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         let mut actions = Vec::with_capacity(self.len());
+        let mut messages = vec![];
+        let mut events = vec![];
 
         for action in self.into_iter() {
-            actions.push(action.commit(deps, env));
+            let (action_messages, action_events, action) = action.commit(deps, env)?;
+
+            actions.push(action);
+            messages.extend(action_messages);
+            events.extend(action_events);
         }
 
-        Action::Many(actions)
+        Ok((messages, events, Action::Many(actions)))
     }
 
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {

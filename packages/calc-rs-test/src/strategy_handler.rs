@@ -1,8 +1,8 @@
 use std::{collections::HashSet, fmt::Debug};
 
 use calc_rs::{
-    manager::StrategyStatus, scheduler::ConditionFilter, statistics::Statistics,
-    strategy::StrategyConfig,
+    conditions::Condition, manager::StrategyStatus, scheduler::ConditionFilter,
+    statistics::Statistics, strategy::StrategyConfig,
 };
 use cosmwasm_std::{Addr, Coin, Decimal, Uint128};
 use cw_multi_test::{error::AnyResult, AppResponse};
@@ -89,6 +89,17 @@ impl<'a> StrategyHandler<'a> {
             )
             .unwrap();
 
+        self.harness
+            .execute_filtered_triggers(
+                &self.keeper,
+                ConditionFilter::LimitOrder {
+                    pair_address: self.harness.fin_addr.clone(),
+                    price_range: None,
+                    start_after: None,
+                },
+            )
+            .unwrap();
+
         self
     }
 
@@ -148,7 +159,7 @@ impl<'a> StrategyHandler<'a> {
 
     // Assertion helpers
 
-    pub fn assert_balance(&mut self, expected: &Coin) -> &mut Self {
+    pub fn assert_bank_balance(&mut self, expected: &Coin) -> &mut Self {
         println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
         let balance = self
             .harness
@@ -161,7 +172,7 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
-    pub fn assert_balances(&mut self, expected_balances: Vec<Coin>) -> &mut Self {
+    pub fn assert_bank_balances(&mut self, expected_balances: Vec<Coin>) -> &mut Self {
         println!("[StrategyHandler] Asserting all strategy balances are {expected_balances:#?}");
         let balances = self.harness.query_balances(&self.strategy_addr);
         for expected in &expected_balances {
@@ -175,6 +186,19 @@ impl<'a> StrategyHandler<'a> {
                 "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
             );
         }
+        self
+    }
+
+    pub fn assert_strategy_balance(&mut self, expected: &Coin) -> &mut Self {
+        println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
+        let balances = self
+            .harness
+            .query_strategy_balances(&self.strategy_addr, HashSet::from([expected.denom.clone()]));
+        assert!(
+            // Allow for rounding discrepancies
+            balances.iter().any(|b| b.amount.abs_diff(expected.amount) < Uint128::new(10)),
+            "Expected strategy balance not found: {expected:?}\n\nCurrent strategy balances: {balances:#?}",
+        );
         self
     }
 
@@ -247,6 +271,19 @@ impl<'a> StrategyHandler<'a> {
             config, expected_config,
             "Expected config does not match current config: expected {expected_config:#?}, got {config:#?}"
         );
+        self
+    }
+
+    pub fn assert_triggers(&mut self, expected_triggers: Vec<Condition>) -> &mut Self {
+        println!("[StrategyHandler] Asserting strategy triggers are {expected_triggers:#?}");
+        let triggers = self.harness.query_triggers(&self.strategy_addr);
+        for condition in expected_triggers {
+            let actual = triggers.iter().find(|t| t.condition == condition);
+            assert!(
+                actual.is_some(),
+                "Expected trigger not found: {condition:#?}\n\nAll triggers: {triggers:#?}"
+            );
+        }
         self
     }
 

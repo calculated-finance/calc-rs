@@ -1,7 +1,7 @@
 use std::vec;
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Decimal, Deps, Env, Timestamp};
+use cosmwasm_std::{Addr, Coin, Deps, Env, StdResult, Timestamp, Uint128};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
@@ -34,7 +34,7 @@ pub enum Condition {
         owner: Addr,
         side: Side,
         price: Price,
-        rate: Decimal,
+        minimum_filled_amount: Option<Uint128>,
     },
     BalanceAvailable {
         address: Addr,
@@ -53,8 +53,25 @@ pub enum Condition {
 }
 
 impl Condition {
-    pub fn is_satisfied(&self, deps: Deps, env: &Env) -> bool {
+    pub fn size(&self) -> usize {
         match self {
+            Condition::TimestampElapsed(_) => 1,
+            Condition::BlocksCompleted(_) => 1,
+            Condition::CanSwap { .. } => 2,
+            Condition::LimitOrderFilled { .. } => 2,
+            Condition::BalanceAvailable { .. } => 1,
+            Condition::StrategyBalanceAvailable { .. } => 1,
+            Condition::StrategyStatus { .. } => 2,
+            Condition::Not(condition) => condition.size(),
+            Condition::Composite(CompositeCondition {
+                conditions,
+                threshold: _,
+            }) => conditions.iter().map(|c| c.size()).sum::<usize>() + 1,
+        }
+    }
+
+    pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {
+        Ok(match self {
             Condition::TimestampElapsed(timestamp) => env.block.time > *timestamp,
             Condition::BlocksCompleted(height) => env.block.height > *height,
             Condition::LimitOrderFilled {
@@ -62,18 +79,16 @@ impl Condition {
                 owner,
                 side,
                 price,
-                ..
+                minimum_filled_amount,
             } => {
                 let order = deps.querier.query_wasm_smart::<OrderResponse>(
                     pair_address,
                     &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
-                );
+                )?;
 
-                if let Ok(order) = order {
-                    order.remaining.is_zero()
-                } else {
-                    false
-                }
+                minimum_filled_amount.map_or(order.remaining.is_zero(), |minimum_filled_amount| {
+                    order.filled >= minimum_filled_amount
+                })
             }
             Condition::CanSwap {
                 swap_amount,
@@ -112,33 +127,19 @@ impl Condition {
                             previous_swap: previous_swap.clone(),
                         },
                     ),
-                };
+                }?;
 
-                if let Ok(expected_receive_amount) = expected_receive_amount {
-                    expected_receive_amount.amount >= minimum_receive_amount.amount
-                } else {
-                    false
-                }
+                expected_receive_amount.amount >= minimum_receive_amount.amount
             }
             Condition::BalanceAvailable { address, amount } => {
-                let balance = deps.querier.query_balance(address, amount.denom.clone());
-
-                if let Ok(balance) = balance {
-                    balance.amount >= amount.amount
-                } else {
-                    false
-                }
+                let balance = deps.querier.query_balance(address, amount.denom.clone())?;
+                balance.amount >= amount.amount
             }
             Condition::StrategyBalanceAvailable { amount } => {
                 let balance = deps
                     .querier
-                    .query_balance(&env.contract.address, amount.denom.clone());
-
-                if let Ok(balance) = balance {
-                    balance.amount >= amount.amount
-                } else {
-                    false
-                }
+                    .query_balance(&env.contract.address, amount.denom.clone())?;
+                balance.amount >= amount.amount
             }
             Condition::StrategyStatus {
                 manager_contract,
@@ -150,23 +151,28 @@ impl Condition {
                     &ManagerQueryMsg::Strategy {
                         address: contract_address.clone(),
                     },
-                );
-
-                if let Ok(strategy) = strategy {
-                    strategy.status == *status
-                } else {
-                    false
-                }
+                )?;
+                strategy.status == *status
             }
-            Condition::Not(condition) => !condition.is_satisfied(deps, env),
+            Condition::Not(condition) => !condition.is_satisfied(deps, env)?,
             Condition::Composite(CompositeCondition {
                 conditions,
                 threshold,
             }) => match threshold {
-                Threshold::All => conditions.iter().all(|c| c.is_satisfied(deps, env)),
-                Threshold::Any => conditions.iter().any(|c| c.is_satisfied(deps, env)),
+                Threshold::All => conditions
+                    .iter()
+                    .map(|c| c.is_satisfied(deps, env))
+                    .collect::<StdResult<Vec<bool>>>()?
+                    .into_iter()
+                    .all(|b| b),
+                Threshold::Any => conditions
+                    .iter()
+                    .map(|c| c.is_satisfied(deps, env))
+                    .collect::<StdResult<Vec<bool>>>()?
+                    .into_iter()
+                    .any(|b| b),
             },
-        }
+        })
     }
 
     pub fn description(&self, env: &Env) -> String {
@@ -222,23 +228,6 @@ impl Condition {
             }
         }
     }
-
-    pub fn size(&self) -> usize {
-        match self {
-            Condition::TimestampElapsed(_) => 1,
-            Condition::BlocksCompleted(_) => 1,
-            Condition::CanSwap { .. } => 1,
-            Condition::LimitOrderFilled { .. } => 1,
-            Condition::BalanceAvailable { .. } => 1,
-            Condition::StrategyBalanceAvailable { .. } => 1,
-            Condition::StrategyStatus { .. } => 1,
-            Condition::Not(condition) => condition.size() + 1,
-            Condition::Composite(CompositeCondition {
-                conditions,
-                threshold: _,
-            }) => conditions.iter().map(|c| c.size()).sum::<usize>() + 1,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -260,12 +249,16 @@ mod conditions_tests {
         let env = mock_env();
 
         assert!(Condition::TimestampElapsed(env.block.time.minus_seconds(1))
-            .is_satisfied(deps.as_ref(), &env));
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
 
-        assert!(!Condition::TimestampElapsed(env.block.time).is_satisfied(deps.as_ref(), &env));
+        assert!(!Condition::TimestampElapsed(env.block.time)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
 
         assert!(!Condition::TimestampElapsed(env.block.time.plus_seconds(1))
-            .is_satisfied(deps.as_ref(), &env));
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
     }
 
     #[test]
@@ -273,13 +266,18 @@ mod conditions_tests {
         let deps = mock_dependencies();
         let env = mock_env();
 
-        assert!(Condition::BlocksCompleted(0).is_satisfied(deps.as_ref(), &env));
-
-        assert!(Condition::BlocksCompleted(env.block.height - 1).is_satisfied(deps.as_ref(), &env));
-
-        assert!(!Condition::BlocksCompleted(env.block.height).is_satisfied(deps.as_ref(), &env));
-
-        assert!(!Condition::BlocksCompleted(env.block.height + 1).is_satisfied(deps.as_ref(), &env));
+        assert!(Condition::BlocksCompleted(0)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
+        assert!(Condition::BlocksCompleted(env.block.height - 1)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
+        assert!(!Condition::BlocksCompleted(env.block.height)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
+        assert!(!Condition::BlocksCompleted(env.block.height + 1)
+            .is_satisfied(deps.as_ref(), &env)
+            .unwrap());
     }
 
     #[test]
@@ -291,13 +289,15 @@ mod conditions_tests {
             address: env.contract.address.clone(),
             amount: Coin::new(0u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(!Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(1u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         deps.querier.bank.update_balance(
             env.contract.address.clone(),
@@ -308,19 +308,22 @@ mod conditions_tests {
             address: env.contract.address.clone(),
             amount: Coin::new(99u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(100u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(!Condition::BalanceAvailable {
             address: env.contract.address.clone(),
             amount: Coin::new(101u128, "rune"),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 
     #[test]
@@ -343,21 +346,24 @@ mod conditions_tests {
             minimum_receive_amount: Coin::new(101u128, "rune"),
             route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(Condition::CanSwap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(100u128, "rune"),
             route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(Condition::CanSwap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(99u128, "rune"),
             route: SwapRoute::Fin(Addr::unchecked("fin_pair")),
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 
     #[test]
@@ -386,9 +392,20 @@ mod conditions_tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            rate: Decimal::from_str("1.0").unwrap(),
+            minimum_filled_amount: None
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
+
+        assert!(Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
+            minimum_filled_amount: Some(Uint128::new(100)),
+        }
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
@@ -411,9 +428,10 @@ mod conditions_tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            rate: Decimal::from_str("1.0").unwrap(),
+            minimum_filled_amount: None
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 
     #[test]
@@ -444,13 +462,58 @@ mod conditions_tests {
             contract_address: strategy_address.clone(),
             status: StrategyStatus::Active,
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
 
         assert!(!Condition::StrategyStatus {
             manager_contract: Addr::unchecked("manager"),
             contract_address: strategy_address.clone(),
             status: StrategyStatus::Paused,
         }
-        .is_satisfied(deps.as_ref(), &env));
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
+    }
+
+    #[test]
+    fn not_satisfied_check() {
+        let deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(
+            !Condition::Not(Box::new(Condition::BlocksCompleted(env.block.height - 1)))
+                .is_satisfied(deps.as_ref(), &env)
+                .unwrap()
+        );
+        assert!(
+            Condition::Not(Box::new(Condition::BlocksCompleted(env.block.height)))
+                .is_satisfied(deps.as_ref(), &env)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn composite_condition_check() {
+        let deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(!Condition::Composite(CompositeCondition {
+            conditions: vec![
+                Condition::BlocksCompleted(env.block.height - 1),
+                Condition::BlocksCompleted(env.block.height),
+            ],
+            threshold: Threshold::All,
+        })
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
+
+        assert!(Condition::Composite(CompositeCondition {
+            conditions: vec![
+                Condition::BlocksCompleted(env.block.height - 1),
+                Condition::BlocksCompleted(env.block.height),
+            ],
+            threshold: Threshold::Any,
+        })
+        .is_satisfied(deps.as_ref(), &env)
+        .unwrap());
     }
 }

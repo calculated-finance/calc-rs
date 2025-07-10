@@ -13,7 +13,9 @@ use crate::{
         action::Action,
         operation::{StatefulOperation, StatelessOperation},
     },
+    conditions::Condition,
     core::Contract,
+    scheduler::SchedulerExecuteMsg,
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
@@ -38,6 +40,7 @@ impl LimitOrderEventData {
 enum LimitOrderEvent {
     SetOrderSkipped { reason: String },
     SetOrder(LimitOrderEventData),
+    CreateTrigger { condition: Condition },
     WithdrawOrderSkipped { reason: String },
     WithdrawOrder(LimitOrderEventData),
 }
@@ -49,6 +52,9 @@ impl From<LimitOrderEvent> for Event {
                 Event::new("set_order_skipped").add_attribute("reason", reason)
             }
             LimitOrderEvent::SetOrder(data) => data.to_event("set_order"),
+            LimitOrderEvent::CreateTrigger { condition } => {
+                Event::new("trigger_created").add_attribute("condition", format!("{condition:?}"))
+            }
             LimitOrderEvent::WithdrawOrderSkipped { reason } => {
                 Event::new("withdraw_order_skipped").add_attribute("reason", reason)
             }
@@ -567,18 +573,48 @@ impl StatefulOperation for LimitOrder {
         }
     }
 
-    fn commit(self, deps: Deps, env: &Env) -> Action {
-        Action::LimitOrder(if let Some(existing_order) = self.current_order.clone() {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        if let Some(existing_order) = self.current_order.clone() {
             match existing_order.refresh(deps, env, &self) {
-                Ok(_) => self,
-                Err(_) => LimitOrder {
-                    // Wipe the cached order if it does not exist
-                    current_order: None,
-                    ..self
-                },
+                Ok(actual_order) => {
+                    let trigger_condition = Condition::LimitOrderFilled {
+                        pair_address: self.pair_address.clone(),
+                        owner: env.contract.address.clone(),
+                        side: self.side.clone(),
+                        price: Price::Fixed(actual_order.price.clone()),
+                        minimum_filled_amount: None,
+                    };
+
+                    let set_trigger_msg =
+                        StrategyMsg::without_payload(Contract(self.scheduler.clone()).call(
+                            to_json_binary(&SchedulerExecuteMsg::Create(
+                                trigger_condition.clone(),
+                            ))?,
+                            vec![],
+                        ));
+
+                    let set_trigger_event = LimitOrderEvent::CreateTrigger {
+                        condition: trigger_condition,
+                    };
+
+                    Ok((
+                        vec![set_trigger_msg],
+                        vec![set_trigger_event.into()],
+                        Action::LimitOrder(self),
+                    ))
+                }
+                Err(_) => Ok((
+                    vec![],
+                    vec![],
+                    Action::LimitOrder(LimitOrder {
+                        // Wipe the cached order if it does not exist
+                        current_order: None,
+                        ..self
+                    }),
+                )),
             }
         } else {
-            self
-        })
+            Ok((vec![], vec![], Action::LimitOrder(self)))
+        }
     }
 }

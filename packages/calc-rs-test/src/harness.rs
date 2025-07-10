@@ -348,6 +348,20 @@ impl CalcTestApp {
             .unwrap();
     }
 
+    pub fn query_triggers(&self, owner: &Addr) -> Vec<Trigger> {
+        self.app
+            .wrap()
+            .query_wasm_smart(
+                self.scheduler_addr.clone(),
+                &SchedulerQueryMsg::Owned {
+                    owner: owner.clone(),
+                    limit: None,
+                    start_after: None,
+                },
+            )
+            .unwrap()
+    }
+
     pub fn query_strategy(&self, strategy_addr: &Addr) -> StrategyHandle {
         self.app
             .wrap()
@@ -371,6 +385,17 @@ impl CalcTestApp {
         self.app
             .wrap()
             .query_wasm_smart(strategy_addr, &StrategyQueryMsg::Statistics {})
+            .unwrap()
+    }
+
+    pub fn query_strategy_balances(
+        &self,
+        strategy_addr: &Addr,
+        denoms: HashSet<String>,
+    ) -> Vec<Coin> {
+        self.app
+            .wrap()
+            .query_wasm_smart(strategy_addr, &StrategyQueryMsg::Balances(denoms))
             .unwrap()
     }
 

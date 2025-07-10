@@ -18,8 +18,6 @@ use cosmwasm_std::{
 
 use crate::state::{ACTIVE_STRATEGY, CONFIG, ESCROWED, STATE, STATS};
 
-const MAX_BEHAVIOUR_ACTIONS: usize = 10;
-
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     mut deps: DepsMut,
@@ -27,12 +25,6 @@ pub fn instantiate(
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
-    if msg.size() > MAX_BEHAVIOUR_ACTIONS {
-        return Err(ContractError::generic_err(format!(
-            "Behaviour cannot exceed {MAX_BEHAVIOUR_ACTIONS} actions"
-        )));
-    }
-
     // Collate escrowed denoms & initialise the strategy
     let escrowed = msg.escrowed(deps.as_ref(), &env)?;
     let response = msg.init(&mut deps, &env, |storage, strategy| {
@@ -229,12 +221,13 @@ pub fn execute(
             }
 
             let active_strategy = ACTIVE_STRATEGY.load(deps.storage)?;
-            let committed_strategy = active_strategy.commit(deps.as_ref(), &env)?;
 
-            ACTIVE_STRATEGY.remove(deps.storage);
-            CONFIG.save(deps.storage, committed_strategy)?;
-
-            Response::default()
+            active_strategy
+                .prepare_to_commit(deps.as_ref(), &env)?
+                .commit(&mut deps, |store, strategy| {
+                    ACTIVE_STRATEGY.remove(store);
+                    CONFIG.save(store, strategy)
+                })?
         }
         StrategyExecuteMsg::Clear {} => {
             if info.sender != env.contract.address && info.sender != config.strategy.owner {
@@ -243,7 +236,7 @@ pub fn execute(
 
             STATE.remove(deps.storage);
 
-            // Hard return to avoid sending another clear state message
+            // Avoid sending another clear state message
             return Ok(Response::default());
         }
     };
@@ -309,5 +302,513 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
 
             to_json_binary(&balances.to_vec())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::CONFIG;
+    use calc_rs::{
+        actions::{action::Action, optimal_swap::SwapAmountAdjustment},
+        strategy::{Active, Committed, Indexed, Strategy},
+    };
+    use cosmwasm_std::{
+        testing::{message_info, mock_dependencies, mock_env},
+        Addr,
+    };
+
+    #[test]
+    fn test_only_manager_can_invoke_update() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("owner");
+        let manager = Addr::unchecked("manager");
+
+        let strategy = Strategy {
+            owner: owner.clone(),
+            action: Action::Many(vec![]),
+            state: Indexed {
+                contract_address: env.contract.address.clone(),
+            },
+        };
+
+        CONFIG
+            .init(
+                deps.as_mut().storage,
+                StrategyConfig {
+                    manager: manager.clone(),
+                    strategy: Strategy {
+                        owner: strategy.owner.clone(),
+                        action: strategy.action.clone(),
+                        state: Committed {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    },
+                    escrowed: HashSet::new(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&owner, &[]),
+                StrategyExecuteMsg::Update(strategy.clone())
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&env.contract.address, &[]),
+                StrategyExecuteMsg::Update(strategy.clone())
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&Addr::unchecked("anyone"), &[]),
+                StrategyExecuteMsg::Update(strategy.clone())
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+    }
+
+    #[test]
+    fn test_only_manager_and_contract_can_invoke_execute() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("owner");
+        let manager = Addr::unchecked("manager");
+
+        let strategy = Strategy {
+            owner: owner.clone(),
+            action: Action::Many(vec![]),
+            state: Indexed {
+                contract_address: env.contract.address.clone(),
+            },
+        };
+
+        CONFIG
+            .init(
+                deps.as_mut().storage,
+                StrategyConfig {
+                    manager: manager.clone(),
+                    strategy: Strategy {
+                        owner: strategy.owner.clone(),
+                        action: strategy.action.clone(),
+                        state: Committed {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    },
+                    escrowed: HashSet::new(),
+                },
+            )
+            .unwrap();
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&manager, &[]),
+            StrategyExecuteMsg::Execute
+        )
+        .is_ok());
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&env.contract.address, &[]),
+            StrategyExecuteMsg::Execute
+        )
+        .is_ok());
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&owner, &[]),
+                StrategyExecuteMsg::Execute
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&Addr::unchecked("anyone"), &[]),
+                StrategyExecuteMsg::Execute
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+    }
+
+    #[test]
+    fn test_only_owner_and_contract_can_invoke_withdraw() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("owner");
+        let manager = Addr::unchecked("manager");
+
+        let strategy = Strategy {
+            owner: owner.clone(),
+            action: Action::Many(vec![]),
+            state: Indexed {
+                contract_address: env.contract.address.clone(),
+            },
+        };
+
+        CONFIG
+            .init(
+                deps.as_mut().storage,
+                StrategyConfig {
+                    manager: manager.clone(),
+                    strategy: Strategy {
+                        owner: strategy.owner.clone(),
+                        action: strategy.action.clone(),
+                        state: Committed {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    },
+                    escrowed: HashSet::new(),
+                },
+            )
+            .unwrap();
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&owner, &[]),
+            StrategyExecuteMsg::Withdraw(HashSet::new())
+        )
+        .is_ok());
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&env.contract.address, &[]),
+            StrategyExecuteMsg::Withdraw(HashSet::new())
+        )
+        .is_ok());
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&manager, &[]),
+                StrategyExecuteMsg::Withdraw(HashSet::new())
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&Addr::unchecked("anyone"), &[]),
+                StrategyExecuteMsg::Withdraw(HashSet::new())
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+    }
+
+    #[test]
+    fn test_only_manager_can_invoke_update_status() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("owner");
+        let manager = Addr::unchecked("manager");
+
+        let strategy = Strategy {
+            owner: owner.clone(),
+            action: Action::Many(vec![]),
+            state: Indexed {
+                contract_address: env.contract.address.clone(),
+            },
+        };
+
+        CONFIG
+            .init(
+                deps.as_mut().storage,
+                StrategyConfig {
+                    manager: manager.clone(),
+                    strategy: Strategy {
+                        owner: strategy.owner.clone(),
+                        action: strategy.action.clone(),
+                        state: Committed {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    },
+                    escrowed: HashSet::new(),
+                },
+            )
+            .unwrap();
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&manager, &[]),
+            StrategyExecuteMsg::UpdateStatus(StrategyStatus::Archived)
+        )
+        .is_ok());
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&env.contract.address, &[]),
+                StrategyExecuteMsg::UpdateStatus(StrategyStatus::Archived)
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&owner, &[]),
+                StrategyExecuteMsg::UpdateStatus(StrategyStatus::Archived)
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&Addr::unchecked("anyone"), &[]),
+                StrategyExecuteMsg::UpdateStatus(StrategyStatus::Archived)
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+    }
+
+    #[test]
+    fn test_only_contract_can_invoke_commit() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("owner");
+        let manager = Addr::unchecked("manager");
+
+        let strategy = Strategy {
+            owner: owner.clone(),
+            action: Action::Many(vec![]),
+            state: Indexed {
+                contract_address: env.contract.address.clone(),
+            },
+        };
+
+        CONFIG
+            .init(
+                deps.as_mut().storage,
+                StrategyConfig {
+                    manager: manager.clone(),
+                    strategy: Strategy {
+                        owner: strategy.owner.clone(),
+                        action: strategy.action.clone(),
+                        state: Committed {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    },
+                    escrowed: HashSet::new(),
+                },
+            )
+            .unwrap();
+
+        ACTIVE_STRATEGY
+            .save(
+                deps.as_mut().storage,
+                &Strategy {
+                    owner: strategy.owner.clone(),
+                    action: strategy.action.clone(),
+                    state: Active {
+                        contract_address: env.contract.address.clone(),
+                    },
+                },
+            )
+            .unwrap();
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&env.contract.address, &[]),
+            StrategyExecuteMsg::Commit
+        )
+        .is_ok());
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&manager, &[]),
+                StrategyExecuteMsg::Commit
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&owner, &[]),
+                StrategyExecuteMsg::Commit
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&Addr::unchecked("anyone"), &[]),
+                StrategyExecuteMsg::Commit
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+    }
+
+    #[test]
+    fn test_only_contract_and_owner_can_invoke_clear() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("owner");
+        let manager = Addr::unchecked("manager");
+
+        let strategy = Strategy {
+            owner: owner.clone(),
+            action: Action::Many(vec![]),
+            state: Indexed {
+                contract_address: env.contract.address.clone(),
+            },
+        };
+
+        CONFIG
+            .init(
+                deps.as_mut().storage,
+                StrategyConfig {
+                    manager: manager.clone(),
+                    strategy: Strategy {
+                        owner: strategy.owner.clone(),
+                        action: strategy.action.clone(),
+                        state: Committed {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    },
+                    escrowed: HashSet::new(),
+                },
+            )
+            .unwrap();
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&env.contract.address, &[]),
+            StrategyExecuteMsg::Clear {}
+        )
+        .is_ok());
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&owner, &[]),
+            StrategyExecuteMsg::Clear {}
+        )
+        .is_ok());
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&manager, &[]),
+                StrategyExecuteMsg::Clear {}
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&Addr::unchecked("anyone"), &[]),
+                StrategyExecuteMsg::Clear {}
+            ),
+            Err(ContractError::Unauthorized {})
+        );
+    }
+
+    #[test]
+    fn test_cannot_execute_if_already_in_state() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        STATE
+            .save(deps.as_mut().storage, &StrategyExecuteMsg::Execute)
+            .unwrap();
+
+        assert_eq!(
+            execute(
+                deps.as_mut(),
+                env.clone(),
+                message_info(&env.contract.address, &[]),
+                StrategyExecuteMsg::Execute
+            ),
+            Err(ContractError::generic_err(
+                "Contract is already in the Execute state, cannot execute again"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_clears_the_state() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("owner");
+        let manager = Addr::unchecked("manager");
+
+        let strategy = Strategy {
+            owner: owner.clone(),
+            action: Action::Many(vec![]),
+            state: Indexed {
+                contract_address: env.contract.address.clone(),
+            },
+        };
+
+        CONFIG
+            .init(
+                deps.as_mut().storage,
+                StrategyConfig {
+                    manager: manager.clone(),
+                    strategy: Strategy {
+                        owner: strategy.owner.clone(),
+                        action: strategy.action.clone(),
+                        state: Committed {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    },
+                    escrowed: HashSet::new(),
+                },
+            )
+            .unwrap();
+
+        STATE
+            .save(deps.as_mut().storage, &StrategyExecuteMsg::Execute)
+            .unwrap();
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&env.contract.address, &[]),
+            StrategyExecuteMsg::Clear
+        )
+        .is_ok());
+
+        assert!(!STATE.exists(deps.as_ref().storage));
     }
 }

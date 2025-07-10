@@ -4,7 +4,8 @@ use ahash::AHasher;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
     instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Decimal, Deps,
-    DepsMut, Env, Event, Response, StdError, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+    DepsMut, Env, Event, MessageInfo, Response, StdError, StdResult, Storage, SubMsg, Uint128,
+    WasmMsg,
 };
 
 use crate::{
@@ -17,13 +18,11 @@ use crate::{
         schedule::Schedule,
         thor_swap::ThorSwap,
     },
-    constants::{LOG_ERRORS_REPLY_ID, PROCESS_PAYLOAD_REPLY_ID},
+    constants::{LOG_ERRORS_REPLY_ID, MAX_STRATEGY_SIZE, PROCESS_PAYLOAD_REPLY_ID},
     core::Contract,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
 };
-
-pub const MAX_STRATEGY_ACTIONS: usize = 10;
 
 #[cw_serde]
 pub struct StrategyConfig {
@@ -32,13 +31,13 @@ pub struct StrategyConfig {
     pub escrowed: HashSet<String>,
 }
 
-pub type StrategyInstantiateMsg = Strategy<Instantiable>;
+pub type StrategyInstantiateMsg = Strategy<Indexed>;
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
     Execute,
     Withdraw(HashSet<String>),
-    Update(Strategy<Instantiable>),
+    Update(Strategy<Indexed>),
     UpdateStatus(StrategyStatus),
     Commit,
     Clear,
@@ -126,18 +125,25 @@ impl From<StrategyMsg> for SubMsg {
 pub struct Json;
 
 #[cw_serde]
-pub struct New {
-    code_id: u64,
-    creator: Addr,
+pub struct New;
+
+#[cw_serde]
+pub struct Indexable;
+
+pub struct Instantiable {
+    pub contract_address: Addr,
     label: String,
+    salt: Binary,
+    code_id: u64,
+}
+
+pub struct Updatable {
+    pub contract_address: Addr,
 }
 
 #[cw_serde]
-pub struct Instantiable {
+pub struct Indexed {
     pub contract_address: Addr,
-    salt: Binary,
-    code_id: u64,
-    label: String,
 }
 
 #[cw_serde]
@@ -153,60 +159,29 @@ pub struct Executable {
 }
 
 #[cw_serde]
+pub struct Committable {
+    pub contract_address: Addr,
+    messages: Vec<StrategyMsg>,
+    events: Vec<Event>,
+}
+
+#[cw_serde]
 pub struct Committed {
     pub contract_address: Addr,
 }
 
 impl Strategy<Json> {
-    pub fn to_new(self, code_id: u64, creator: Addr, label: String) -> Strategy<New> {
-        Strategy {
-            owner: self.owner,
-            action: self.action,
-            state: New {
-                code_id,
-                creator,
-                label,
-            },
-        }
-    }
-}
-
-impl Strategy<New> {
     pub fn with_affiliates(
         self,
         deps: Deps,
         affiliates: &Vec<Affiliate>,
-    ) -> StdResult<Strategy<Instantiable>> {
+    ) -> StdResult<Strategy<Indexable>> {
         let action_with_affiliates = Self::add_affiliates(deps, self.action.clone(), affiliates)?;
-        let salt_data = to_json_binary(&(self.owner.to_string(), action_with_affiliates.clone()))?;
-
-        let mut hash = AHasher::default();
-        hash.write(salt_data.as_slice());
-        let salt = hash.finish().to_le_bytes();
-
-        let contract_address = deps.api.addr_humanize(
-            &instantiate2_address(
-                deps.querier
-                    .query_wasm_code_info(self.state.code_id)?
-                    .checksum
-                    .as_slice(),
-                &deps.api.addr_canonicalize(self.state.creator.as_str())?,
-                &salt,
-            )
-            .map_err(|e| {
-                StdError::generic_err(format!("Failed to instantiate contract address: {e}"))
-            })?,
-        )?;
 
         Ok(Strategy {
             owner: self.owner,
             action: action_with_affiliates,
-            state: Instantiable {
-                code_id: self.state.code_id,
-                salt: Binary::from(salt),
-                label: self.state.label,
-                contract_address,
-            },
+            state: Indexable,
         })
     }
 
@@ -223,17 +198,6 @@ impl Strategy<New> {
                 let total_affiliate_bps = affiliates
                     .iter()
                     .fold(0, |acc, affiliate| acc + affiliate.bps);
-
-                // let total_fee_applied_shares = destinations
-                //     .iter()
-                //     .filter(|d| match d.recipient {
-                //         Recipient::Bank { .. }
-                //         | Recipient::Contract { .. }
-                //         | Recipient::Deposit { .. } => true,
-                //         // We don't take fees on transfers between strategies
-                //         Recipient::Strategy { .. } => false,
-                //     })
-                //     .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
                 let mut total_fee_applied_shares = Uint128::zero();
                 let mut total_fee_exempt_shares = Uint128::zero();
@@ -336,26 +300,118 @@ impl Strategy<New> {
     }
 }
 
+impl Strategy<Indexable> {
+    pub fn add_to_index<F>(
+        self,
+        deps: &mut DepsMut,
+        env: &Env,
+        code_id: u64,
+        label: String,
+        save: F,
+    ) -> StdResult<Strategy<Instantiable>>
+    where
+        F: FnOnce(&mut dyn Storage, &Strategy<Instantiable>) -> StdResult<()>,
+    {
+        let salt_data = to_json_binary(&(self.owner.to_string(), self.clone()))?;
+        let mut hash = AHasher::default();
+        hash.write(salt_data.as_slice());
+        let salt = hash.finish().to_le_bytes();
+
+        let contract_address = deps.api.addr_humanize(
+            &instantiate2_address(
+                deps.querier
+                    .query_wasm_code_info(code_id)?
+                    .checksum
+                    .as_slice(),
+                &deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                &salt,
+            )
+            .map_err(|e| {
+                StdError::generic_err(format!("Failed to instantiate contract address: {e}"))
+            })?,
+        )?;
+
+        let instantiable_strategy = Strategy {
+            owner: self.owner.clone(),
+            action: self.action.clone(),
+            state: Instantiable {
+                contract_address,
+                label,
+                salt: Binary::from(salt),
+                code_id,
+            },
+        };
+
+        save(deps.storage, &instantiable_strategy)?;
+
+        Ok(instantiable_strategy)
+    }
+
+    pub fn update_index<F>(
+        self,
+        deps: &mut DepsMut,
+        contract_address: Addr,
+        save: F,
+    ) -> StdResult<Strategy<Updatable>>
+    where
+        F: FnOnce(&mut dyn Storage) -> StdResult<()>,
+    {
+        let indexed_strategy = Strategy {
+            owner: self.owner.clone(),
+            action: self.action.clone(),
+            state: Updatable { contract_address },
+        };
+
+        save(deps.storage)?;
+
+        Ok(indexed_strategy)
+    }
+}
+
 impl Strategy<Instantiable> {
-    pub fn instantiate_msg(&self, funds: &[Coin]) -> StdResult<CosmosMsg> {
+    pub fn instantiate_msg(self, info: MessageInfo) -> StdResult<CosmosMsg> {
         Ok(WasmMsg::Instantiate2 {
             admin: Some(self.owner.to_string()),
             code_id: self.state.code_id,
-            label: self.state.label.clone(),
-            salt: self.state.salt.clone(),
-            msg: to_json_binary(&self.clone())?,
-            funds: funds.to_vec(),
+            label: self.state.label,
+            salt: self.state.salt,
+            msg: to_json_binary(&StrategyInstantiateMsg {
+                owner: self.owner,
+                action: self.action,
+                state: Indexed {
+                    contract_address: self.state.contract_address.clone(),
+                },
+            })?,
+            funds: info.funds,
         }
         .into())
     }
+}
 
+impl Strategy<Updatable> {
+    pub fn update_msg(self, info: MessageInfo) -> StdResult<CosmosMsg> {
+        Ok(Contract(self.state.contract_address.clone()).call(
+            to_json_binary(&StrategyExecuteMsg::Update(Strategy {
+                owner: self.owner,
+                action: self.action,
+                state: Indexed {
+                    contract_address: self.state.contract_address,
+                },
+            }))?,
+            info.funds,
+        ))
+    }
+}
+
+impl Strategy<Indexed> {
     pub fn init<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
     where
         F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
     {
-        if self.size() > MAX_STRATEGY_ACTIONS {
+        if self.size() > MAX_STRATEGY_SIZE {
+            println!("Strategy size: {}, max: {}", self.size(), MAX_STRATEGY_SIZE);
             return Err(StdError::generic_err(format!(
-                "Strategy size exceeds maximum limit of {MAX_STRATEGY_ACTIONS} actions"
+                "Strategy size exceeds maximum limit of {MAX_STRATEGY_SIZE} actions"
             )));
         }
 
@@ -438,14 +494,46 @@ impl Strategy<Active> {
         })
     }
 
-    pub fn commit(self, deps: Deps, env: &Env) -> StdResult<Strategy<Committed>> {
+    pub fn prepare_to_commit(self, deps: Deps, env: &Env) -> StdResult<Strategy<Committable>> {
+        let (messages, events, action) = self.action.commit(deps, env)?;
+
         Ok(Strategy {
             owner: self.owner,
-            action: self.action.commit(deps, env),
-            state: Committed {
+            action,
+            state: Committable {
                 contract_address: self.state.contract_address.clone(),
+                messages,
+                events,
             },
         })
+    }
+}
+
+impl Strategy<Committable> {
+    pub fn commit<F>(self, deps: &mut DepsMut, save: F) -> StdResult<Response>
+    where
+        F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
+    {
+        save(
+            deps.storage,
+            Strategy {
+                owner: self.owner,
+                action: self.action,
+                state: Committed {
+                    contract_address: self.state.contract_address.clone(),
+                },
+            },
+        )?;
+
+        Ok(Response::default()
+            .add_submessages(
+                self.state
+                    .messages
+                    .into_iter()
+                    .map(SubMsg::from)
+                    .collect::<Vec<_>>(),
+            )
+            .add_events(self.state.events))
     }
 }
 

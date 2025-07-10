@@ -11,7 +11,7 @@ pub trait StatelessOperation {
 }
 
 pub trait StatefulOperation: StatelessOperation {
-    fn commit(self, deps: Deps, env: &Env) -> Action;
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)>;
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
     fn withdraw(
         self,
