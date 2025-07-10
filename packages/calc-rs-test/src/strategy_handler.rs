@@ -206,18 +206,9 @@ impl<'a> StrategyHandler<'a> {
         println!("[StrategyHandler] Asserting strategy stats are {expected_stats:#?}");
         let stats = self.harness.query_strategy_stats(&self.strategy_addr);
         assert_eq!(
-            stats.swapped, expected_stats.swapped,
+            stats.outgoing, expected_stats.outgoing,
             "Expected swapped coins do not match current swapped coins: expected {:#?}, got {:#?}",
-            expected_stats.swapped, stats.swapped
-        );
-        assert_eq!(
-            stats.filled, expected_stats.filled,
-            "Expected filled coins do not match current filled coins: expected {:#?}, got {:#?}",
-            expected_stats.filled, stats.filled
-        );
-        assert_eq!(stats.withdrawn, expected_stats.withdrawn,
-            "Expected withdrawn coins do not match current withdrawn coins: expected {:#?}, got {:#?}",
-            expected_stats.withdrawn, stats.withdrawn
+            expected_stats.outgoing, stats.outgoing
         );
 
         for (expected_recipient, expected_coins) in &expected_stats.distributed {
@@ -257,9 +248,9 @@ impl<'a> StrategyHandler<'a> {
         println!("[StrategyHandler] Asserting swapped coins are {expected_swapped:#?}");
         let stats = self.harness.query_strategy_stats(&self.strategy_addr);
         assert_eq!(
-            stats.swapped, expected_swapped,
+            stats.outgoing, expected_swapped,
             "Expected swapped coins do not match current swapped coins: expected {:#?}, got {:#?}",
-            expected_swapped, stats.swapped
+            expected_swapped, stats.outgoing
         );
         self
     }

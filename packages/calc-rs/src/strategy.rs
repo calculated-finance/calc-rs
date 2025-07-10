@@ -523,6 +523,10 @@ impl Strategy<Executable> {
     where
         F: FnOnce(&mut dyn Storage, Strategy<Active>) -> StdResult<()>,
     {
+        if self.state.messages.is_empty() {
+            return Ok(Response::default().add_events(self.state.events));
+        }
+
         save(
             deps.storage,
             Strategy {
@@ -533,10 +537,6 @@ impl Strategy<Executable> {
                 },
             },
         )?;
-
-        if self.state.messages.is_empty() {
-            return Ok(Response::default().add_events(self.state.events));
-        }
 
         let commit_message = SubMsg::reply_always(
             Contract(env.contract.address.clone())

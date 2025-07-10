@@ -262,7 +262,7 @@ impl LimitOrderState<SettingOrder> {
 }
 
 impl LimitOrderState<SetOrder> {
-    pub fn withdraw(self, deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
+    pub fn withdraw(self, _deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
         let withdraw_message = Contract(self.config.pair_address.clone()).call(
             to_json_binary(&ExecuteMsg::Order((
                 vec![(
@@ -277,12 +277,8 @@ impl LimitOrderState<SetOrder> {
 
         let payload = StrategyMsgPayload {
             statistics: Statistics {
-                filled: vec![Coin::new(
-                    self.state.filled,
-                    self.config.get_pair(deps)?.denoms.ask(&self.config.side),
-                )],
-                swapped: vec![Coin::new(
-                    // Weird if this is smaller than 0, but we handle it anyway
+                outgoing: vec![Coin::new(
+                    // Weird if this is smaller than 0, but we handle it safely regardless.
                     self.state.offer.saturating_sub(self.state.remaining),
                     self.config.bid_denom.clone(),
                 )],

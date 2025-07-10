@@ -69,12 +69,27 @@ pub fn execute(
     let config = CONFIG.load(deps.storage)?;
 
     let response = match msg {
+        StrategyExecuteMsg::Execute => {
+            if info.sender != config.manager && info.sender != env.contract.address {
+                return Err(ContractError::Unauthorized {});
+            }
+
+            let execute_strategy_response = config
+                .strategy
+                .activate()
+                .prepare_to_execute(deps.as_ref(), &env)?
+                .execute(&mut deps, &env, |store, strategy| {
+                    ACTIVE_STRATEGY.save(store, &strategy)
+                })?;
+
+            execute_strategy_response
+        }
         StrategyExecuteMsg::Update(update) => {
             if info.sender != config.manager {
                 return Err(ContractError::Unauthorized {});
             }
 
-            let cancel_response = config
+            let cancel_strategy_response = config
                 .strategy
                 .activate()
                 .prepare_to_cancel(deps.as_ref(), &env)?
@@ -83,7 +98,7 @@ pub fn execute(
                 })?;
 
             // If no stateful actions to unwind, we can proceed with the update
-            if cancel_response.messages.is_empty() {
+            if cancel_strategy_response.messages.is_empty() {
                 // Accumulate any newly escrowed denoms
                 let escrowed = update
                     .escrowed(deps.as_ref(), &env)?
@@ -94,18 +109,19 @@ pub fn execute(
                 ESCROWED.save(deps.storage, &escrowed)?;
 
                 // Get the required messages to initialize the new strategy
-                let init_response = update.init(&mut deps, &env, |storage, strategy| {
-                    CONFIG.save(storage, strategy)
-                })?;
+                let init_strategy_response =
+                    update.init(&mut deps, &env, |storage, strategy| {
+                        CONFIG.save(storage, strategy)
+                    })?;
 
-                let execute_msg = SubMsg::reply_always(
+                let execute_new_strategy_msg = SubMsg::reply_always(
                     Contract(env.contract.address.clone())
                         .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]),
                     LOG_ERRORS_REPLY_ID,
                 );
 
                 // Execute the new strategy after all init messages have completed
-                init_response.add_submessage(execute_msg)
+                init_strategy_response.add_submessage(execute_new_strategy_msg)
             } else {
                 let update_again_msg = SubMsg::reply_always(
                     Contract(env.contract.address.clone())
@@ -116,22 +132,9 @@ pub fn execute(
                 // Clear the state so we can run update again
                 STATE.remove(deps.storage);
 
-                cancel_response // Unwind any stateful actions before we overwrite them
+                cancel_strategy_response // Unwind any stateful actions before we overwrite them
                     .add_submessage(update_again_msg) // Run update to setup the new strategy
             }
-        }
-        StrategyExecuteMsg::Execute => {
-            if info.sender != config.manager && info.sender != env.contract.address {
-                return Err(ContractError::Unauthorized {});
-            }
-
-            config
-                .strategy
-                .activate()
-                .prepare_to_execute(deps.as_ref(), &env)?
-                .execute(&mut deps, &env, |store, strategy| {
-                    ACTIVE_STRATEGY.save(store, &strategy)
-                })?
         }
         StrategyExecuteMsg::Withdraw(desired) => {
             if info.sender != config.strategy.owner && info.sender != env.contract.address {
@@ -148,7 +151,7 @@ pub fn execute(
 
             let owner = config.strategy.owner.to_string();
 
-            let withdraw_response = config
+            let withdraw_from_strategy_response = config
                 .strategy
                 .activate()
                 .prepare_to_withdraw(deps.as_ref(), &env, &desired)?
@@ -156,7 +159,9 @@ pub fn execute(
                     ACTIVE_STRATEGY.save(store, &strategy)
                 })?;
 
-            if withdraw_response.messages.is_empty() {
+            // If no stateful actions to unwind, go ahead
+            // and withdraw from the contract address itself.
+            if withdraw_from_strategy_response.messages.is_empty() {
                 let mut withdrawals = Coins::default();
 
                 for denom in desired.iter() {
@@ -188,7 +193,7 @@ pub fn execute(
                 // Clear the state so we can run withdraw again
                 STATE.remove(deps.storage);
 
-                withdraw_response.add_submessage(withdraw_again_msg)
+                withdraw_from_strategy_response.add_submessage(withdraw_again_msg)
             }
         }
         StrategyExecuteMsg::UpdateStatus(status) => {
@@ -197,23 +202,31 @@ pub fn execute(
             }
 
             match status {
-                StrategyStatus::Active => config
-                    .strategy
-                    .activate()
-                    .prepare_to_execute(deps.as_ref(), &env)?
-                    .execute(&mut deps, &env, |store, strategy| {
-                        ACTIVE_STRATEGY.save(store, &strategy)
-                    }),
+                StrategyStatus::Active => {
+                    let execute_strategy_response = config
+                        .strategy
+                        .activate()
+                        .prepare_to_execute(deps.as_ref(), &env)?
+                        .execute(&mut deps, &env, |store, strategy| {
+                            ACTIVE_STRATEGY.save(store, &strategy)
+                        })?;
+
+                    execute_strategy_response
+                }
                 // Paused & Archived are no different in terms of execution,
                 // they are only used for filtering strategies in factory queries
-                StrategyStatus::Paused | StrategyStatus::Archived => config
-                    .strategy
-                    .activate()
-                    .prepare_to_cancel(deps.as_ref(), &env)?
-                    .execute(&mut deps, &env, |store, strategy| {
-                        ACTIVE_STRATEGY.save(store, &strategy)
-                    }),
-            }?
+                StrategyStatus::Paused | StrategyStatus::Archived => {
+                    let cancel_strategy_response = config
+                        .strategy
+                        .activate()
+                        .prepare_to_cancel(deps.as_ref(), &env)?
+                        .execute(&mut deps, &env, |store, strategy| {
+                            ACTIVE_STRATEGY.save(store, &strategy)
+                        })?;
+
+                    cancel_strategy_response
+                }
+            }
         }
         StrategyExecuteMsg::Commit => {
             if info.sender != env.contract.address {
