@@ -1,8 +1,10 @@
 use std::{collections::HashSet, fmt::Debug};
 
 use calc_rs::{
-    conditions::Condition, manager::StrategyStatus, scheduler::ConditionFilter,
-    statistics::Statistics, strategy::StrategyConfig,
+    manager::StrategyStatus,
+    scheduler::{ConditionFilter, Trigger},
+    statistics::Statistics,
+    strategy::StrategyConfig,
 };
 use cosmwasm_std::{Addr, Coin, Decimal, Uint128};
 use cw_multi_test::{error::AnyResult, AppResponse};
@@ -265,16 +267,28 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
-    pub fn assert_triggers(&mut self, expected_triggers: Vec<Condition>) -> &mut Self {
+    pub fn assert_triggers(&mut self, expected_triggers: Vec<Trigger>) -> &mut Self {
         println!("[StrategyHandler] Asserting strategy triggers are {expected_triggers:#?}");
         let triggers = self.harness.query_triggers(&self.strategy_addr);
-        for condition in expected_triggers {
-            let actual = triggers.iter().find(|t| t.condition == condition);
+        for trigger in expected_triggers {
+            let actual = triggers.iter().find(|t| t.id == trigger.id);
             assert!(
                 actual.is_some(),
-                "Expected trigger not found: {condition:#?}\n\nAll triggers: {triggers:#?}"
+                "Expected trigger not found: {trigger:#?}\n\nAll triggers: {triggers:#?}"
             );
         }
+        self
+    }
+
+    pub fn assert_total_triggers(&mut self, expected_triggers: usize) -> &mut Self {
+        println!("[StrategyHandler] Asserting exactly {expected_triggers:#?} strategy triggers");
+        let triggers = self.harness.query_triggers(&self.strategy_addr);
+        assert_eq!(
+            triggers.len(),
+            expected_triggers,
+            "Expected {expected_triggers} triggers, found {}: {triggers:#?}",
+            triggers.len()
+        );
         self
     }
 

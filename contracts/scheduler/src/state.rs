@@ -2,12 +2,11 @@ use calc_rs::{
     conditions::Condition,
     scheduler::{ConditionFilter, Trigger},
 };
-use cosmwasm_std::{Addr, Coin, Decimal, Order, StdError, StdResult, Storage};
+use cosmwasm_std::{Addr, Coin, Decimal, Order, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 use rujira_rs::fin::Price;
 
 pub const MANAGER: Item<Addr> = Item::new("manager");
-pub const TRIGGER_COUNTER: Item<u64> = Item::new("trigger_counter");
 
 pub struct TriggerIndexes<'a> {
     pub owner: MultiIndex<'a, Addr, Trigger, u64>,
@@ -38,16 +37,16 @@ impl TriggerStore<'_> {
     pub fn save(
         &self,
         storage: &mut dyn Storage,
+        trigger_id: u64,
         owner: Addr,
         condition: Condition,
         execution_rebate: Vec<Coin>,
     ) -> StdResult<()> {
-        let id = TRIGGER_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
         self.triggers.save(
             storage,
-            id,
+            trigger_id,
             &Trigger {
-                id,
+                id: trigger_id,
                 owner,
                 condition,
                 execution_rebate,

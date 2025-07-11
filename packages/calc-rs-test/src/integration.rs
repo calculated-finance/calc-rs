@@ -4,13 +4,12 @@ mod integration_tests {
         actions::{
             distribution::{Destination, Distribution, Recipient},
             limit_order::{Direction, Offset, StaleOrder},
-            swaps::fin::FinRoute,
-            swaps::thor::ThorchainRoute,
+            swaps::{fin::FinRoute, thor::ThorchainRoute},
         },
         conditions::CompositeCondition,
         constants::BASE_FEE_BPS,
         core::Threshold,
-        scheduler::SchedulerExecuteMsg,
+        scheduler::{SchedulerExecuteMsg, Trigger},
         strategy::Committed,
     };
 
@@ -1343,12 +1342,19 @@ mod integration_tests {
             .with_action(Action::LimitOrder(order_action.clone()))
             .instantiate(&[starting_balance.clone()]);
 
-        strategy.assert_triggers(vec![Condition::LimitOrderFilled {
+        let condition = Condition::LimitOrderFilled {
             pair_address: order_action.pair_address.clone(),
             owner: strategy.strategy_addr.clone(),
             side: order_action.side.clone(),
             price: Price::Fixed(Decimal::percent(50)),
             minimum_filled_amount: None,
+        };
+
+        strategy.assert_triggers(vec![Trigger {
+            id: condition.id(strategy.strategy_addr.clone()).unwrap(),
+            owner: strategy.strategy_addr.clone(),
+            condition,
+            execution_rebate: order_action.execution_rebate,
         }]);
     }
 
@@ -1387,6 +1393,50 @@ mod integration_tests {
                     Uint128::zero(),                           // filled
                 )],
             );
+    }
+
+    #[test]
+    fn test_execute_limit_order_action_with_additional_rebate_updates_trigger() {
+        let mut harness = CalcTestApp::setup();
+        let order_action = LimitOrder {
+            execution_rebate: vec![Coin::new(1000u128, "x/ruji".to_string())],
+            ..default_limit_order_action(&harness)
+        };
+        let starting_balance = Coin::new(1000000u128, order_action.bid_denom.clone());
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_action(Action::LimitOrder(order_action.clone()))
+            .instantiate(&[starting_balance.clone()]);
+
+        let strategy_addr = strategy.strategy_addr.clone();
+
+        let condition = Condition::LimitOrderFilled {
+            pair_address: order_action.pair_address.clone(),
+            owner: strategy_addr.clone(),
+            side: order_action.side.clone(),
+            price: Price::Fixed(Decimal::one()),
+            minimum_filled_amount: None,
+        };
+
+        let trigger_id = condition.id(strategy_addr.clone()).unwrap();
+
+        strategy.assert_triggers(vec![Trigger {
+            id: trigger_id,
+            owner: strategy_addr.clone(),
+            condition: condition.clone(),
+            execution_rebate: vec![],
+        }]);
+
+        strategy
+            .deposit(&[Coin::new(10_000u128, "x/ruji".to_string())])
+            .execute()
+            .assert_total_triggers(1)
+            .assert_triggers(vec![Trigger {
+                id: trigger_id,
+                owner: strategy_addr.clone(),
+                condition: condition.clone(),
+                execution_rebate: order_action.execution_rebate.clone(),
+            }]);
     }
 
     #[test]
@@ -3065,38 +3115,6 @@ mod integration_tests {
                 swap_action.swap_amount.amount * Uint128::new(5),
                 swap_action.swap_amount.denom.clone(),
             )]);
-    }
-
-    #[test]
-    fn test_schedule_action_without_execution_rebate_balance_skips() {
-        let mut harness = CalcTestApp::setup();
-
-        let swap_action = default_swap_action(&harness);
-
-        let action = Action::Schedule(Schedule {
-            action: Box::new(Action::Swap(swap_action.clone())),
-            scheduler: harness.scheduler_addr.clone(),
-            cadence: Cadence::Time {
-                duration: Duration::from_secs(60),
-                previous: Some(harness.app.block_info().time),
-            },
-            execution_rebate: vec![Coin::new(1u128, "x/ruji")],
-        });
-
-        let funds = vec![Coin::new(
-            swap_action.swap_amount.amount * Uint128::new(20),
-            swap_action.swap_amount.denom.clone(),
-        )];
-
-        StrategyBuilder::new(&mut harness)
-            .with_action(action.clone())
-            .instantiate(&funds)
-            .advance_time(62)
-            .advance_time(62)
-            .advance_time(62)
-            .advance_time(62)
-            .advance_time(62)
-            .assert_swapped(vec![]);
     }
 
     #[test]

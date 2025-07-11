@@ -25,6 +25,13 @@ pub fn instantiate(
     info: MessageInfo,
     msg: StrategyInstantiateMsg,
 ) -> ContractResult {
+    if msg.state.contract_address != env.contract.address {
+        return Err(ContractError::generic_err(format!(
+            "Strategy contract address mismatch: expected {}, got {}",
+            env.contract.address, msg.state.contract_address
+        )));
+    }
+
     // Collate escrowed denoms & initialise the strategy
     let escrowed = msg.escrowed(deps.as_ref(), &env)?;
     let response = msg.init(&mut deps, &env, |storage, strategy| {

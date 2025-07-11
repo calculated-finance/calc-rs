@@ -1,7 +1,13 @@
-use std::vec;
+use std::{
+    hash::{DefaultHasher, Hasher},
+    vec,
+};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Deps, Env, StdResult, Timestamp, Uint128};
+use cosmwasm_std::{
+    to_json_binary, to_json_string, to_json_vec, Addr, Coin, Deps, Env, StdResult, Timestamp,
+    Uint128,
+};
 use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
@@ -60,6 +66,13 @@ impl Condition {
                 threshold: _,
             }) => conditions.iter().map(|c| c.size()).sum::<usize>() + 1,
         }
+    }
+
+    pub fn id(&self, owner: Addr) -> StdResult<u64> {
+        let salt_data = to_json_binary(&(owner, self.clone()))?;
+        let mut hash = DefaultHasher::new();
+        hash.write(salt_data.as_slice());
+        Ok(hash.finish() as u64)
     }
 
     pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {

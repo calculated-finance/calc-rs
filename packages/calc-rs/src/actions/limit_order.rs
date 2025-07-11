@@ -183,6 +183,41 @@ impl LimitOrderState<UnsetOrder> {
     pub fn set(self, deps: Deps, env: &Env) -> StdResult<LimitOrderState<SettingOrder>> {
         let price = self.config.get_new_price(deps)?;
 
+        let trigger_condition = Condition::LimitOrderFilled {
+            pair_address: self.config.pair_address.clone(),
+            owner: env.contract.address.clone(),
+            side: self.config.side.clone(),
+            price: Price::Fixed(price),
+            minimum_filled_amount: None,
+        };
+
+        let mut rebate = Coins::default();
+
+        for amount in self.config.execution_rebate.iter() {
+            let balance = deps
+                .querier
+                .query_balance(env.contract.address.clone(), amount.denom.clone())?;
+
+            rebate.add(Coin {
+                denom: amount.denom.clone(),
+                amount: min(amount.amount, balance.amount),
+            })?;
+        }
+
+        let set_trigger_msg = StrategyMsg::with_payload(
+            Contract(self.config.scheduler.clone()).call(
+                to_json_binary(&SchedulerExecuteMsg::Create(trigger_condition.clone()))?,
+                rebate.to_vec(),
+            ),
+            StrategyMsgPayload {
+                events: vec![LimitOrderEvent::CreateTrigger {
+                    condition: trigger_condition.clone(),
+                }
+                .into()],
+                ..StrategyMsgPayload::default()
+            },
+        );
+
         let balance = deps
             .querier
             .query_balance(env.contract.address.clone(), self.config.bid_denom.clone())?;
@@ -197,7 +232,7 @@ impl LimitOrderState<UnsetOrder> {
                 state: SettingOrder {
                     price,
                     offer: Uint128::zero(),
-                    messages: vec![],
+                    messages: vec![set_trigger_msg],
                     events: vec![LimitOrderEvent::SetOrderSkipped {
                         reason: "No additional funding available and no price reset needed"
                             .to_string(),
@@ -236,7 +271,7 @@ impl LimitOrderState<UnsetOrder> {
             state: SettingOrder {
                 price,
                 offer: final_offer,
-                messages: vec![set_order_msg],
+                messages: vec![set_order_msg, set_trigger_msg],
                 events: vec![],
             },
         })
@@ -263,42 +298,43 @@ impl LimitOrderState<SettingOrder> {
 
 impl LimitOrderState<SetOrder> {
     pub fn withdraw(self, _deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
-        let withdraw_message = Contract(self.config.pair_address.clone()).call(
-            to_json_binary(&ExecuteMsg::Order((
-                vec![(
-                    self.config.side.clone(),
-                    Price::Fixed(self.state.price),
-                    Some(Uint128::zero()),
-                )],
-                None,
-            )))?,
-            vec![],
-        );
-
-        let payload = StrategyMsgPayload {
-            statistics: Statistics {
-                outgoing: vec![Coin::new(
-                    // Weird if this is smaller than 0, but we handle it safely regardless.
-                    self.state.offer.saturating_sub(self.state.remaining),
-                    self.config.bid_denom.clone(),
-                )],
-                ..Statistics::default()
+        let withdraw_order_message = StrategyMsg::with_payload(
+            Contract(self.config.pair_address.clone()).call(
+                to_json_binary(&ExecuteMsg::Order((
+                    vec![(
+                        self.config.side.clone(),
+                        Price::Fixed(self.state.price),
+                        Some(Uint128::zero()),
+                    )],
+                    None,
+                )))?,
+                vec![],
+            ),
+            StrategyMsgPayload {
+                statistics: Statistics {
+                    outgoing: vec![Coin::new(
+                        // Weird if this is smaller than 0, but we handle it safely regardless.
+                        self.state.offer.saturating_sub(self.state.remaining),
+                        self.config.bid_denom.clone(),
+                    )],
+                    ..Statistics::default()
+                },
+                events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
+                    pair_address: self.config.pair_address.clone(),
+                    side: self.config.side.clone(),
+                    price: Price::Fixed(self.state.price),
+                    amount: self.state.remaining,
+                })
+                .into()],
             },
-            events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
-                pair_address: self.config.pair_address.clone(),
-                side: self.config.side.clone(),
-                price: Price::Fixed(self.state.price),
-                amount: self.state.remaining,
-            })
-            .into()],
-        };
+        );
 
         Ok(LimitOrderState {
             config: self.config,
             state: WithdrawingOrder {
                 withdrawing: self.state.remaining,
                 remaining: Uint128::zero(),
-                messages: vec![StrategyMsg::with_payload(withdraw_message, payload)],
+                messages: vec![withdraw_order_message],
                 events: vec![],
             },
         })
@@ -572,33 +608,7 @@ impl StatefulOperation for LimitOrder {
     fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if let Some(existing_order) = self.current_order.clone() {
             match existing_order.refresh(deps, env, &self) {
-                Ok(actual_order) => {
-                    let trigger_condition = Condition::LimitOrderFilled {
-                        pair_address: self.pair_address.clone(),
-                        owner: env.contract.address.clone(),
-                        side: self.side.clone(),
-                        price: Price::Fixed(actual_order.price),
-                        minimum_filled_amount: None,
-                    };
-
-                    let set_trigger_msg =
-                        StrategyMsg::without_payload(Contract(self.scheduler.clone()).call(
-                            to_json_binary(&SchedulerExecuteMsg::Create(
-                                trigger_condition.clone(),
-                            ))?,
-                            vec![],
-                        ));
-
-                    let set_trigger_event = LimitOrderEvent::CreateTrigger {
-                        condition: trigger_condition,
-                    };
-
-                    Ok((
-                        vec![set_trigger_msg],
-                        vec![set_trigger_event.into()],
-                        Action::LimitOrder(self),
-                    ))
-                }
+                Ok(_) => Ok((vec![], vec![], Action::LimitOrder(self))),
                 Err(_) => Ok((
                     vec![],
                     vec![],
