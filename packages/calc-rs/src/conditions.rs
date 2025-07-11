@@ -81,7 +81,7 @@ impl Condition {
         let salt_data = to_json_binary(&(owner, self.clone()))?;
         let mut hash = DefaultHasher::new();
         hash.write(salt_data.as_slice());
-        Ok(hash.finish() as u64)
+        Ok(hash.finish())
     }
 
     pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {

@@ -49,6 +49,7 @@ pub const MAX_TOTAL_AFFILIATE_BPS: u64 = 200;
  * - Balance available: 1
  * - Strategy balance available: 1
  * - Strategy in status: 2
+ * - Oracle price: 2
  * - Not: size of condition
  * - Composite: sum of sizes of conditions + 1
  */
