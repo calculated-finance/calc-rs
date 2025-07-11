@@ -8,6 +8,7 @@ use cosmwasm_std::{
 
 use crate::actions::action::Action;
 use crate::actions::operation::StatelessOperation;
+use crate::constants::MAX_TOTAL_AFFILIATE_BPS;
 use crate::manager::Affiliate;
 use crate::statistics::Statistics;
 use crate::strategy::{StrategyMsg, StrategyMsgPayload};
@@ -71,10 +72,16 @@ pub struct Distribution {
 }
 
 impl Distribution {
-    pub fn with_affiliates(self, affiliates: &[Affiliate]) -> Self {
+    pub fn with_affiliates(self, affiliates: &[Affiliate]) -> StdResult<Self> {
         let total_affiliate_bps = affiliates
             .iter()
             .fold(0, |acc, affiliate| acc + affiliate.bps);
+
+        if total_affiliate_bps > MAX_TOTAL_AFFILIATE_BPS {
+            return Err(StdError::generic_err(format!(
+                "Total affiliate bps cannot exceed {MAX_TOTAL_AFFILIATE_BPS}, got {total_affiliate_bps}"
+            )));
+        }
 
         let mut total_fee_applied_shares = Uint128::zero();
         let mut total_fee_exempt_shares = Uint128::zero();
@@ -92,7 +99,7 @@ impl Distribution {
 
         let total_fee_shares = total_fee_applied_shares.mul_ceil(Decimal::bps(total_affiliate_bps));
 
-        if total_fee_shares.is_zero() {
+        Ok(if total_fee_shares.is_zero() {
             self
         } else {
             Distribution {
@@ -112,7 +119,7 @@ impl Distribution {
                 ]
                 .concat(),
             }
-        }
+        })
     }
 
     pub fn execute_unsafe(

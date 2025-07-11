@@ -131,7 +131,7 @@ export type OrderPriceStrategy =
         tolerance: Offset;
       };
     };
-export type Direction = "up" | "down";
+export type Direction = "above" | "below";
 export type Offset =
   | {
       exact: Decimal;
@@ -245,6 +245,13 @@ export type Condition =
         contract_address: Addr;
         manager_contract: Addr;
         status: StrategyStatus;
+      };
+    }
+  | {
+      oracle_price: {
+        asset: string;
+        direction: Direction;
+        rate: Decimal;
       };
     }
   | {
@@ -454,8 +461,8 @@ export type Route =
 export type TriggerConditionsThreshold = "any" | "all";
 
 export interface Statistics {
-  distributed: [Recipient, Coin[]][];
-  outgoing: Coin[];
+  credited: [Recipient, Coin[]][];
+  debited: Coin[];
 }
 
 export interface StrategyInstantiateMsg {

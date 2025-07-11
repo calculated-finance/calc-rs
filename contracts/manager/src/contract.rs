@@ -71,7 +71,7 @@ pub fn execute(
             .concat();
 
             let init_message = strategy
-                .with_affiliates(&affiliates)
+                .with_affiliates(&affiliates)?
                 .add_to_index(
                     &mut deps,
                     &env,
@@ -135,7 +135,7 @@ pub fn execute(
             }
 
             let update_msg = update
-                .with_affiliates(&strategy.affiliates)
+                .with_affiliates(&strategy.affiliates)?
                 .update_index(&mut deps, contract_address.clone(), |storage| {
                     strategy_store().save(
                         storage,
