@@ -1,4 +1,4 @@
-use std::{collections::HashSet, str::FromStr};
+use std::{cmp::min, collections::HashSet, str::FromStr};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult};
@@ -48,6 +48,19 @@ impl Schedule {
         deps: Deps,
         env: &Env,
     ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        let mut rebate = Coins::default();
+
+        for amount in self.execution_rebate.iter() {
+            let balance = deps
+                .querier
+                .query_balance(env.contract.address.clone(), amount.denom.clone())?;
+
+            rebate.add(Coin {
+                denom: amount.denom.clone(),
+                amount: min(amount.amount, balance.amount),
+            })?;
+        }
+
         if self.cadence.is_due(env)? {
             let (mut messages, mut events, action) = self.action.execute(deps, env);
 
@@ -55,7 +68,7 @@ impl Schedule {
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
-                self.execution_rebate.clone(),
+                rebate.to_vec(),
             );
 
             messages.push(StrategyMsg::with_payload(
@@ -85,7 +98,7 @@ impl Schedule {
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
-                self.execution_rebate.clone(),
+                rebate.to_vec(),
             );
 
             let skipped_event = ScheduleEvent::ExecutionSkipped {

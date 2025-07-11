@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package types;
+
+service Query {
+  rpc Pool(QueryPoolRequest) returns (QueryPoolResponse);
+  rpc QuoteSwap(QueryQuoteSwapRequest) returns (QueryQuoteSwapResponse);
+}
+
+message QueryPoolRequest {
+  string asset = 1;
+  string height = 2;
+}
+
+message QueryPoolResponse {
+  string asset = 1;
+  string short_code = 2;
+  string status = 3;
+  int64 decimals = 4;
+  string pending_inbound_asset = 5;
+  string pending_inbound_rune = 6;
+  string balance_asset = 7;
+  string balance_rune = 8;
+  string asset_tor_price = 9;
+  string pool_units = 10;
+  string lp_units = 11;
+  string synth_units = 12;
+  string synth_supply = 13;
+  string savers_depth = 14;
+  string savers_units = 15;
+  string savers_fill_bps = 16;
+  string savers_capacity_remaining = 17;
+  bool synth_mint_paused = 18;
+  string synth_supply_remaining = 19;
+  string loan_collateral = 20;
+  string loan_collateral_remaining = 21;
+  string loan_cr = 22;
+  string derived_depth_bps = 23;
+}
+
+message QueryQuoteSwapRequest {
+  string from_asset = 1;
+  string to_asset = 2;
+  string amount = 3;
+  string streaming_interval = 4;
+  string streaming_quantity = 5;
+  string destination = 6;
+  string tolerance_bps = 7;
+  string refund_address = 8;
+  repeated string affiliate = 9;
+  repeated string affiliate_bps = 10;
+  string height = 11;
+  string liquidity_tolerance_bps = 12;
+}
+
+message QueryQuoteSwapResponse {
+  string inbound_address = 1;
+  int64 inbound_confirmation_blocks = 2;
+  int64 inbound_confirmation_seconds = 3;
+  int64 outbound_delay_blocks = 4;
+  int64 outbound_delay_seconds = 5;
+  QuoteFees fees = 6;
+  string router = 7;
+  int64 expiry = 8;
+  string warning = 9;
+  string notes = 10;
+  string dust_threshold = 11;
+  string recommended_min_amount_in = 12;
+  string recommended_gas_rate = 13;
+  string gas_rate_units = 14;
+  string memo = 15;
+  string expected_amount_out = 16;
+  int64 max_streaming_quantity = 17;
+  int64 streaming_swap_blocks = 18;
+  int64 streaming_swap_seconds = 19;
+  int64 total_swap_seconds = 20;
+}
+
+message QuoteFees {
+  string asset = 1;
+  string affiliate = 2;
+  string outbound = 3;
+  string liquidity = 4;
+  string total = 5;
+  int64 slippage_bps = 6;
+  int64 total_bps = 7;
+}

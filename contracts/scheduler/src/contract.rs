@@ -14,7 +14,7 @@ use cosmwasm_std::{
     StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{MANAGER, TRIGGERS, TRIGGER_COUNTER};
+use crate::state::{MANAGER, TRIGGERS};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -24,8 +24,6 @@ pub fn instantiate(
     msg: SchedulerInstantiateMsg,
 ) -> ContractResult {
     MANAGER.save(_deps.storage, &msg.manager)?;
-    TRIGGER_COUNTER.save(_deps.storage, &0)?;
-
     Ok(Response::default())
 }
 
@@ -49,11 +47,31 @@ pub fn execute(
 
     match msg {
         SchedulerExecuteMsg::Create(condition) => {
+            if let Err(err) = condition.is_satisfied(deps.as_ref(), &env) {
+                return Err(ContractError::generic_err(format!(
+                    "Invalid condition: {err}"
+                )));
+            };
+
+            let trigger_id = condition.id(info.sender.clone())?;
+
+            if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id) {
+                // We delete any existing trigger as we
+                // may be updating the execution rebate
+                TRIGGERS.delete(deps.storage, existing_trigger.id)?;
+
+                messages.push(BankMsg::Send {
+                    to_address: info.sender.to_string(),
+                    amount: existing_trigger.execution_rebate,
+                });
+            }
+
             TRIGGERS.save(
                 deps.storage,
+                trigger_id,
                 info.sender.clone(),
                 condition,
-                info.funds.clone(),
+                info.funds,
             )?;
         }
         SchedulerExecuteMsg::Execute(ids) => {
@@ -62,17 +80,12 @@ pub fn execute(
                     ContractError::generic_err(format!("Failed to load trigger: {e}"))
                 })?;
 
-                let check_result = trigger.condition.is_satisfied(deps.as_ref(), &env);
-
-                if let Ok(check_result) = check_result {
+                if let Ok(check_result) = trigger.condition.is_satisfied(deps.as_ref(), &env) {
+                    // Only skip execution if the condition is valid but not satisfied.
+                    // Process invalid triggers to clear them from the store & reward the executor.
                     if !check_result {
                         continue;
                     }
-                } else {
-                    // The condition itself is invalid, so we
-                    // just delete the associated trigger.
-                    TRIGGERS.delete(deps.storage, trigger.id)?;
-                    continue;
                 }
 
                 TRIGGERS.delete(deps.storage, trigger.id)?;
@@ -124,8 +137,10 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
             &TRIGGERS
                 .load(deps.storage, id)?
                 .condition
-                .is_satisfied(deps, &env)
-                .is_ok(),
+                // We don't coalesce errors into false so that external
+                // executors can distinguish between a misconfigured trigger
+                // and a trigger that is not satisfied.
+                .is_satisfied(deps, &env)?,
         ),
     }
 }
@@ -157,7 +172,36 @@ mod create_trigger_tests {
         let owner = deps.api.addr_make("creator");
         let info = message_info(&owner.clone(), &[Coin::new(3123_u128, "rune")]);
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+        let condition =
+            Condition::BlocksCompleted(cosmwasm_std::testing::mock_env().block.height + 10);
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            SchedulerExecuteMsg::Create(condition.clone()),
+        )
+        .unwrap();
+
+        let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+
+        assert_eq!(
+            triggers,
+            vec![Trigger {
+                id: condition.id(owner.clone()).unwrap(),
+                owner: owner.clone(),
+                condition: condition.clone(),
+                execution_rebate: info.funds.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn updates_existing_trigger_correctly() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+        let info = message_info(&owner.clone(), &[Coin::new(3123_u128, "rune")]);
 
         let condition =
             Condition::BlocksCompleted(cosmwasm_std::testing::mock_env().block.height + 10);
@@ -170,17 +214,37 @@ mod create_trigger_tests {
         )
         .unwrap();
 
-        assert_eq!(TRIGGER_COUNTER.load(deps.as_ref().storage).unwrap(), 1);
-
         let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
 
         assert_eq!(
             triggers,
             vec![Trigger {
-                id: 1,
+                id: condition.id(owner.clone()).unwrap(),
                 owner: owner.clone(),
                 condition: condition.clone(),
                 execution_rebate: info.funds.clone(),
+            }]
+        );
+
+        let updated_info = message_info(&owner.clone(), &[Coin::new(1234_u128, "rune")]);
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            updated_info.clone(),
+            SchedulerExecuteMsg::Create(condition.clone()),
+        )
+        .unwrap();
+
+        let updated_triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+
+        assert_eq!(
+            updated_triggers,
+            vec![Trigger {
+                id: condition.id(owner.clone()).unwrap(),
+                owner: owner.clone(),
+                condition: condition.clone(),
+                execution_rebate: updated_info.funds.clone(),
             }]
         );
     }
@@ -201,8 +265,6 @@ mod execute_trigger_tests {
     fn returns_error_if_trigger_does_not_exist() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
         let execution_info = MessageInfo {
             sender: deps.api.addr_make("executor"),
@@ -227,7 +289,6 @@ mod execute_trigger_tests {
         let manager = deps.api.addr_make("creator");
 
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
@@ -246,7 +307,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![1]),
+            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
         )
         .unwrap();
 
@@ -260,7 +321,6 @@ mod execute_trigger_tests {
         let manager = deps.api.addr_make("creator");
 
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
@@ -280,7 +340,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![1]),
+            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
         )
         .unwrap();
 
@@ -304,13 +364,10 @@ mod execute_trigger_tests {
         let manager = deps.api.addr_make("creator");
 
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
         let create_trigger_info = message_info(&owner, &[Coin::new(235463u128, "rune")]);
-
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
         let condition = Condition::BlocksCompleted(env.block.height - 10);
 
@@ -326,7 +383,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![1]),
+            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
         )
         .unwrap();
 
@@ -357,7 +414,6 @@ mod execute_trigger_tests {
         let manager = deps.api.addr_make("manager");
 
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
 
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
@@ -380,7 +436,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![1]),
+            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
         )
         .unwrap();
 
@@ -405,21 +461,25 @@ mod owned_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
+        let mut id = 0;
 
         for i in 1..=5 {
+            id += 1;
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    id,
                     Addr::unchecked("owner"),
                     Condition::BlocksCompleted(env.block.height),
                     vec![],
                 )
                 .unwrap();
 
+            id += 1;
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    id,
                     Addr::unchecked(format!("other-owner-{i}")),
                     Condition::BlocksCompleted(env.block.height),
                     vec![],
@@ -459,12 +519,11 @@ mod owned_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
-        for _ in 1..=5 {
+        for i in 1..=5 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::BlocksCompleted(env.block.height),
                     vec![],
@@ -504,12 +563,11 @@ mod owned_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
-        for _ in 1..=5 {
+        for i in 1..=5 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::BlocksCompleted(env.block.height),
                     vec![],
@@ -549,12 +607,11 @@ mod owned_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
-        for _ in 1..=5 {
+        for i in 1..=5 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::BlocksCompleted(env.block.height),
                     vec![],
@@ -612,12 +669,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=5 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
                     vec![],
@@ -659,12 +715,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=5 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
                     vec![],
@@ -706,12 +761,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=5 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::BlocksCompleted(env.block.height + i * 10),
                     vec![],
@@ -753,12 +807,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=5 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::BlocksCompleted(env.block.height + i * 10),
                     vec![],
@@ -800,12 +853,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=10 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
                         pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
@@ -863,12 +915,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=10 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
                         pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
@@ -929,12 +980,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=10 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
                         pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
@@ -995,12 +1045,11 @@ mod filtered_triggers_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        TRIGGER_COUNTER.save(deps.as_mut().storage, &0).unwrap();
-
         for i in 1..=10 {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
+                    i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
                         pair_address: Addr::unchecked(format!("pair-{}", i % 2)),

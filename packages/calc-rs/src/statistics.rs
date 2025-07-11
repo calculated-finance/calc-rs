@@ -8,26 +8,22 @@ use crate::actions::distribution::Recipient;
 #[cw_serde]
 #[derive(Default)]
 pub struct Statistics {
-    pub outgoing: Vec<Coin>,
-    pub distributed: Vec<(Recipient, Vec<Coin>)>,
+    pub debited: Vec<Coin>,
+    pub credited: Vec<(Recipient, Vec<Coin>)>,
 }
 
 impl Statistics {
     pub fn update(self, other: Statistics) -> StdResult<Statistics> {
-        let mut outgoing = Coins::try_from(self.outgoing.clone())?;
+        let mut outgoing = Coins::try_from(self.debited.clone())?;
 
-        for coin in other.outgoing {
+        for coin in other.debited {
             outgoing.add(coin)?;
         }
 
         let mut recipients_map: HashMap<String, Recipient> = HashMap::new();
         let mut distributed_map: HashMap<String, Coins> = HashMap::new();
 
-        for (recipient, amounts) in self
-            .distributed
-            .iter()
-            .chain(other.distributed.clone().iter())
-        {
+        for (recipient, amounts) in self.credited.iter().chain(other.credited.clone().iter()) {
             recipients_map
                 .entry(recipient.key())
                 .or_insert_with(|| recipient.clone());
@@ -52,8 +48,8 @@ impl Statistics {
         }
 
         Ok(Statistics {
-            outgoing: outgoing.into_vec(),
-            distributed,
+            debited: outgoing.into_vec(),
+            credited: distributed,
         })
     }
 }

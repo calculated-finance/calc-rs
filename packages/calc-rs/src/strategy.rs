@@ -168,12 +168,12 @@ pub struct Committed {
 }
 
 impl Strategy<Json> {
-    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> Strategy<Indexable> {
-        Strategy {
+    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> StdResult<Strategy<Indexable>> {
+        Ok(Strategy {
             owner: self.owner,
-            action: self.action.add_affiliates(affiliates),
+            action: self.action.add_affiliates(affiliates)?,
             state: Indexable,
-        }
+        })
     }
 }
 
@@ -286,7 +286,6 @@ impl Strategy<Indexed> {
         F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
     {
         if self.size() > MAX_STRATEGY_SIZE {
-            println!("Strategy size: {}, max: {}", self.size(), MAX_STRATEGY_SIZE);
             return Err(StdError::generic_err(format!(
                 "Strategy size exceeds maximum limit of {MAX_STRATEGY_SIZE} actions"
             )));

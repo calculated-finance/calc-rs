@@ -323,7 +323,7 @@ impl Quotable for ThorchainRoute {
             .into_cosmos_msg()?,
             StrategyMsgPayload {
                 statistics: Statistics {
-                    outgoing: vec![route.swap_amount.clone()],
+                    debited: vec![route.swap_amount.clone()],
                     ..Statistics::default()
                 },
                 events: vec![ThorchainSwapEvent::Swap {

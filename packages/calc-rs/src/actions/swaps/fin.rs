@@ -288,7 +288,7 @@ impl Quotable for FinRoute {
             ),
             StrategyMsgPayload {
                 statistics: Statistics {
-                    outgoing: vec![route.swap_amount.clone()],
+                    debited: vec![route.swap_amount.clone()],
                     ..Statistics::default()
                 },
                 events: vec![FinSwapEvent::Swap {

@@ -1,11 +1,20 @@
-use std::vec;
+use std::{
+    hash::{DefaultHasher, Hasher},
+    vec,
+};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Coin, Deps, Env, StdResult, Timestamp, Uint128};
-use rujira_rs::fin::{OrderResponse, Price, QueryMsg, Side};
+use cosmwasm_std::{
+    to_json_binary, Addr, Coin, Decimal, Deps, Env, StdError, StdResult, Timestamp, Uint128,
+};
+use rujira_rs::{
+    fin::{OrderResponse, Price, QueryMsg, Side},
+    query::Pool,
+    Layer1Asset,
+};
 
 use crate::{
-    actions::swaps::swap::Swap,
+    actions::{limit_order::Direction, swaps::swap::Swap},
     core::Threshold,
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
 };
@@ -40,6 +49,11 @@ pub enum Condition {
         contract_address: Addr,
         status: StrategyStatus,
     },
+    OraclePrice {
+        asset: String,
+        direction: Direction,
+        rate: Decimal,
+    },
     Not(Box<Condition>),
     Composite(CompositeCondition),
 }
@@ -54,12 +68,20 @@ impl Condition {
             Condition::BalanceAvailable { .. } => 1,
             Condition::StrategyBalanceAvailable { .. } => 1,
             Condition::StrategyStatus { .. } => 2,
+            Condition::OraclePrice { .. } => 2,
             Condition::Not(condition) => condition.size(),
             Condition::Composite(CompositeCondition {
                 conditions,
                 threshold: _,
             }) => conditions.iter().map(|c| c.size()).sum::<usize>() + 1,
         }
+    }
+
+    pub fn id(&self, owner: Addr) -> StdResult<u64> {
+        let salt_data = to_json_binary(&(owner, self.clone()))?;
+        let mut hash = DefaultHasher::new();
+        hash.write(salt_data.as_slice());
+        Ok(hash.finish() as u64)
     }
 
     pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {
@@ -105,6 +127,30 @@ impl Condition {
                     },
                 )?;
                 strategy.status == *status
+            }
+            Condition::OraclePrice {
+                asset,
+                direction,
+                rate,
+            } => {
+                let layer_1_asset = Layer1Asset::from_native(asset.clone()).map_err(|e| {
+                    StdError::generic_err(format!(
+                        "Denom ({asset}) not a secured asset, error: {e}"
+                    ))
+                })?;
+
+                let oracle_price = Pool::load(deps.querier, &layer_1_asset)
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Failed to load oracle price for {asset}, error: {e}"
+                        ))
+                    })?
+                    .asset_tor_price;
+
+                match direction {
+                    Direction::Above => oracle_price > *rate,
+                    Direction::Below => oracle_price < *rate,
+                }
             }
             Condition::Not(condition) => !condition.is_satisfied(deps, env)?,
             Condition::Composite(CompositeCondition {

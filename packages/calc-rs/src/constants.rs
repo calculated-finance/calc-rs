@@ -21,6 +21,14 @@ pub const PROCESS_PAYLOAD_REPLY_ID: u64 = 324623423;
 pub const BASE_FEE_BPS: u64 = 25;
 
 /**
+ * Maximum total affiliate basis points (bps) that can be applied to a strategy.
+ *
+ * This is the maximum amount of bps that can be taken by affiliates to
+ * prevent excessive fees being applied to strategies.
+ */
+pub const MAX_TOTAL_AFFILIATE_BPS: u64 = 200;
+
+/**
  * Maximum size of a strategy in terms of actions & conditions.
  *
  * Action sizes:

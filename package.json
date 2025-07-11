@@ -6,7 +6,7 @@
   "scripts": {
     "types": "./scripts/schema.sh && bun scripts/types.ts",
     "compile": "./scripts/compile.sh",
-    "script": "bun scripts/script.ts"
+    "script": "bun scripts/run.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
