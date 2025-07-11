@@ -455,9 +455,7 @@ export type TriggerConditionsThreshold = "any" | "all";
 
 export interface Statistics {
   distributed: [Recipient, Coin[]][];
-  filled: Coin[];
-  swapped: Coin[];
-  withdrawn: Coin[];
+  outgoing: Coin[];
 }
 
 export interface StrategyInstantiateMsg {

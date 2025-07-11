@@ -71,7 +71,7 @@ pub struct Distribution {
 }
 
 impl Distribution {
-    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> Self {
+    pub fn with_affiliates(self, affiliates: &[Affiliate]) -> Self {
         let total_affiliate_bps = affiliates
             .iter()
             .fold(0, |acc, affiliate| acc + affiliate.bps);
@@ -187,7 +187,7 @@ impl Distribution {
                 message,
                 StrategyMsgPayload {
                     statistics: Statistics {
-                        distributed: vec![(destination.recipient.clone(), denom_shares.clone())],
+                        credited: vec![(destination.recipient.clone(), denom_shares.clone())],
                         ..Statistics::default()
                     },
                     events: vec![DistributionEvent::Distribute {

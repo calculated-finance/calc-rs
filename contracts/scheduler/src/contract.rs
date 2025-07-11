@@ -59,13 +59,11 @@ pub fn execute(
                 // We delete any existing trigger as we
                 // may be updating the execution rebate
                 TRIGGERS.delete(deps.storage, existing_trigger.id)?;
-                messages.push(
-                    BankMsg::Send {
-                        to_address: info.sender.to_string(),
-                        amount: existing_trigger.execution_rebate,
-                    }
-                    .into(),
-                );
+
+                messages.push(BankMsg::Send {
+                    to_address: info.sender.to_string(),
+                    amount: existing_trigger.execution_rebate,
+                });
             }
 
             TRIGGERS.save(

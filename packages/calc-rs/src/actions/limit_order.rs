@@ -65,8 +65,8 @@ impl From<LimitOrderEvent> for Event {
 
 #[cw_serde]
 pub enum Direction {
-    Up,
-    Down,
+    Above,
+    Below,
 }
 
 #[cw_serde]
@@ -312,7 +312,7 @@ impl LimitOrderState<SetOrder> {
             ),
             StrategyMsgPayload {
                 statistics: Statistics {
-                    outgoing: vec![Coin::new(
+                    debited: vec![Coin::new(
                         // Weird if this is smaller than 0, but we handle it safely regardless.
                         self.state.offer.saturating_sub(self.state.remaining),
                         self.config.bid_denom.clone(),
@@ -422,13 +422,13 @@ impl LimitOrder {
 
                 match offset {
                     Offset::Exact(offset) => match direction {
-                        Direction::Up => book_price.saturating_add(offset),
-                        Direction::Down => book_price.saturating_sub(offset),
+                        Direction::Above => book_price.saturating_add(offset),
+                        Direction::Below => book_price.saturating_sub(offset),
                     },
                     Offset::Percent(offset) => match direction {
-                        Direction::Up => book_price
+                        Direction::Above => book_price
                             .saturating_mul(Decimal::percent(100u64.saturating_add(offset))),
-                        Direction::Down => book_price
+                        Direction::Below => book_price
                             .saturating_mul(Decimal::percent(100u64.saturating_sub(offset))),
                     },
                 }

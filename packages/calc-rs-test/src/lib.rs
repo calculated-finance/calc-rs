@@ -1,3 +1,4 @@
+pub mod fixtures;
 pub mod harness;
 pub mod integration;
 pub mod stargate;

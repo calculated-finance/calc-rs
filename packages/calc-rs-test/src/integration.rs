@@ -414,7 +414,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -434,7 +434,7 @@ mod integration_tests {
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy.assert_stats(Statistics {
-            outgoing: vec![],
+            debited: vec![],
             ..Statistics::default()
         });
     }
@@ -460,7 +460,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -478,7 +478,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -498,7 +498,7 @@ mod integration_tests {
             .instantiate(&[balance.clone()]);
 
         strategy.assert_stats(Statistics {
-            outgoing: vec![balance],
+            debited: vec![balance],
             ..Statistics::default()
         });
     }
@@ -526,7 +526,7 @@ mod integration_tests {
             .instantiate(&[swap_action.swap_amount.clone()]);
 
         strategy.assert_stats(Statistics {
-            outgoing: vec![minimum_swap_amount],
+            debited: vec![minimum_swap_amount],
             ..Statistics::default()
         });
     }
@@ -652,7 +652,7 @@ mod integration_tests {
                 swap_action.minimum_receive_amount.denom.clone(),
             )])
             .assert_stats(Statistics {
-                outgoing: vec![Coin::new(
+                debited: vec![Coin::new(
                     swap_action.swap_amount.amount,
                     swap_action.swap_amount.denom.clone(),
                 )],
@@ -685,7 +685,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -708,7 +708,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -734,7 +734,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -752,7 +752,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -778,7 +778,7 @@ mod integration_tests {
                 swap_action.minimum_receive_amount.denom.clone(),
             )])
             .assert_stats(Statistics {
-                outgoing: vec![balance],
+                debited: vec![balance],
                 ..Statistics::default()
             });
     }
@@ -817,7 +817,7 @@ mod integration_tests {
                 ),
             ])
             .assert_stats(Statistics {
-                outgoing: vec![minimum_swap_amount],
+                debited: vec![minimum_swap_amount],
                 ..Statistics::default()
             });
     }
@@ -896,7 +896,7 @@ mod integration_tests {
                 swap_action.minimum_receive_amount.denom.clone(),
             ))
             .assert_stats(Statistics {
-                outgoing: vec![swap_action.swap_amount],
+                debited: vec![swap_action.swap_amount],
                 ..Statistics::default()
             });
     }
@@ -934,7 +934,7 @@ mod integration_tests {
                 swap_route.minimum_receive_amount.denom.clone(),
             ))
             .assert_stats(Statistics {
-                outgoing: vec![Coin::new(
+                debited: vec![Coin::new(
                     swap_route.swap_amount.amount * Uint128::new(2),
                     swap_route.swap_amount.denom.clone(),
                 )],
@@ -984,7 +984,7 @@ mod integration_tests {
                 swap_route.minimum_receive_amount.denom.clone(),
             ))
             .assert_stats(Statistics {
-                outgoing: vec![Coin::new(
+                debited: vec![Coin::new(
                     swap_route.swap_amount.amount * Uint128::new(2),
                     swap_route.swap_amount.denom.clone(),
                 )],
@@ -1017,7 +1017,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -1040,7 +1040,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -1066,7 +1066,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![swap_action.swap_amount.clone()])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -1084,7 +1084,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balances(vec![])
             .assert_stats(Statistics {
-                outgoing: vec![],
+                debited: vec![],
                 ..Statistics::default()
             });
     }
@@ -1110,7 +1110,7 @@ mod integration_tests {
                 swap_action.minimum_receive_amount.denom.clone(),
             )])
             .assert_stats(Statistics {
-                outgoing: vec![balance],
+                debited: vec![balance],
                 ..Statistics::default()
             });
     }
@@ -1149,7 +1149,7 @@ mod integration_tests {
                 ),
             ])
             .assert_stats(Statistics {
-                outgoing: vec![minimum_swap_amount],
+                debited: vec![minimum_swap_amount],
                 ..Statistics::default()
             });
     }
@@ -1319,7 +1319,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balance(&filled_amount.clone())
             .assert_stats(Statistics {
-                outgoing: vec![Coin::new(
+                debited: vec![Coin::new(
                     starting_balance.amount - remaining_amount,
                     order_action.bid_denom.clone(),
                 )],
@@ -1446,7 +1446,7 @@ mod integration_tests {
 
         let order_action = LimitOrder {
             strategy: OrderPriceStrategy::Offset {
-                direction: Direction::Down,
+                direction: Direction::Below,
                 offset: Offset::Percent(10),
                 tolerance: Offset::Exact(Decimal::percent(1)),
             },
@@ -1517,7 +1517,7 @@ mod integration_tests {
 
         let order_action = LimitOrder {
             strategy: OrderPriceStrategy::Offset {
-                direction: Direction::Down,
+                direction: Direction::Below,
                 offset: Offset::Percent(10),
                 tolerance: Offset::Exact(Decimal::percent(90)),
             },
@@ -1682,7 +1682,7 @@ mod integration_tests {
             .assert_bank_balance(&filled_amount)
             .assert_bank_balance(&Coin::new(0u128, order_action.bid_denom.clone()))
             .assert_stats(Statistics {
-                outgoing: vec![Coin::new(
+                debited: vec![Coin::new(
                     starting_balance.amount - remaining_amount,
                     order_action.bid_denom.clone(),
                 )],
@@ -1736,7 +1736,7 @@ mod integration_tests {
             .assert_bank_balance(&filled_amount)
             .assert_bank_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()))
             .assert_stats(Statistics {
-                outgoing: vec![Coin::new(
+                debited: vec![Coin::new(
                     starting_balance.amount - remaining_amount,
                     order_action.bid_denom.clone(),
                 )],
@@ -1873,7 +1873,7 @@ mod integration_tests {
             .assert_bank_balance(&Coin::new(0u128, fin_swap_action.swap_amount.denom.clone()))
             .assert_fin_orders(&pair_address, vec![])
             .assert_stats(Statistics {
-                outgoing: vec![fin_swap_action.swap_amount.clone()],
+                debited: vec![fin_swap_action.swap_amount.clone()],
                 ..Statistics::default()
             });
 
@@ -2158,7 +2158,7 @@ mod integration_tests {
         strategy
             .assert_bank_balance(&Coin::new(0u128, "x/ruji"))
             .assert_stats(Statistics {
-                distributed: [destinations, vec![fee_collector_destination]]
+                credited: [destinations, vec![fee_collector_destination]]
                     .concat()
                     .iter()
                     .map(|d| {
@@ -2263,7 +2263,7 @@ mod integration_tests {
             + fee_collector_destination.shares;
 
         strategy.assert_stats(Statistics {
-            distributed: [destinations, vec![fee_collector_destination]]
+            credited: [destinations, vec![fee_collector_destination]]
                 .concat()
                 .iter()
                 .map(|d| {
@@ -2334,7 +2334,7 @@ mod integration_tests {
             .execute()
             .assert_bank_balance(&Coin::new(1u128, "x/ruji")) // just dust
             .assert_stats(Statistics {
-                distributed: [destinations, vec![fee_collector_destination]]
+                credited: [destinations, vec![fee_collector_destination]]
                     .concat()
                     .iter()
                     .map(|d| {
@@ -2857,6 +2857,83 @@ mod integration_tests {
                     ],
                     threshold: Threshold::Any,
                 }),
+                action: Box::new(Action::Swap(swap_action.clone())),
+            }))
+            .instantiate(&funds)
+            .assert_swapped(vec![swap_action.swap_amount.clone()]);
+    }
+
+    #[test]
+    fn test_execute_condition_action_respects_oracle_price_condition() {
+        let mut harness = CalcTestApp::setup();
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
+
+        let swap_action = Swap {
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
+        };
+
+        let funds = vec![Coin::new(
+            swap_action.swap_amount.amount + Uint128::one(),
+            fin_pair.denoms.base(),
+        )];
+
+        let strategy_action = Action::Swap(default_swap_action(&harness));
+
+        let strategy = StrategyBuilder::new(&mut harness)
+            .with_action(strategy_action)
+            .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
+
+        // BTC-BTC oracle price stubbed at $100,100.00
+
+        StrategyBuilder::new(strategy.harness)
+            .with_action(Action::Conditional(Conditional {
+                condition: Condition::OraclePrice {
+                    asset: "BTC-BTC".to_string(),
+                    rate: Decimal::from_str("100000").unwrap(),
+                    direction: Direction::Below,
+                },
+                action: Box::new(Action::Swap(swap_action.clone())),
+            }))
+            .instantiate(&funds)
+            .assert_swapped(vec![]);
+
+        StrategyBuilder::new(strategy.harness)
+            .with_action(Action::Conditional(Conditional {
+                condition: Condition::OraclePrice {
+                    asset: "BTC-BTC".to_string(),
+                    rate: Decimal::from_str("101000").unwrap(),
+                    direction: Direction::Below,
+                },
+                action: Box::new(Action::Swap(swap_action.clone())),
+            }))
+            .instantiate(&funds)
+            .assert_swapped(vec![swap_action.swap_amount.clone()]);
+
+        StrategyBuilder::new(strategy.harness)
+            .with_action(Action::Conditional(Conditional {
+                condition: Condition::OraclePrice {
+                    asset: "BTC-BTC".to_string(),
+                    rate: Decimal::from_str("101000").unwrap(),
+                    direction: Direction::Above,
+                },
+                action: Box::new(Action::Swap(swap_action.clone())),
+            }))
+            .instantiate(&funds)
+            .assert_swapped(vec![]);
+
+        StrategyBuilder::new(strategy.harness)
+            .with_action(Action::Conditional(Conditional {
+                condition: Condition::OraclePrice {
+                    asset: "BTC-BTC".to_string(),
+                    rate: Decimal::from_str("100000").unwrap(),
+                    direction: Direction::Above,
+                },
                 action: Box::new(Action::Swap(swap_action.clone())),
             }))
             .instantiate(&funds)

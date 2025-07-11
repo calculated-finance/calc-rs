@@ -14,7 +14,6 @@ import protobuf from "protobufjs";
 import { setTimeout } from "timers/promises";
 import {
   ManagerExecuteMsg,
-  Route,
   SchedulerQueryMsg,
   StrategyExecuteMsg,
 } from "../calc";
@@ -26,19 +25,20 @@ import types from "./MsgCompiled";
 
 config();
 
-const getWalletWithMnemonic = async () =>
+export const getWalletWithMnemonic = async () =>
   DirectSecp256k1HdWallet.fromMnemonic(process.env.MNEMONIC!, {
     prefix: process.env.PREFIX! || "sthor",
     hdPaths: [stringToPath(`m/44'/931'/0'/0/0`)],
   });
 
-const getWalletWithPrivateKey = async () =>
+export const getWalletWithPrivateKey = async () =>
   DirectSecp256k1Wallet.fromKey(
     Buffer.from(process.env.PRIVATE_KEY, "hex"),
     process.env.PREFIX || "sthor",
   );
 
-const getSigner = async () => {
+export const getSigner = async () => {
+  console.log("Connecting to RPC URL:", process.env.RPC_URL);
   const signer = await SigningCosmWasmClient.connectWithSigner(
     process.env.RPC_URL!,
     await getWalletWithMnemonic(),
@@ -129,11 +129,11 @@ export const getAccount = async (wallet: DirectSecp256k1HdWallet) => {
   return accounts[0]?.address;
 };
 
-const uploadStrategyContract = async () => {
+export const uploadStrategyContract = async () => {
   return upload("artifacts/strategy.wasm");
 };
 
-const uploadAndInstantiateManagerContract = async () => {
+export const uploadAndInstantiateManagerContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -148,7 +148,7 @@ const uploadAndInstantiateManagerContract = async () => {
   );
 };
 
-const uploadAndInstantiateExchangeContract = async () => {
+export const uploadAndInstantiateExchangeContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -160,7 +160,7 @@ const uploadAndInstantiateExchangeContract = async () => {
   );
 };
 
-const uploadAndMigrateManagerContract = async () => {
+export const uploadAndMigrateManagerContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -175,7 +175,7 @@ const uploadAndMigrateManagerContract = async () => {
   );
 };
 
-const uploadAndMigrateStrategyContract = async () => {
+export const uploadAndMigrateStrategyContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -189,7 +189,7 @@ const uploadAndMigrateStrategyContract = async () => {
   );
 };
 
-const uploadAndMigrateExchangeContract = async () => {
+export const uploadAndMigrateExchangeContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -205,7 +205,7 @@ const uploadAndMigrateExchangeContract = async () => {
   );
 };
 
-const uploadAndMigrateSchedulerContract = async () => {
+export const uploadAndMigrateSchedulerContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -216,7 +216,7 @@ const uploadAndMigrateSchedulerContract = async () => {
   );
 };
 
-const uploadAndInstantiateSchedulerContract = async () => {
+export const uploadAndInstantiateSchedulerContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
@@ -228,26 +228,26 @@ const uploadAndInstantiateSchedulerContract = async () => {
   );
 };
 
-const getCodeDetails = async (codeId: number): Promise<CodeDetails> => {
+export const getCodeDetails = async (codeId: number): Promise<CodeDetails> => {
   const cosmWasmClient = await getSigner();
   const info = await cosmWasmClient.getCodeDetails(codeId);
 
   return info;
 };
 
-const uploadAndInstantiateContractSuite = async () => {
+export const uploadAndInstantiateContractSuite = async () => {
   await uploadAndInstantiateManagerContract();
   await uploadAndInstantiateExchangeContract();
   await uploadAndInstantiateSchedulerContract();
 };
 
-const uploadAndMigrateContractSuite = async () => {
+export const uploadAndMigrateContractSuite = async () => {
   await uploadAndMigrateManagerContract();
   await uploadAndMigrateExchangeContract();
   await uploadAndMigrateSchedulerContract();
 };
 
-const uploadPairs = async () => {
+export const uploadPairs = async () => {
   const cosmWasmClient = await getSigner();
 
   const account = await getAccount(await getWalletWithMnemonic());
@@ -264,14 +264,14 @@ const uploadPairs = async () => {
   );
 };
 
-const fetchBalances = async (address: string) => {
+export const fetchBalances = async (address: string) => {
   const stargateClient = await StargateClient.connect(process.env.RPC_URL!);
   const balances = await stargateClient.getAllBalances(address);
 
   return balances;
 };
 
-const canSwap = async () => {
+export const canSwap = async () => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     can_swap: {
@@ -289,7 +289,7 @@ const canSwap = async () => {
   return response;
 };
 
-const getExpectedReceiveAmount = async (
+export const getExpectedReceiveAmount = async (
   swapAmount: Coin,
   targetDenom: string,
   route: any,
@@ -309,7 +309,7 @@ const getExpectedReceiveAmount = async (
   return response;
 };
 
-const getSpotPrice = async () => {
+export const getSpotPrice = async () => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     spot_price: {
@@ -322,7 +322,7 @@ const getSpotPrice = async () => {
   return response;
 };
 
-const getRoute = async () => {
+export const getRoute = async () => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
     route: {
@@ -337,7 +337,11 @@ const getRoute = async () => {
   return response;
 };
 
-const swap = async (swapAmount: Coin, targetDenom: string, route: any) => {
+export const swap = async (
+  swapAmount: Coin,
+  targetDenom: string,
+  route: any,
+) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.execute(
@@ -361,7 +365,7 @@ const swap = async (swapAmount: Coin, targetDenom: string, route: any) => {
   return response;
 };
 
-const getConfig = async (contractAddress: string) => {
+export const getConfig = async (contractAddress: string) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(contractAddress, {
     config: {},
@@ -375,7 +379,7 @@ export const bech32ToBase64 = (address: string): string =>
     Uint8Array.from(bech32.fromWords(bech32.decode(address).words)),
   );
 
-const executeDeposit = async (memo: string, funds: any[]) => {
+export const executeDeposit = async (memo: string, funds: any[]) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
@@ -500,7 +504,7 @@ const executeDeposit = async (memo: string, funds: any[]) => {
 //   return response;
 // };
 
-const getStrategy = async (address: string) => {
+export const getStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(MANAGER_ADDRESS, {
     strategy: {
@@ -511,7 +515,7 @@ const getStrategy = async (address: string) => {
   return response;
 };
 
-const getStrategyConfig = async (address: string) => {
+export const getStrategyConfig = async (address: string) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(address, {
     config: {},
@@ -520,7 +524,7 @@ const getStrategyConfig = async (address: string) => {
   return response;
 };
 
-const getStrategies = async () => {
+export const getStrategies = async () => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(MANAGER_ADDRESS, {
     strategies: {},
@@ -529,7 +533,7 @@ const getStrategies = async () => {
   return response;
 };
 
-const executeStrategy = async (address: string) => {
+export const executeStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.execute(
@@ -546,7 +550,7 @@ const executeStrategy = async (address: string) => {
   return response;
 };
 
-const getTimeTriggers = async () => {
+export const getTimeTriggers = async () => {
   const cosmWasmClient = await getSigner();
   const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
     filtered: {
@@ -563,7 +567,7 @@ const getTimeTriggers = async () => {
   return triggers;
 };
 
-const getBlockTriggers = async () => {
+export const getBlockTriggers = async () => {
   const cosmWasmClient = await getSigner();
 
   const block = await cosmWasmClient.getBlock();
@@ -583,11 +587,11 @@ const getBlockTriggers = async () => {
   return triggers;
 };
 
-const getAllTriggers = async () => {
+export const getAllTriggers = async () => {
   return [...(await getBlockTriggers()), ...(await getTimeTriggers())];
 };
 
-const getOwnedTriggers = async (owner: string) => {
+export const getOwnedTriggers = async (owner: string) => {
   const cosmWasmClient = await getSigner();
   const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
     owned: {
@@ -598,7 +602,9 @@ const getOwnedTriggers = async (owner: string) => {
   return triggers;
 };
 
-const executeTriggersWith = async (getTriggers: () => Promise<any[]>) => {
+export const executeTriggersWith = async (
+  getTriggers: () => Promise<any[]>,
+) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
   const triggers = await getTriggers();
@@ -617,7 +623,7 @@ const executeTriggersWith = async (getTriggers: () => Promise<any[]>) => {
   }
 };
 
-const executeProvidedTriggers = async (triggers: any[]) => {
+export const executeProvidedTriggers = async (triggers: any[]) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
@@ -639,7 +645,7 @@ const executeProvidedTriggers = async (triggers: any[]) => {
   }
 };
 
-const executeTriggers = async (owner: string) => {
+export const executeTriggers = async (owner: string) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
@@ -669,7 +675,7 @@ const executeTriggers = async (owner: string) => {
   }
 };
 
-const resumeStrategy = async (address: string) => {
+export const resumeStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.execute(
@@ -686,7 +692,7 @@ const resumeStrategy = async (address: string) => {
   return response;
 };
 
-const withdrawFromStrategy = async (address: string) => {
+export const withdrawFromStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
   const balances = await fetchBalances(address);
@@ -694,7 +700,7 @@ const withdrawFromStrategy = async (address: string) => {
     account,
     address,
     {
-      withdraw: balances,
+      withdraw: balances.map((b) => b.denom),
     } as StrategyExecuteMsg,
     "auto",
   );
@@ -702,7 +708,7 @@ const withdrawFromStrategy = async (address: string) => {
   return response;
 };
 
-const queryContract = async (
+export const queryContract = async (
   contractAddress: string,
   msg: Record<string, unknown>,
 ) => {
@@ -715,7 +721,7 @@ const queryContract = async (
   return response;
 };
 
-const executeTxn = async (
+export const executeTxn = async (
   contractAddress: string,
   msg: Record<string, unknown>,
   funds: Coin[] = [],
@@ -734,11 +740,11 @@ const executeTxn = async (
   return response;
 };
 
-const getMyBalances = async () => {
+export const getMyBalances = async () => {
   return fetchBalances(await getAccount(await getWalletWithMnemonic()));
 };
 
-const fetchFinBook = async (pairAddress: string) => {
+export const fetchFinBook = async (pairAddress: string) => {
   const cosmWasmClient = await getSigner();
   const book = await cosmWasmClient.queryContractSmart(pairAddress, {
     book: {
@@ -749,7 +755,7 @@ const fetchFinBook = async (pairAddress: string) => {
   return book;
 };
 
-const getStatistics = async (address: string) => {
+export const getStatistics = async (address: string) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(address, {
     statistics: {},
@@ -758,14 +764,14 @@ const getStatistics = async (address: string) => {
   return response;
 };
 
-const getTransaction = async (txHash: string) => {
+export const getTransaction = async (txHash: string) => {
   const stargateClient = await StargateClient.connect(process.env.RPC_URL!);
   const tx = await stargateClient.getTx(txHash);
 
   return tx;
 };
 
-const getSwapQuote = async ({
+export const getSwapQuote = async ({
   swapAmount,
   targetDenom,
   recipient,
@@ -785,7 +791,7 @@ const getSwapQuote = async ({
   return response.json();
 };
 
-const queryPool = async () => {
+export const queryPool = async () => {
   const stargateClient = await getSigner();
   const root = await protobuf.load("./scripts/query.proto");
 
@@ -793,7 +799,7 @@ const queryPool = async () => {
   const QueryPoolResponse = root.lookupType("types.QueryPoolResponse");
 
   const request = QueryPoolRequest.encode({
-    asset: "eth.usdt-0xdac17f958d2ee523a2206206994597c13d831ec7",
+    asset: "eth.eth",
     height: "0",
   }).finish();
 
@@ -805,7 +811,9 @@ const queryPool = async () => {
   return QueryPoolResponse.decode(response.value).toJSON();
 };
 
-const queryQuote = async () => {
+queryPool().then((pool) => console.log(JSON.stringify(pool, null, 2)));
+
+export const queryQuote = async () => {
   const stargateClient = await getSigner();
   const root = await protobuf.load("./scripts/query.proto");
 
@@ -828,7 +836,7 @@ const queryQuote = async () => {
   return QueryQuoteResponse.decode(response.value).toJSON();
 };
 
-const updateStrategy = async (address: string, update: any) => {
+export const updateStrategy = async (address: string, update: any) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
@@ -855,7 +863,7 @@ const updateStrategy = async (address: string, update: any) => {
   return response;
 };
 
-const bankSend = async (amount: Coin, recipient: string) => {
+export const bankSend = async (amount: Coin, recipient: string) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
@@ -869,7 +877,7 @@ const bankSend = async (amount: Coin, recipient: string) => {
   return response;
 };
 
-const run = async () => {
+export const run = async () => {
   let triggers = await getAllTriggers();
   while (true) {
     await executeProvidedTriggers(triggers);
@@ -878,7 +886,11 @@ const run = async () => {
   }
 };
 
-const setOrders = async (pairAddress: string, orders: any[], funds: Coin[]) => {
+export const setOrders = async (
+  pairAddress: string,
+  orders: any[],
+  funds: Coin[],
+) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
@@ -896,7 +908,7 @@ const setOrders = async (pairAddress: string, orders: any[], funds: Coin[]) => {
   return response;
 };
 
-const getOrders = async (pairAddress: string) => {
+export const getOrders = async (pairAddress: string) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
   const response = await cosmWasmClient.queryContractSmart(pairAddress, {
@@ -909,24 +921,24 @@ const getOrders = async (pairAddress: string) => {
   return response;
 };
 
-const getBlock = async () => {
+export const getBlock = async () => {
   const cosmWasmClient = await getSigner();
   return cosmWasmClient.getBlock();
 };
 
-const MANAGER_ADDRESS =
+export const MANAGER_ADDRESS =
   "sthor1xg6qsvyktr0zyyck3d67mgae0zun4lhwwn3v9pqkl5pk8mvkxsnscenkc0";
 
-const EXCHANGE_ADDRESS =
+export const EXCHANGE_ADDRESS =
   "sthor196c0zhmpaktqu3hfgdafvsdlr3x9tz0n78qvwn7g7g2c7zmaa0jqxcd6st";
 
-const SCHEDULER_ADDRESS =
+export const SCHEDULER_ADDRESS =
   "sthor1x3hfzl0v43upegeszz8cjygljgex9jtygpx4l44nkxudxjsukn3setrkl6";
 
-const STRATEGY_ADDRESS =
+export const STRATEGY_ADDRESS =
   "sthor17rkr38lk6vxcnw9ywyu64jjymny0yf42h4c4vj2hhm6chrt44heqtvnnmu";
 
-const PAIR_ADDRESS =
+export const PAIR_ADDRESS =
   "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";
 
 // uploadContractSuite();
@@ -1081,12 +1093,12 @@ const swapAmount = {
   amount: "10000000000000",
 };
 const targetDenom = "rune";
-getExpectedReceiveAmount(swapAmount, targetDenom, {
-  thorchain: {
-    streaming_interval: 5,
-    max_streaming_quantity: 0,
-  },
-} as Route).then(console.log);
+// getExpectedReceiveAmount(swapAmount, targetDenom, {
+//   thorchain: {
+//     streaming_interval: 5,
+//     max_streaming_quantity: 0,
+//   },
+// } as Route).then(console.log);
 // getSwapQuote({
 //   swapAmount,
 //   targetDenom,

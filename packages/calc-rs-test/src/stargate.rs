@@ -8,10 +8,9 @@ use cw_multi_test::{
     App, AppResponse, BankKeeper, CosmosRouter, FailingModule, GovFailingModule, IbcFailingModule,
     Stargate, WasmKeeper,
 };
-use rujira_rs::proto::types::{QueryQuoteSwapResponse, QuoteFees};
 use serde::de::DeserializeOwned;
 
-use prost::Message;
+use crate::fixtures::{mock_pool, mock_quote_response};
 
 pub type RujiraApp = App<
     BankKeeper,
@@ -99,45 +98,10 @@ impl Stargate for RujiraStargate {
     ) -> AnyResult<Binary> {
         match request.path.as_str() {
             "/types.Query/QuoteSwap" => mock_quote_response(),
+            "/types.Query/Pool" => mock_pool(request.data),
             _ => {
                 anyhow::bail!("Unexpected grpc query: request={:?}", request)
             }
         }
     }
-}
-
-fn mock_quote_response() -> AnyResult<Binary> {
-    let quote = QueryQuoteSwapResponse {
-        inbound_address: "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka".to_string(),
-        inbound_confirmation_blocks: 0,
-        inbound_confirmation_seconds: 0,
-        outbound_delay_blocks: 0,
-        outbound_delay_seconds: 0,
-        fees: Some(QuoteFees {
-            asset: 100.to_string(),
-            affiliate: 100.to_string(),
-            outbound: 100.to_string(),
-            liquidity: 100.to_string(),
-            total: 100.to_string(),
-            slippage_bps: 100,
-            total_bps: 100,
-        }),
-        router: "0xd31cA16eDF87822278C50716900e264fE2de0200".to_string(),
-        expiry: 1,
-        warning: "No warning".to_string(),
-        notes: "No notes".to_string(),
-        dust_threshold: 1.to_string(),
-        recommended_min_amount_in: 1.to_string(),
-        recommended_gas_rate: 1.to_string(),
-        gas_rate_units: "units".to_string(),
-        memo: "=:thor.rune:sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka:1/5/5:rj:10".to_string(),
-        expected_amount_out: "1000".to_string(),
-        max_streaming_quantity: 10,
-        streaming_swap_blocks: 10,
-        streaming_swap_seconds: 10,
-        total_swap_seconds: 100,
-    };
-    let mut buf = Vec::new();
-    quote.encode(&mut buf).unwrap();
-    Ok(Binary::from(buf))
 }
