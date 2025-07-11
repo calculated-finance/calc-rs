@@ -80,4 +80,51 @@ impl<'a> StrategyBuilder<'a> {
             harness: self.app,
         })
     }
+
+    pub fn instantiate_with_affiliates(
+        self,
+        affiliates: Vec<Affiliate>,
+        funds: &[Coin],
+    ) -> StrategyHandler<'a> {
+        let strategy = Strategy {
+            owner: self.owner.clone(),
+            action: self.action.unwrap(),
+            state: Json,
+        };
+
+        let strategy_addr = self
+            .app
+            .create_strategy(&self.label, strategy, affiliates, funds)
+            .unwrap();
+
+        StrategyHandler {
+            strategy_addr,
+            owner: self.owner,
+            keeper: self.keeper,
+            harness: self.app,
+        }
+    }
+
+    pub fn try_instantiate_with_affiliates(
+        self,
+        affiliates: Vec<Affiliate>,
+        funds: &[Coin],
+    ) -> AnyResult<StrategyHandler<'a>> {
+        let strategy = Strategy {
+            owner: self.owner.clone(),
+            action: self.action.unwrap(),
+            state: Json,
+        };
+
+        let strategy_addr = self
+            .app
+            .create_strategy(&self.label, strategy, affiliates, funds)?;
+
+        Ok(StrategyHandler {
+            strategy_addr,
+            owner: self.owner,
+            keeper: self.keeper,
+            harness: self.app,
+        })
+    }
 }

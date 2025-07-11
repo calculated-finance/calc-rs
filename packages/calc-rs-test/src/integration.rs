@@ -9,6 +9,7 @@ mod integration_tests {
         conditions::CompositeCondition,
         constants::BASE_FEE_BPS,
         core::Threshold,
+        manager::Affiliate,
         scheduler::{SchedulerExecuteMsg, Trigger},
         strategy::Committed,
     };
@@ -233,6 +234,61 @@ mod integration_tests {
             .with_action(Action::Many(vec![]))
             .try_instantiate(&[])
             .is_err());
+    }
+
+    #[test]
+    fn test_instantiate_strategy_with_affiliate_fee_too_high_fails() {
+        let harness = CalcTestApp::setup();
+        let address = harness.app.api().addr_make("affiliate");
+        let action = Action::Swap(default_swap_action(&harness));
+
+        assert!(StrategyBuilder::new(&mut CalcTestApp::setup())
+            .with_action(action.clone())
+            .try_instantiate_with_affiliates(
+                vec![Affiliate {
+                    label: "Bad actor".to_string(),
+                    address: address.clone(),
+                    bps: 201
+                }],
+                &[]
+            )
+            .is_err());
+
+        assert!(StrategyBuilder::new(&mut CalcTestApp::setup())
+            .with_action(action.clone())
+            .try_instantiate_with_affiliates(
+                vec![Affiliate {
+                    label: "Less bad actor".to_string(),
+                    address: address.clone(),
+                    bps: 200
+                }],
+                &[]
+            )
+            .is_ok());
+
+        assert!(StrategyBuilder::new(&mut CalcTestApp::setup())
+            .with_action(action.clone())
+            .try_instantiate_with_affiliates(
+                vec![Affiliate {
+                    label: "Good actor".to_string(),
+                    address: address.clone(),
+                    bps: 20
+                }],
+                &[]
+            )
+            .is_ok());
+
+        assert!(StrategyBuilder::new(&mut CalcTestApp::setup())
+            .with_action(action)
+            .try_instantiate_with_affiliates(
+                vec![Affiliate {
+                    label: "Weird actor".to_string(),
+                    address,
+                    bps: 0
+                }],
+                &[]
+            )
+            .is_ok());
     }
 
     // Swap Action tests

@@ -1,7 +1,7 @@
 use std::cmp::max;
 
 use calc_rs::{
-    constants::BASE_FEE_BPS,
+    constants::{BASE_FEE_BPS, MAX_TOTAL_AFFILIATE_BPS},
     core::{Contract, ContractError, ContractResult},
     manager::{
         Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle,
@@ -56,6 +56,12 @@ pub fn execute(
             let total_affiliate_bps = affiliates
                 .iter()
                 .fold(0, |acc, affiliate| acc + affiliate.bps);
+
+            if total_affiliate_bps > MAX_TOTAL_AFFILIATE_BPS {
+                return Err(ContractError::generic_err(format!(
+                    "Total affiliate bps cannot exceed {MAX_TOTAL_AFFILIATE_BPS}, got {total_affiliate_bps}"
+                )));
+            }
 
             let affiliates = [
                 affiliates,
