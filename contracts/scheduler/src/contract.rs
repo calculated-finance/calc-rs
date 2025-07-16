@@ -48,12 +48,6 @@ pub fn execute(
 
     match msg {
         SchedulerExecuteMsg::Create(condition) => {
-            // if let Err(err) = condition.is_satisfied(deps.as_ref(), &env) {
-            //     return Err(ContractError::generic_err(format!(
-            //         "Invalid condition: {err}"
-            //     )));
-            // };
-
             let trigger_id = condition.id(info.sender.clone())?;
 
             if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id) {
