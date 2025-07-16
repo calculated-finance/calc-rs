@@ -13,9 +13,7 @@ use crate::{
         action::Action,
         operation::{StatefulOperation, StatelessOperation},
     },
-    conditions::Condition,
     core::Contract,
-    scheduler::SchedulerExecuteMsg,
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
@@ -40,7 +38,6 @@ impl LimitOrderEventData {
 enum LimitOrderEvent {
     SetOrderSkipped { reason: String },
     SetOrder(LimitOrderEventData),
-    CreateTrigger { condition: Condition },
     WithdrawOrderSkipped { reason: String },
     WithdrawOrder(LimitOrderEventData),
 }
@@ -52,9 +49,6 @@ impl From<LimitOrderEvent> for Event {
                 Event::new("set_order_skipped").add_attribute("reason", reason)
             }
             LimitOrderEvent::SetOrder(data) => data.to_event("set_order"),
-            LimitOrderEvent::CreateTrigger { condition } => {
-                Event::new("trigger_created").add_attribute("condition", format!("{condition:?}"))
-            }
             LimitOrderEvent::WithdrawOrderSkipped { reason } => {
                 Event::new("withdraw_order_skipped").add_attribute("reason", reason)
             }
@@ -99,6 +93,48 @@ impl OrderPriceStrategy {
                 }
             }
         }
+    }
+
+    pub fn get_new_price(
+        &self,
+        deps: Deps,
+        pair_address: &Addr,
+        side: &Side,
+    ) -> StdResult<Decimal> {
+        Ok(match self.clone() {
+            OrderPriceStrategy::Fixed(price) => price,
+            OrderPriceStrategy::Offset {
+                direction, offset, ..
+            } => {
+                let book = deps.querier.query_wasm_smart::<BookResponse>(
+                    pair_address.clone(),
+                    &QueryMsg::Book {
+                        limit: Some(10),
+                        offset: None,
+                    },
+                )?;
+
+                let book_price = if side == &Side::Base {
+                    book.base
+                } else {
+                    book.quote
+                }[0]
+                .price;
+
+                match offset {
+                    Offset::Exact(offset) => match direction {
+                        Direction::Above => book_price.saturating_add(offset),
+                        Direction::Below => book_price.saturating_sub(offset),
+                    },
+                    Offset::Percent(offset) => match direction {
+                        Direction::Above => book_price
+                            .saturating_mul(Decimal::percent(100u64.saturating_add(offset))),
+                        Direction::Below => book_price
+                            .saturating_mul(Decimal::percent(100u64.saturating_sub(offset))),
+                    },
+                }
+            }
+        })
     }
 }
 
@@ -181,42 +217,19 @@ impl LimitOrderState<UnsetOrder> {
     }
 
     pub fn set(self, deps: Deps, env: &Env) -> StdResult<LimitOrderState<SettingOrder>> {
-        let price = self.config.get_new_price(deps)?;
+        let price = self.config.strategy.get_new_price(
+            deps,
+            &self.config.pair_address,
+            &self.config.side,
+        )?;
 
-        let trigger_condition = Condition::LimitOrderFilled {
-            pair_address: self.config.pair_address.clone(),
-            owner: env.contract.address.clone(),
-            side: self.config.side.clone(),
-            price: Price::Fixed(price),
-            minimum_filled_amount: None,
+        let should_reset = if let Some(current_order) = &self.config.current_order {
+            self.config
+                .strategy
+                .should_reset(current_order.price, price)
+        } else {
+            true
         };
-
-        let mut rebate = Coins::default();
-
-        for amount in self.config.execution_rebate.iter() {
-            let balance = deps
-                .querier
-                .query_balance(env.contract.address.clone(), amount.denom.clone())?;
-
-            rebate.add(Coin {
-                denom: amount.denom.clone(),
-                amount: min(amount.amount, balance.amount),
-            })?;
-        }
-
-        let set_trigger_msg = StrategyMsg::with_payload(
-            Contract(self.config.scheduler.clone()).call(
-                to_json_binary(&SchedulerExecuteMsg::Create(trigger_condition.clone()))?,
-                rebate.to_vec(),
-            ),
-            StrategyMsgPayload {
-                events: vec![LimitOrderEvent::CreateTrigger {
-                    condition: trigger_condition.clone(),
-                }
-                .into()],
-                ..StrategyMsgPayload::default()
-            },
-        );
 
         let balance = deps
             .querier
@@ -226,13 +239,13 @@ impl LimitOrderState<UnsetOrder> {
         let final_offer = min(available, self.config.max_bid_amount.unwrap_or(available));
         let funding = min(balance.amount + self.state.withdrawing, final_offer);
 
-        if funding.is_zero() && !self.config.needs_reset(price) {
+        if funding.is_zero() && !should_reset {
             return Ok(LimitOrderState {
                 config: self.config,
                 state: SettingOrder {
                     price,
                     offer: Uint128::zero(),
-                    messages: vec![set_trigger_msg],
+                    messages: vec![],
                     events: vec![LimitOrderEvent::SetOrderSkipped {
                         reason: "No additional funding available and no price reset needed"
                             .to_string(),
@@ -271,7 +284,7 @@ impl LimitOrderState<UnsetOrder> {
             state: SettingOrder {
                 price,
                 offer: final_offer,
-                messages: vec![set_order_msg, set_trigger_msg],
+                messages: vec![set_order_msg],
                 events: vec![],
             },
         })
@@ -341,10 +354,17 @@ impl LimitOrderState<SetOrder> {
     }
 
     pub fn saturating_withdraw(self, deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
-        let new_price = self.config.get_new_price(deps)?;
+        let new_price = self.config.strategy.get_new_price(
+            deps,
+            &self.config.pair_address,
+            &self.config.side,
+        )?;
 
-        let should_withdraw =
-            self.state.filled.gt(&Uint128::zero()) || self.config.needs_reset(new_price);
+        let should_withdraw = self.state.filled.gt(&Uint128::zero())
+            || self
+                .config
+                .strategy
+                .should_reset(self.state.price, new_price);
 
         if should_withdraw {
             return self.withdraw(deps);
@@ -389,59 +409,12 @@ pub struct LimitOrder {
     pub side: Side,
     pub strategy: OrderPriceStrategy,
     pub current_order: Option<StaleOrder>,
-    pub scheduler: Addr,
-    pub execution_rebate: Vec<Coin>,
 }
 
 impl LimitOrder {
     pub fn get_pair(&self, deps: Deps) -> StdResult<ConfigResponse> {
         deps.querier
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
-    }
-
-    fn get_new_price(&self, deps: Deps) -> StdResult<Decimal> {
-        Ok(match self.strategy.clone() {
-            OrderPriceStrategy::Fixed(price) => price,
-            OrderPriceStrategy::Offset {
-                direction, offset, ..
-            } => {
-                let book = deps.querier.query_wasm_smart::<BookResponse>(
-                    self.pair_address.clone(),
-                    &QueryMsg::Book {
-                        limit: Some(10),
-                        offset: None,
-                    },
-                )?;
-
-                let book_price = if self.side == Side::Base {
-                    book.base
-                } else {
-                    book.quote
-                }[0]
-                .price;
-
-                match offset {
-                    Offset::Exact(offset) => match direction {
-                        Direction::Above => book_price.saturating_add(offset),
-                        Direction::Below => book_price.saturating_sub(offset),
-                    },
-                    Offset::Percent(offset) => match direction {
-                        Direction::Above => book_price
-                            .saturating_mul(Decimal::percent(100u64.saturating_add(offset))),
-                        Direction::Below => book_price
-                            .saturating_mul(Decimal::percent(100u64.saturating_sub(offset))),
-                    },
-                }
-            }
-        })
-    }
-
-    fn needs_reset(&self, new_price: Decimal) -> bool {
-        if let Some(existing_order) = &self.current_order {
-            self.strategy.should_reset(existing_order.price, new_price)
-        } else {
-            true
-        }
     }
 
     fn execute_unsafe(

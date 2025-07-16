@@ -10,7 +10,7 @@ mod integration_tests {
         constants::BASE_FEE_BPS,
         core::Threshold,
         manager::Affiliate,
-        scheduler::{SchedulerExecuteMsg, Trigger},
+        scheduler::SchedulerExecuteMsg,
         strategy::Committed,
     };
 
@@ -91,8 +91,6 @@ mod integration_tests {
             side: Side::Base,
             strategy: OrderPriceStrategy::Fixed(Decimal::percent(100)),
             current_order: None,
-            scheduler: harness.scheduler_addr.clone(),
-            execution_rebate: vec![],
         }
     }
 
@@ -1384,37 +1382,6 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_execute_limit_order_action_sets_limit_order_filled_condition_trigger() {
-        let mut harness = CalcTestApp::setup();
-
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Fixed(Decimal::percent(50)),
-            ..default_limit_order_action(&harness)
-        };
-
-        let starting_balance = Coin::new(1_000_000u128, order_action.bid_denom.clone());
-
-        let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::LimitOrder(order_action.clone()))
-            .instantiate(&[starting_balance.clone()]);
-
-        let condition = Condition::LimitOrderFilled {
-            pair_address: order_action.pair_address.clone(),
-            owner: strategy.strategy_addr.clone(),
-            side: order_action.side.clone(),
-            price: Price::Fixed(Decimal::percent(50)),
-            minimum_filled_amount: None,
-        };
-
-        strategy.assert_triggers(vec![Trigger {
-            id: condition.id(strategy.strategy_addr.clone()).unwrap(),
-            owner: strategy.strategy_addr.clone(),
-            condition,
-            execution_rebate: order_action.execution_rebate,
-        }]);
-    }
-
-    #[test]
     fn test_execute_limit_order_action_with_additional_balance_deploys_it() {
         let mut harness = CalcTestApp::setup();
         let order_action = default_limit_order_action(&harness);
@@ -1449,50 +1416,6 @@ mod integration_tests {
                     Uint128::zero(),                           // filled
                 )],
             );
-    }
-
-    #[test]
-    fn test_execute_limit_order_action_with_additional_rebate_updates_trigger() {
-        let mut harness = CalcTestApp::setup();
-        let order_action = LimitOrder {
-            execution_rebate: vec![Coin::new(1000u128, "x/ruji".to_string())],
-            ..default_limit_order_action(&harness)
-        };
-        let starting_balance = Coin::new(1000000u128, order_action.bid_denom.clone());
-
-        let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::LimitOrder(order_action.clone()))
-            .instantiate(&[starting_balance.clone()]);
-
-        let strategy_addr = strategy.strategy_addr.clone();
-
-        let condition = Condition::LimitOrderFilled {
-            pair_address: order_action.pair_address.clone(),
-            owner: strategy_addr.clone(),
-            side: order_action.side.clone(),
-            price: Price::Fixed(Decimal::one()),
-            minimum_filled_amount: None,
-        };
-
-        let trigger_id = condition.id(strategy_addr.clone()).unwrap();
-
-        strategy.assert_triggers(vec![Trigger {
-            id: trigger_id,
-            owner: strategy_addr.clone(),
-            condition: condition.clone(),
-            execution_rebate: vec![],
-        }]);
-
-        strategy
-            .deposit(&[Coin::new(10_000u128, "x/ruji".to_string())])
-            .execute()
-            .assert_total_triggers(1)
-            .assert_triggers(vec![Trigger {
-                id: trigger_id,
-                owner: strategy_addr.clone(),
-                condition: condition.clone(),
-                execution_rebate: order_action.execution_rebate.clone(),
-            }]);
     }
 
     #[test]

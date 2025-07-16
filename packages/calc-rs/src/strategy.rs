@@ -122,9 +122,6 @@ impl From<StrategyMsg> for SubMsg {
 pub struct Json;
 
 #[cw_serde]
-pub struct New;
-
-#[cw_serde]
 pub struct Indexable;
 
 pub struct Instantiable {

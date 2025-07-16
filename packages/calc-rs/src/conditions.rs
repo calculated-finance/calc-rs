@@ -5,7 +5,7 @@ use std::{
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Decimal, Deps, Env, StdError, StdResult, Timestamp, Uint128,
+    to_json_binary, Addr, Coin, Decimal, Deps, Env, StdError, StdResult, Timestamp,
 };
 use rujira_rs::{
     fin::{OrderResponse, Price, QueryMsg, Side},
@@ -31,11 +31,10 @@ pub enum Condition {
     BlocksCompleted(u64),
     CanSwap(Swap),
     LimitOrderFilled {
-        pair_address: Addr,
         owner: Addr,
+        pair_address: Addr,
         side: Side,
-        price: Price,
-        minimum_filled_amount: Option<Uint128>,
+        price: Decimal,
     },
     BalanceAvailable {
         address: Addr,
@@ -89,20 +88,21 @@ impl Condition {
             Condition::TimestampElapsed(timestamp) => env.block.time > *timestamp,
             Condition::BlocksCompleted(height) => env.block.height > *height,
             Condition::LimitOrderFilled {
-                pair_address,
                 owner,
+                pair_address,
                 side,
                 price,
-                minimum_filled_amount,
             } => {
                 let order = deps.querier.query_wasm_smart::<OrderResponse>(
                     pair_address,
-                    &QueryMsg::Order((owner.to_string(), side.clone(), price.clone())),
+                    &QueryMsg::Order((
+                        owner.to_string(),
+                        side.clone(),
+                        Price::Fixed(price.clone()),
+                    )),
                 )?;
 
-                minimum_filled_amount.map_or(order.remaining.is_zero(), |minimum_filled_amount| {
-                    order.filled >= minimum_filled_amount
-                })
+                order.remaining.is_zero()
             }
             Condition::CanSwap(swap) => swap.best_route(deps, env)?.is_some(),
             Condition::BalanceAvailable { address, amount } => {
@@ -353,18 +353,7 @@ mod conditions_tests {
             owner: Addr::unchecked("owner"),
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
-            price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            minimum_filled_amount: None
-        }
-        .is_satisfied(deps.as_ref(), &env)
-        .unwrap());
-
-        assert!(Condition::LimitOrderFilled {
-            owner: Addr::unchecked("owner"),
-            pair_address: Addr::unchecked("pair"),
-            side: Side::Base,
-            price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            minimum_filled_amount: Some(Uint128::new(100)),
+            price: Decimal::from_str("1.0").unwrap(),
         }
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
@@ -389,8 +378,7 @@ mod conditions_tests {
             owner: Addr::unchecked("owner"),
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
-            price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-            minimum_filled_amount: None
+            price: Decimal::from_str("1.0").unwrap(),
         }
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());

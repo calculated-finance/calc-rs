@@ -1,6 +1,7 @@
 use std::vec;
 
 use calc_rs::{
+    conditions::Condition,
     constants::LOG_ERRORS_REPLY_ID,
     core::{Contract, ContractError, ContractResult},
     manager::ManagerExecuteMsg,
@@ -10,9 +11,10 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError,
-    StdResult, SubMsg, SubMsgResult,
+    to_json_binary, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply, Response,
+    StdError, StdResult, SubMsg, SubMsgResult,
 };
+use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg};
 
 use crate::state::{MANAGER, TRIGGERS};
 
@@ -42,16 +44,15 @@ pub fn execute(
     info: MessageInfo,
     msg: SchedulerExecuteMsg,
 ) -> ContractResult {
-    let mut messages = vec![];
     let mut sub_messages = vec![];
 
     match msg {
         SchedulerExecuteMsg::Create(condition) => {
-            if let Err(err) = condition.is_satisfied(deps.as_ref(), &env) {
-                return Err(ContractError::generic_err(format!(
-                    "Invalid condition: {err}"
-                )));
-            };
+            // if let Err(err) = condition.is_satisfied(deps.as_ref(), &env) {
+            //     return Err(ContractError::generic_err(format!(
+            //         "Invalid condition: {err}"
+            //     )));
+            // };
 
             let trigger_id = condition.id(info.sender.clone())?;
 
@@ -60,10 +61,46 @@ pub fn execute(
                 // may be updating the execution rebate
                 TRIGGERS.delete(deps.storage, existing_trigger.id)?;
 
-                messages.push(BankMsg::Send {
+                sub_messages.push(SubMsg::reply_never(BankMsg::Send {
                     to_address: info.sender.to_string(),
                     amount: existing_trigger.execution_rebate,
-                });
+                }));
+            }
+
+            let mut execution_rebate = Coins::try_from(info.funds)?;
+
+            if let Condition::LimitOrderFilled {
+                pair_address,
+                side,
+                price,
+                ..
+            } = condition.clone()
+            {
+                let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
+                    pair_address.clone(),
+                    &QueryMsg::Config {},
+                )?;
+
+                let bid_denom = pair.denoms.bid(&side);
+                let bid_amount = Coin::new(execution_rebate.amount_of(bid_denom), bid_denom);
+
+                if bid_amount.amount.is_zero() {
+                    return Err(ContractError::generic_err("No funds sent for limit order"));
+                }
+
+                execution_rebate.sub(bid_amount.clone())?;
+
+                // Reply never as we want to rollback the
+                // trigger storage update if the order fails
+                let set_order_msg = SubMsg::reply_never(Contract(pair_address).call(
+                    to_json_binary(&ExecuteMsg::Order((
+                        vec![(side, Price::Fixed(price), Some(bid_amount.amount))],
+                        None,
+                    )))?,
+                    vec![bid_amount],
+                ));
+
+                sub_messages.push(set_order_msg);
             }
 
             TRIGGERS.save(
@@ -71,7 +108,7 @@ pub fn execute(
                 trigger_id,
                 info.sender.clone(),
                 condition,
-                info.funds,
+                execution_rebate.to_vec(),
             )?;
         }
         SchedulerExecuteMsg::Execute(ids) => {
@@ -80,11 +117,57 @@ pub fn execute(
                     ContractError::generic_err(format!("Failed to load trigger: {e}"))
                 })?;
 
-                if let Ok(check_result) = trigger.condition.is_satisfied(deps.as_ref(), &env) {
+                if let Ok(trigger_is_satisfied) =
+                    trigger.condition.is_satisfied(deps.as_ref(), &env)
+                {
                     // Only skip execution if the condition is valid but not satisfied.
                     // Process invalid triggers to clear them from the store & reward the executor.
-                    if !check_result {
+                    if !trigger_is_satisfied {
                         continue;
+                    }
+
+                    if let Condition::LimitOrderFilled {
+                        pair_address,
+                        side,
+                        price,
+                        ..
+                    } = trigger.condition
+                    {
+                        // Should never fail if the trigger is satisfied
+                        let order = deps.querier.query_wasm_smart::<OrderResponse>(
+                            pair_address.clone(),
+                            &QueryMsg::Order((
+                                env.contract.address.to_string(),
+                                side.clone(),
+                                Price::Fixed(price.clone()),
+                            )),
+                        )?;
+
+                        // Rollback all msgs if the order is not retracted as we don't
+                        // want to send out the filled amount if it's not available
+                        let withdraw_order_msg =
+                            SubMsg::reply_never(Contract(pair_address.clone()).call(
+                                to_json_binary(&ExecuteMsg::Order((
+                                    vec![(side.clone(), Price::Fixed(price), None)],
+                                    None,
+                                )))?,
+                                vec![],
+                            ));
+
+                        sub_messages.push(withdraw_order_msg);
+
+                        let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
+                            pair_address,
+                            &QueryMsg::Config {},
+                        )?;
+
+                        // rebate the filled amount to the executor (should never be 0)
+                        let rebate_msg = SubMsg::reply_never(BankMsg::Send {
+                            to_address: info.sender.to_string(),
+                            amount: vec![Coin::new(order.filled, pair.denoms.ask(&side))],
+                        });
+
+                        sub_messages.push(rebate_msg);
                     }
                 }
 
@@ -105,20 +188,18 @@ pub fn execute(
                 sub_messages.push(execute_msg);
 
                 if !trigger.execution_rebate.is_empty() {
-                    let rebate_msg = BankMsg::Send {
+                    let rebate_msg = SubMsg::reply_never(BankMsg::Send {
                         to_address: info.sender.to_string(),
                         amount: trigger.execution_rebate,
-                    };
+                    });
 
-                    messages.push(rebate_msg);
+                    sub_messages.push(rebate_msg);
                 }
             }
         }
     };
 
-    Ok(Response::default()
-        .add_messages(messages)
-        .add_submessages(sub_messages))
+    Ok(Response::default().add_submessages(sub_messages))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -162,18 +243,18 @@ mod create_trigger_tests {
     use calc_rs::{conditions::Condition, scheduler::Trigger};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Coin,
+        Addr, Coin, ContractResult as ContractQueryResult, Decimal, SystemResult,
     };
+    use rujira_rs::fin::{Denoms, Price, Side, Tick};
 
     #[test]
-    fn creates_trigger_correctly() {
+    fn creates_block_trigger_correctly() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let owner = deps.api.addr_make("creator");
         let info = message_info(&owner.clone(), &[Coin::new(3123_u128, "rune")]);
 
-        let condition =
-            Condition::BlocksCompleted(cosmwasm_std::testing::mock_env().block.height + 10);
+        let condition = Condition::BlocksCompleted(env.block.height + 10);
 
         execute(
             deps.as_mut(),
@@ -197,14 +278,13 @@ mod create_trigger_tests {
     }
 
     #[test]
-    fn updates_existing_trigger_correctly() {
+    fn updates_existing_block_trigger_correctly() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let owner = deps.api.addr_make("creator");
         let info = message_info(&owner.clone(), &[Coin::new(3123_u128, "rune")]);
 
-        let condition =
-            Condition::BlocksCompleted(cosmwasm_std::testing::mock_env().block.height + 10);
+        let condition = Condition::BlocksCompleted(env.block.height + 10);
 
         execute(
             deps.as_mut(),
@@ -248,6 +328,199 @@ mod create_trigger_tests {
             }]
         );
     }
+
+    #[test]
+    fn fails_to_create_limit_order_trigger_if_no_bid_amount_sent() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+
+        let pair_address = Addr::unchecked("pair-0");
+
+        let condition = Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address,
+            side: Side::Base,
+            price: Decimal::percent(100),
+        };
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractQueryResult::Ok(
+                to_json_binary(&ConfigResponse {
+                    denoms: Denoms::new("btc-btc", "rune"),
+                    oracles: None,
+                    market_maker: None,
+                    tick: Tick::new(1),
+                    fee_taker: Decimal::percent(10),
+                    fee_maker: Decimal::percent(5),
+                    fee_address: Addr::unchecked("fee_address").to_string(),
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&owner, &[]),
+            SchedulerExecuteMsg::Create(condition.clone()),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("No funds sent for limit order"));
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&owner, &[Coin::new(1213_u128, "random-denom")]),
+            SchedulerExecuteMsg::Create(condition),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("No funds sent for limit order"));
+    }
+
+    #[test]
+    fn fails_to_create_limit_order_trigger_if_pair_does_not_exist() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+        let info = message_info(&owner, &[Coin::new(1234_u128, "rune")]);
+
+        let pair_address = Addr::unchecked("pair-0");
+
+        let condition = Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: pair_address.clone(),
+            side: Side::Base,
+            price: Decimal::percent(100),
+        };
+
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            SchedulerExecuteMsg::Create(condition),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains(format!("Querier system error: No such contract: {}", pair_address).as_str()));
+    }
+
+    #[test]
+    fn sets_limit_order_with_provided_bid_denom_funds() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+        let bid_amount = Coin::new(1234_u128, "btc-btc");
+        let info = message_info(&owner, &[bid_amount.clone()]);
+
+        let pair_address = Addr::unchecked("pair-0");
+        let side = Side::Base;
+        let price = Decimal::percent(100);
+
+        let condition = Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: pair_address.clone(),
+            side: side.clone(),
+            price: price.clone(),
+        };
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractQueryResult::Ok(
+                to_json_binary(&ConfigResponse {
+                    denoms: Denoms::new("btc-btc", "rune"),
+                    oracles: None,
+                    market_maker: None,
+                    tick: Tick::new(1),
+                    fee_taker: Decimal::percent(10),
+                    fee_maker: Decimal::percent(5),
+                    fee_address: Addr::unchecked("fee_address").to_string(),
+                })
+                .unwrap(),
+            ))
+        });
+
+        let response = execute(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            SchedulerExecuteMsg::Create(condition.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response.messages,
+            vec![SubMsg::reply_never(
+                Contract(pair_address.clone()).call(
+                    to_json_binary(&ExecuteMsg::Order((
+                        vec![(side, Price::Fixed(price), Some(bid_amount.amount.clone()),)],
+                        None,
+                    )))
+                    .unwrap(),
+                    vec![bid_amount],
+                ),
+            )]
+        )
+    }
+
+    #[test]
+    fn saves_remaining_funds_as_limit_order_trigger_execution_rebate() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+        let info = message_info(
+            &owner,
+            &[
+                Coin::new(1234_u128, "rune"),
+                Coin::new(1234_u128, "eth-eth"),
+            ],
+        );
+
+        let pair_address = Addr::unchecked("pair-0");
+
+        let condition = Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: pair_address.clone(),
+            side: Side::Quote,
+            price: Decimal::percent(100),
+        };
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractQueryResult::Ok(
+                to_json_binary(&ConfigResponse {
+                    denoms: Denoms::new("btc-btc", "rune"),
+                    oracles: None,
+                    market_maker: None,
+                    tick: Tick::new(1),
+                    fee_taker: Decimal::percent(10),
+                    fee_maker: Decimal::percent(5),
+                    fee_address: Addr::unchecked("fee_address").to_string(),
+                })
+                .unwrap(),
+            ))
+        });
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            SchedulerExecuteMsg::Create(condition.clone()),
+        )
+        .unwrap();
+
+        let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+
+        assert_eq!(
+            triggers,
+            vec![Trigger {
+                id: condition.id(owner.clone()).unwrap(),
+                owner: owner.clone(),
+                condition: condition.clone(),
+                execution_rebate: vec![Coin::new(1234_u128, "eth-eth")],
+            }]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -255,11 +528,12 @@ mod execute_trigger_tests {
     use super::*;
     use calc_rs::conditions::Condition;
     use cosmwasm_std::testing::message_info;
-    use cosmwasm_std::WasmMsg;
+    use cosmwasm_std::{from_json, Addr, Decimal, Uint128, WasmMsg, WasmQuery};
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
-        Coin, SubMsg,
+        Coin, ContractResult as CosmosContractResult, SubMsg, SystemResult,
     };
+    use rujira_rs::fin::{ConfigResponse, Denoms, OrderResponse, Price, QueryMsg, Side, Tick};
 
     #[test]
     fn returns_error_if_trigger_does_not_exist() {
@@ -312,6 +586,113 @@ mod execute_trigger_tests {
         .unwrap();
 
         assert!(response.messages.is_empty());
+    }
+
+    #[test]
+    fn withdraws_limit_order_if_trigger_can_execute() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let manager = deps.api.addr_make("manager");
+
+        MANAGER.save(deps.as_mut().storage, &manager).unwrap();
+
+        let owner = deps.api.addr_make("creator");
+        let executor = deps.api.addr_make("executor");
+
+        let side = Side::Base;
+        let price = Decimal::percent(100);
+
+        let condition = Condition::LimitOrderFilled {
+            owner: Addr::unchecked("owner"),
+            pair_address: Addr::unchecked("pair-0"),
+            side: side.clone(),
+            price: price.clone(),
+        };
+
+        deps.querier.update_wasm(move |query| {
+            SystemResult::Ok(CosmosContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("btc-btc", "rune"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(1),
+                        fee_taker: Decimal::percent(10),
+                        fee_maker: Decimal::percent(5),
+                        fee_address: Addr::unchecked("fee_address").to_string(),
+                    })
+                    .unwrap(),
+                    QueryMsg::Order(_) => to_json_binary(&OrderResponse {
+                        filled: Uint128::new(21312),
+                        owner: Addr::unchecked("contract").to_string(),
+                        rate: Decimal::percent(10),
+                        updated_at: env.block.time,
+                        offer: Uint128::new(12321),
+                        remaining: Uint128::zero(),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::percent(100)),
+                    })
+                    .unwrap(),
+                    _ => panic!("Unexpected query type"),
+                },
+                _ => panic!("Unexpected query type"),
+            }))
+        });
+
+        let remaining_rebate = Coin::new(12312u128, "other");
+
+        TRIGGERS
+            .save(
+                deps.as_mut().storage,
+                condition.id(owner.clone()).unwrap(),
+                owner.clone(),
+                condition.clone(),
+                vec![remaining_rebate.clone()],
+            )
+            .unwrap();
+
+        let response = execute(
+            deps.as_mut(),
+            env.clone(),
+            message_info(&executor, &[]),
+            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response.messages,
+            vec![
+                SubMsg::reply_never(
+                    Contract(Addr::unchecked("pair-0")).call(
+                        to_json_binary(&ExecuteMsg::Order((
+                            vec![(side.clone(), Price::Fixed(price.clone()), None)],
+                            None,
+                        )))
+                        .unwrap(),
+                        vec![],
+                    )
+                ),
+                SubMsg::reply_never(BankMsg::Send {
+                    to_address: executor.to_string(),
+                    amount: vec![Coin::new(21312u128, "rune")],
+                }),
+                SubMsg::reply_on_error(
+                    WasmMsg::Execute {
+                        contract_addr: manager.to_string(),
+                        msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                            contract_address: owner.clone(),
+                        })
+                        .unwrap(),
+                        funds: vec![],
+                    },
+                    LOG_ERRORS_REPLY_ID,
+                ),
+                SubMsg::reply_never(BankMsg::Send {
+                    to_address: executor.to_string(),
+                    amount: vec![remaining_rebate],
+                }),
+            ]
+        )
     }
 
     #[test]
@@ -662,7 +1043,7 @@ mod filtered_triggers_tests {
         testing::{mock_dependencies, mock_env},
         Addr, Decimal,
     };
-    use rujira_rs::fin::{Price, Side};
+    use rujira_rs::fin::Side;
 
     #[test]
     fn fetches_triggers_with_timestamp_filter() {
@@ -860,11 +1241,10 @@ mod filtered_triggers_tests {
                     i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         owner: Addr::unchecked("owner"),
+                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         side: Side::Base,
-                        price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        minimum_filled_amount: None,
+                        price: Decimal::from_str(&i.to_string()).unwrap(),
                     },
                     vec![],
                 )
@@ -897,11 +1277,10 @@ mod filtered_triggers_tests {
                         id: j,
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
-                            pair_address: Addr::unchecked("pair-0"),
                             owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
-                            price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            minimum_filled_amount: None,
+                            price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
                     }
@@ -922,11 +1301,10 @@ mod filtered_triggers_tests {
                     i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         owner: Addr::unchecked("owner"),
+                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         side: Side::Base,
-                        price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        minimum_filled_amount: None,
+                        price: Decimal::from_str(&i.to_string()).unwrap(),
                     },
                     vec![],
                 )
@@ -962,11 +1340,10 @@ mod filtered_triggers_tests {
                         id: j,
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
-                            pair_address: Addr::unchecked("pair-0"),
                             owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
-                            price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            minimum_filled_amount: None,
+                            price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
                     }
@@ -987,11 +1364,10 @@ mod filtered_triggers_tests {
                     i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         owner: Addr::unchecked("owner"),
+                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         side: Side::Base,
-                        price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        minimum_filled_amount: None,
+                        price: Decimal::from_str(&i.to_string()).unwrap(),
                     },
                     vec![],
                 )
@@ -1027,11 +1403,10 @@ mod filtered_triggers_tests {
                         id: j,
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
-                            pair_address: Addr::unchecked("pair-0"),
                             owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
-                            price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            minimum_filled_amount: None,
+                            price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
                     }
@@ -1052,11 +1427,10 @@ mod filtered_triggers_tests {
                     i,
                     Addr::unchecked("owner"),
                     Condition::LimitOrderFilled {
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         owner: Addr::unchecked("owner"),
+                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                         side: Side::Base,
-                        price: Price::Fixed(Decimal::from_str(&i.to_string()).unwrap()),
-                        minimum_filled_amount: None,
+                        price: Decimal::from_str(&i.to_string()).unwrap(),
                     },
                     vec![],
                 )
@@ -1092,11 +1466,10 @@ mod filtered_triggers_tests {
                         id: j,
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
-                            pair_address: Addr::unchecked("pair-0"),
                             owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
-                            price: Price::Fixed(Decimal::from_str(&j.to_string()).unwrap()),
-                            minimum_filled_amount: None,
+                            price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
                     }

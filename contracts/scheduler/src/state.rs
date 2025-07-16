@@ -4,7 +4,6 @@ use calc_rs::{
 };
 use cosmwasm_std::{Addr, Coin, Decimal, Order, StdResult, Storage};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
-use rujira_rs::fin::Price;
 
 pub const MANAGER: Item<Addr> = Item::new("manager");
 
@@ -178,13 +177,7 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
                         pair_address,
                         price,
                         ..
-                    } => (
-                        pair_address,
-                        match price {
-                            Price::Fixed(rate) => rate.to_string(),
-                            _ => Decimal::zero().to_string(),
-                        },
-                    ),
+                    } => (pair_address, price.to_string()),
                     _ => (Addr::unchecked(""), Decimal::zero().to_string()),
                 },
                 "triggers",

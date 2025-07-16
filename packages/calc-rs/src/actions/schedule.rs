@@ -61,10 +61,10 @@ impl Schedule {
             })?;
         }
 
-        if self.cadence.is_due(env)? {
+        if self.cadence.is_due(deps, env, &self.scheduler)? {
             let (mut messages, mut events, action) = self.action.execute(deps, env);
 
-            let condition = self.cadence.into_condition(env)?;
+            let condition = self.cadence.into_condition(deps, env, &self.scheduler)?;
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
@@ -88,13 +88,13 @@ impl Schedule {
                 messages,
                 events,
                 Action::Schedule(Schedule {
-                    cadence: self.cadence.next(env)?,
+                    cadence: self.cadence.next(deps, env)?,
                     action: Box::new(action),
                     ..self
                 }),
             ))
         } else {
-            let condition = self.cadence.into_condition(env)?;
+            let condition = self.cadence.into_condition(deps, env, &self.scheduler)?;
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
