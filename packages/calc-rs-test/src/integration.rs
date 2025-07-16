@@ -2103,12 +2103,6 @@ mod integration_tests {
 
         let total_fee_applied_shares = destinations
             .iter()
-            .filter(|d| match d.recipient {
-                Recipient::Bank { .. } | Recipient::Contract { .. } | Recipient::Deposit { .. } => {
-                    true
-                }
-                Recipient::Strategy { .. } => false,
-            })
             .fold(Uint128::zero(), |acc, d| acc + d.shares)
             .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
 
@@ -2208,16 +2202,10 @@ mod integration_tests {
             },
         ];
 
-        let mut total_fee_applied_shares = Uint128::zero();
-
-        for destination in destinations.iter() {
-            match &destination.recipient {
-                Recipient::Bank { .. } | Recipient::Contract { .. } | Recipient::Deposit { .. } => {
-                    total_fee_applied_shares += destination.shares;
-                }
-                Recipient::Strategy { .. } => {}
-            }
-        }
+        let total_fee_applied_shares = destinations
+            .iter()
+            .fold(Uint128::zero(), |acc, d| acc + d.shares)
+            .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
 
         let fee_collector_destination = Destination {
             recipient: Recipient::Bank {

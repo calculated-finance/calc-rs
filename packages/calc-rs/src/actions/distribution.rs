@@ -83,42 +83,27 @@ impl Distribution {
             )));
         }
 
-        let mut total_fee_applied_shares = Uint128::zero();
-        let mut total_fee_exempt_shares = Uint128::zero();
+        let total_fee_applied_shares = self
+            .destinations
+            .iter()
+            .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
-        for destination in self.destinations.iter() {
-            match &destination.recipient {
-                Recipient::Bank { .. } | Recipient::Contract { .. } | Recipient::Deposit { .. } => {
-                    total_fee_applied_shares += destination.shares;
-                }
-                Recipient::Strategy { .. } => {
-                    total_fee_exempt_shares += destination.shares;
-                }
-            }
-        }
-
-        let total_fee_shares = total_fee_applied_shares.mul_ceil(Decimal::bps(total_affiliate_bps));
-
-        Ok(if total_fee_shares.is_zero() {
-            self
-        } else {
-            Distribution {
-                denoms: self.denoms.clone(),
-                destinations: [
-                    self.destinations.clone(),
-                    affiliates
-                        .iter()
-                        .map(|affiliate| Destination {
-                            recipient: Recipient::Bank {
-                                address: affiliate.address.clone(),
-                            },
-                            shares: total_fee_applied_shares.mul_ceil(Decimal::bps(affiliate.bps)),
-                            label: Some(affiliate.label.clone()),
-                        })
-                        .collect(),
-                ]
-                .concat(),
-            }
+        Ok(Distribution {
+            denoms: self.denoms.clone(),
+            destinations: [
+                self.destinations.clone(),
+                affiliates
+                    .iter()
+                    .map(|affiliate| Destination {
+                        recipient: Recipient::Bank {
+                            address: affiliate.address.clone(),
+                        },
+                        shares: total_fee_applied_shares.mul_ceil(Decimal::bps(affiliate.bps)),
+                        label: Some(affiliate.label.clone()),
+                    })
+                    .collect(),
+            ]
+            .concat(),
         })
     }
 
