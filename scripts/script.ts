@@ -13,8 +13,11 @@ import fs from "fs";
 import protobuf from "protobufjs";
 import { setTimeout } from "timers/promises";
 import {
+  Addr,
+  Decimal,
   ManagerExecuteMsg,
   SchedulerQueryMsg,
+  Side,
   StrategyExecuteMsg,
 } from "../calc";
 import types from "./MsgCompiled";
@@ -38,7 +41,6 @@ export const getWalletWithPrivateKey = async () =>
   );
 
 export const getSigner = async () => {
-  console.log("Connecting to RPC URL:", process.env.RPC_URL);
   const signer = await SigningCosmWasmClient.connectWithSigner(
     process.env.RPC_URL!,
     await getWalletWithMnemonic(),
@@ -49,7 +51,6 @@ export const getSigner = async () => {
   );
 
   signer.registry.register("/types.MsgDeposit", types.types.MsgDeposit);
-
   return signer;
 };
 
@@ -921,10 +922,26 @@ export const getOrders = async (pairAddress: string) => {
   return response;
 };
 
+export const getOrder = async (
+  pairAddress: Addr,
+  owner: Addr,
+  side: Side,
+  price: Decimal,
+) => {
+  const cosmWasmClient = await getSigner();
+  const response = await cosmWasmClient.queryContractSmart(pairAddress, {
+    order: [owner, side, { fixed: price }],
+  });
+
+  return response;
+};
+
 export const getBlock = async () => {
   const cosmWasmClient = await getSigner();
   return cosmWasmClient.getBlock();
 };
+
+export const KEEPER_ADDRESS = "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka";
 
 export const MANAGER_ADDRESS =
   "sthor1xg6qsvyktr0zyyck3d67mgae0zun4lhwwn3v9pqkl5pk8mvkxsnscenkc0";

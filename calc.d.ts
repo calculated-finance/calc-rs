@@ -185,6 +185,14 @@ export type Cadence =
         expr: string;
         previous?: Timestamp | null;
       };
+    }
+  | {
+      limit_order: {
+        pair_address: Addr;
+        previous?: Decimal | null;
+        side: Side;
+        strategy: OrderPriceStrategy;
+      };
     };
 /**
  * A point in time in nanosecond precision.
@@ -222,10 +230,9 @@ export type Condition =
     }
   | {
       limit_order_filled: {
-        minimum_filled_amount?: Uint128 | null;
         owner: Addr;
         pair_address: Addr;
-        price: Price;
+        price: Decimal;
         side: Side;
       };
     }
@@ -259,13 +266,6 @@ export type Condition =
     }
   | {
       composite: CompositeCondition;
-    };
-export type Price =
-  | {
-      fixed: Decimal;
-    }
-  | {
-      oracle: number;
     };
 export type Threshold = "all" | "any";
 export type Json = null;
@@ -306,10 +306,8 @@ export interface StreamingSwap {
 export interface LimitOrder {
   bid_denom: string;
   current_order?: StaleOrder | null;
-  execution_rebate: Coin[];
   max_bid_amount?: Uint128 | null;
   pair_address: Addr;
-  scheduler: Addr;
   side: Side;
   strategy: OrderPriceStrategy;
 }
@@ -343,8 +341,6 @@ export interface CompositeCondition {
   conditions: Condition[];
   threshold: Threshold;
 }
-
-export type ArrayOf_Affiliate = Affiliate[];
 
 export interface ManagerConfig {
   fee_collector: Addr;
@@ -412,53 +408,6 @@ export type SchedulerExecuteMsg =
       execute: number[];
     };
 export type Boolean = boolean;
-export type DcaSchedule =
-  | {
-      blocks: {
-        interval: number;
-        previous?: number | null;
-      };
-    }
-  | {
-      time: {
-        duration: Duration;
-        previous?: Timestamp | null;
-      };
-    };
-
-export interface DcaStrategy {
-  conditions: Condition[];
-  exchange_contract: Addr;
-  fee_collector: Addr;
-  immutable_destinations: Destination[];
-  minimum_receive_amount: Coin;
-  mutable_destinations: Destination[];
-  owner: Addr;
-  schedule: DcaSchedule;
-  scheduler_contract: Addr;
-  statistics: DcaStatistics;
-  swap_amount: Coin;
-}
-
-export interface DcaStatistics {
-  amount_deposited: Coin;
-  amount_received: Coin;
-  amount_swapped: Coin;
-}
-export interface NewStrategy {
-  owner: Addr;
-}
-
-export type Route =
-  | {
-      fin: {
-        address: Addr;
-      };
-    }
-  | {
-      thorchain: {};
-    };
-export type TriggerConditionsThreshold = "any" | "all";
 
 export interface Statistics {
   credited: [Recipient, Coin[]][];
