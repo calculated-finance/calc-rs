@@ -208,24 +208,53 @@ impl Cadence {
                 pair_address,
                 side,
                 strategy,
-                ..
-            } => Cadence::LimitOrder {
-                pair_address: pair_address.clone(),
-                side: side.clone(),
-                previous: Some(strategy.get_new_price(deps, &pair_address, &side)?),
-                strategy,
-            },
+                previous,
+            } => {
+                if let Some(previous) = previous {
+                    let new_price = strategy.get_new_price(deps, &pair_address, &side)?;
+                    if strategy.should_reset(previous, new_price) {
+                        Cadence::LimitOrder {
+                            pair_address: pair_address.clone(),
+                            side: side.clone(),
+                            previous: Some(new_price),
+                            strategy,
+                        }
+                    } else {
+                        Cadence::LimitOrder {
+                            pair_address: pair_address.clone(),
+                            side: side.clone(),
+                            previous: Some(previous),
+                            strategy,
+                        }
+                    }
+                } else {
+                    Cadence::LimitOrder {
+                        pair_address: pair_address.clone(),
+                        side: side.clone(),
+                        previous: Some(strategy.get_new_price(deps, &pair_address, &side)?),
+                        strategy,
+                    }
+                }
+            }
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::cadence::Cadence;
+    use crate::{
+        actions::limit_order::{Direction, Offset},
+        cadence::Cadence,
+    };
 
     use super::*;
 
-    use cosmwasm_std::testing::{mock_dependencies, mock_env};
+    use cosmwasm_std::{
+        from_json,
+        testing::{mock_dependencies, mock_env},
+        to_json_binary, ContractResult, SystemResult, Uint128, WasmQuery,
+    };
+    use rujira_rs::fin::{BookItemResponse, BookResponse, OrderResponse, Price, QueryMsg};
     use std::time::Duration;
 
     #[test]
@@ -413,6 +442,89 @@ mod tests {
     }
 
     #[test]
+    fn updates_to_next_limit_order() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let pair_address = Addr::unchecked("pair");
+        let side = Side::Base;
+        let fixed_strategy = OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap());
+
+        assert_eq!(
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: None,
+                strategy: fixed_strategy.clone()
+            }
+            .next(deps.as_ref(), &env)
+            .unwrap(),
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: Some(Decimal::from_str("100.0").unwrap()),
+                strategy: fixed_strategy
+            }
+        );
+
+        let offset_strategy = OrderPriceStrategy::Offset {
+            direction: Direction::Above,
+            offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
+            tolerance: Offset::Percent(50),
+        };
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&BookResponse {
+                    base: vec![BookItemResponse {
+                        price: Decimal::from_str("1.45").unwrap(),
+                        total: Uint128::new(1_000_000),
+                    }],
+                    quote: vec![BookItemResponse {
+                        price: Decimal::from_str("1.35").unwrap(),
+                        total: Uint128::new(1_000_000),
+                    }],
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert_eq!(
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: None,
+                strategy: offset_strategy.clone()
+            }
+            .next(deps.as_ref(), &env)
+            .unwrap(),
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: Some(Decimal::from_str("1.55").unwrap()),
+                strategy: offset_strategy.clone()
+            }
+        );
+
+        assert_eq!(
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: Some(Decimal::from_str("1.53").unwrap()),
+                strategy: offset_strategy.clone()
+            }
+            .next(deps.as_ref(), &env)
+            .unwrap(),
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: Some(Decimal::from_str("1.53").unwrap()),
+                strategy: offset_strategy
+            }
+        );
+    }
+
+    #[test]
     fn gets_next_block_condition() {
         let deps = mock_dependencies();
         let env = mock_env();
@@ -526,6 +638,72 @@ mod tests {
     }
 
     #[test]
+    fn gets_next_limit_order_condition() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        let pair_address = Addr::unchecked("pair");
+        let side = Side::Base;
+        let fixed_strategy = OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap());
+
+        assert_eq!(
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: None,
+                strategy: fixed_strategy.clone()
+            }
+            .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+            .unwrap(),
+            Condition::LimitOrderFilled {
+                owner: Addr::unchecked("scheduler"),
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                price: Decimal::from_str("100.0").unwrap()
+            }
+        );
+
+        let offset_strategy = OrderPriceStrategy::Offset {
+            direction: Direction::Above,
+            offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
+            tolerance: Offset::Percent(50),
+        };
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&BookResponse {
+                    base: vec![BookItemResponse {
+                        price: Decimal::from_str("1.45").unwrap(),
+                        total: Uint128::new(1_000_000),
+                    }],
+                    quote: vec![BookItemResponse {
+                        price: Decimal::from_str("1.35").unwrap(),
+                        total: Uint128::new(1_000_000),
+                    }],
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert_eq!(
+            Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                previous: None,
+                strategy: offset_strategy.clone()
+            }
+            .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+            .unwrap(),
+            Condition::LimitOrderFilled {
+                owner: Addr::unchecked("scheduler"),
+                pair_address: pair_address.clone(),
+                side: side.clone(),
+                price: Decimal::from_str("1.55").unwrap()
+            }
+        );
+    }
+
+    #[test]
     fn block_schedule_is_due() {
         let deps = mock_dependencies();
         let env = mock_env();
@@ -616,6 +794,245 @@ mod tests {
         assert!(Cadence::Cron {
             expr: cron.to_string(),
             previous: Some(env.block.time.minus_seconds(15))
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+    }
+
+    #[test]
+    fn limit_order_schedule_is_due() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+
+        assert!(Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: None,
+            strategy: OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&OrderResponse {
+                    owner: "scheduler".to_string(),
+                    side: Side::Base,
+                    price: Price::Fixed(Decimal::from_str("100.0").unwrap()),
+                    rate: Decimal::from_str("0.1").unwrap(),
+                    updated_at: Timestamp::from_seconds(12),
+                    offer: Uint128::new(7123123),
+                    remaining: Uint128::new(1),
+                    filled: Uint128::new(23453),
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert!(!Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: Some(Decimal::from_str("100.0").unwrap()),
+            strategy: OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&OrderResponse {
+                    owner: "scheduler".to_string(),
+                    side: Side::Base,
+                    price: Price::Fixed(Decimal::from_str("100.0").unwrap()),
+                    rate: Decimal::from_str("0.1").unwrap(),
+                    updated_at: Timestamp::from_seconds(12),
+                    offer: Uint128::new(7123123),
+                    remaining: Uint128::new(0),
+                    filled: Uint128::new(23453),
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert!(Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: Some(Decimal::from_str("100.0").unwrap()),
+            strategy: OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+
+        assert!(Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: None,
+            strategy: OrderPriceStrategy::Offset {
+                direction: Direction::Above,
+                offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
+                tolerance: Offset::Percent(50),
+            }
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&OrderResponse {
+                    owner: "scheduler".to_string(),
+                    side: Side::Base,
+                    price: Price::Fixed(Decimal::from_str("1.55").unwrap()),
+                    rate: Decimal::from_str("0.1").unwrap(),
+                    updated_at: Timestamp::from_seconds(12),
+                    offer: Uint128::new(7123123),
+                    remaining: Uint128::new(0),
+                    filled: Uint128::new(23453),
+                })
+                .unwrap(),
+            ))
+        });
+
+        assert!(Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: Some(Decimal::from_str("1.55").unwrap()),
+            strategy: OrderPriceStrategy::Offset {
+                direction: Direction::Above,
+                offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
+                tolerance: Offset::Percent(50),
+            }
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Order(_) => to_json_binary(&OrderResponse {
+                        owner: "scheduler".to_string(),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::from_str("1.55").unwrap()),
+                        rate: Decimal::from_str("0.1").unwrap(),
+                        updated_at: Timestamp::from_seconds(12),
+                        offer: Uint128::new(7123123),
+                        remaining: Uint128::new(12312),
+                        filled: Uint128::new(23453),
+                    })
+                    .unwrap(),
+                    QueryMsg::Book { .. } => to_json_binary(&BookResponse {
+                        base: vec![BookItemResponse {
+                            price: Decimal::from_str("1.45").unwrap(),
+                            total: Uint128::new(1_000_000),
+                        }],
+                        quote: vec![BookItemResponse {
+                            price: Decimal::from_str("1.35").unwrap(),
+                            total: Uint128::new(1_000_000),
+                        }],
+                    })
+                    .unwrap(),
+                    _ => panic!("unexpected query type"),
+                },
+                _ => panic!("unexpected query type"),
+            }))
+        });
+
+        assert!(!Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: Some(Decimal::from_str("1.65").unwrap()),
+            strategy: OrderPriceStrategy::Offset {
+                direction: Direction::Above,
+                offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
+                tolerance: Offset::Percent(50),
+            }
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Order(_) => to_json_binary(&OrderResponse {
+                        owner: "scheduler".to_string(),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::from_str("1.55").unwrap()),
+                        rate: Decimal::from_str("0.1").unwrap(),
+                        updated_at: Timestamp::from_seconds(12),
+                        offer: Uint128::new(7123123),
+                        remaining: Uint128::new(0),
+                        filled: Uint128::new(23453),
+                    })
+                    .unwrap(),
+                    QueryMsg::Book { .. } => to_json_binary(&BookResponse {
+                        base: vec![BookItemResponse {
+                            price: Decimal::from_str("1.45").unwrap(),
+                            total: Uint128::new(1_000_000),
+                        }],
+                        quote: vec![BookItemResponse {
+                            price: Decimal::from_str("1.35").unwrap(),
+                            total: Uint128::new(1_000_000),
+                        }],
+                    })
+                    .unwrap(),
+                    _ => panic!("unexpected query type"),
+                },
+                _ => panic!("unexpected query type"),
+            }))
+        });
+
+        assert!(Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: Some(Decimal::from_str("1.65").unwrap()),
+            strategy: OrderPriceStrategy::Offset {
+                direction: Direction::Above,
+                offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
+                tolerance: Offset::Percent(50),
+            }
+        }
+        .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+        .unwrap());
+
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Order(_) => to_json_binary(&OrderResponse {
+                        owner: "scheduler".to_string(),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::from_str("1.55").unwrap()),
+                        rate: Decimal::from_str("0.1").unwrap(),
+                        updated_at: Timestamp::from_seconds(12),
+                        offer: Uint128::new(7123123),
+                        remaining: Uint128::new(12312),
+                        filled: Uint128::new(23453),
+                    })
+                    .unwrap(),
+                    QueryMsg::Book { .. } => to_json_binary(&BookResponse {
+                        base: vec![BookItemResponse {
+                            price: Decimal::from_str("1.45").unwrap(),
+                            total: Uint128::new(1_000_000),
+                        }],
+                        quote: vec![BookItemResponse {
+                            price: Decimal::from_str("1.35").unwrap(),
+                            total: Uint128::new(1_000_000),
+                        }],
+                    })
+                    .unwrap(),
+                    _ => panic!("unexpected query type"),
+                },
+                _ => panic!("unexpected query type"),
+            }))
+        });
+
+        assert!(Cadence::LimitOrder {
+            pair_address: Addr::unchecked("pair"),
+            side: Side::Base,
+            previous: Some(Decimal::from_str("1.65").unwrap()),
+            strategy: OrderPriceStrategy::Offset {
+                direction: Direction::Above,
+                offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
+                tolerance: Offset::Percent(1),
+            }
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
