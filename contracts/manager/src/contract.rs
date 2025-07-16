@@ -51,6 +51,16 @@ pub fn execute(
             affiliates,
             strategy,
         } => {
+            if deps.api.addr_validate(strategy.owner.as_str()).is_err() {
+                return Err(ContractError::generic_err("Invalid owner address"));
+            }
+
+            if label.is_empty() || label.len() > 100 {
+                return Err(ContractError::generic_err(
+                    "Strategy label must be between 1 and 100 characters",
+                ));
+            }
+
             let config = CONFIG.load(deps.storage)?;
 
             let total_affiliate_bps = affiliates
