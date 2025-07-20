@@ -75,7 +75,7 @@ pub enum OrderPriceStrategy {
     Offset {
         direction: Direction,
         offset: Offset,
-        tolerance: Offset,
+        tolerance: Option<Offset>,
     },
 }
 
@@ -84,12 +84,16 @@ impl OrderPriceStrategy {
         match self {
             OrderPriceStrategy::Fixed(_) => current_price != new_price,
             OrderPriceStrategy::Offset { tolerance, .. } => {
-                let price_delta = current_price.abs_diff(new_price);
-                match tolerance {
-                    Offset::Exact(value) => price_delta > *value,
-                    Offset::Percent(percent) => {
-                        current_price.saturating_mul(Decimal::percent(*percent)) < price_delta
+                if let Some(tolerance) = tolerance {
+                    let price_delta = current_price.abs_diff(new_price);
+                    match tolerance {
+                        Offset::Exact(value) => price_delta > *value,
+                        Offset::Percent(percent) => {
+                            current_price.saturating_mul(Decimal::percent(*percent)) < price_delta
+                        }
                     }
+                } else {
+                    current_price != new_price
                 }
             }
         }

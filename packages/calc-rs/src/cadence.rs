@@ -470,7 +470,7 @@ mod tests {
         let offset_strategy = OrderPriceStrategy::Offset {
             direction: Direction::Above,
             offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
-            tolerance: Offset::Percent(50),
+            tolerance: Some(Offset::Percent(50)),
         };
 
         deps.querier.update_wasm(|_| {
@@ -666,7 +666,7 @@ mod tests {
         let offset_strategy = OrderPriceStrategy::Offset {
             direction: Direction::Above,
             offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
-            tolerance: Offset::Percent(50),
+            tolerance: Some(Offset::Percent(50)),
         };
 
         deps.querier.update_wasm(|_| {
@@ -870,7 +870,7 @@ mod tests {
             strategy: OrderPriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
-                tolerance: Offset::Percent(50),
+                tolerance: Some(Offset::Percent(50)),
             }
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
@@ -899,7 +899,7 @@ mod tests {
             strategy: OrderPriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
-                tolerance: Offset::Percent(50),
+                tolerance: Some(Offset::Percent(50)),
             }
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
@@ -943,7 +943,7 @@ mod tests {
             strategy: OrderPriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
-                tolerance: Offset::Percent(50),
+                tolerance: Some(Offset::Percent(50)),
             }
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
@@ -987,7 +987,7 @@ mod tests {
             strategy: OrderPriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
-                tolerance: Offset::Percent(50),
+                tolerance: Some(Offset::Percent(50)),
             }
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
@@ -1031,7 +1031,7 @@ mod tests {
             strategy: OrderPriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
-                tolerance: Offset::Percent(1),
+                tolerance: Some(Offset::Percent(1)),
             }
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))

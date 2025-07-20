@@ -1427,7 +1427,7 @@ mod integration_tests {
             strategy: OrderPriceStrategy::Offset {
                 direction: Direction::Below,
                 offset: Offset::Percent(10),
-                tolerance: Offset::Exact(Decimal::percent(1)),
+                tolerance: Some(Offset::Exact(Decimal::percent(1))),
             },
             pair_address: harness.fin_addr.clone(),
             side: Side::Quote,
@@ -1498,7 +1498,7 @@ mod integration_tests {
             strategy: OrderPriceStrategy::Offset {
                 direction: Direction::Below,
                 offset: Offset::Percent(10),
-                tolerance: Offset::Exact(Decimal::percent(90)),
+                tolerance: Some(Offset::Exact(Decimal::percent(90))),
             },
             pair_address: harness.fin_addr.clone(),
             side: Side::Quote,
