@@ -2040,50 +2040,22 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_instantiate_distribution_with_false_strategy_recipient_fails() {
-        let mut harness = CalcTestApp::setup();
-        let distribution_action = Distribution {
-            destinations: vec![Destination {
-                recipient: Recipient::Strategy {
-                    contract_address: Addr::unchecked("test_strategy"),
-                },
-                shares: Uint128::new(10_000),
-                label: None,
-            }],
-            ..default_distribution_action(&harness)
-        };
-
-        let result = StrategyBuilder::new(&mut harness)
-            .with_action(Action::Distribute(distribution_action))
-            .try_instantiate(&[]);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_instantiate_distribution_with_native_denom_and_non_deposit_recipients_succeeds() {
         let mut harness = CalcTestApp::setup();
-        let owner = harness.owner.clone();
         let scheduler = harness.scheduler_addr.clone();
         let fee_collector = harness.fee_collector_addr.clone();
 
-        let default_swap_action = default_swap_action(&harness);
-
-        let other_strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::Swap(default_swap_action.clone()))
-            .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
-
         let destinations = vec![
             Destination {
-                recipient: Recipient::Strategy {
-                    contract_address: other_strategy.strategy_addr.clone(),
+                recipient: Recipient::Bank {
+                    address: harness.app.api().addr_make(&"test1"),
                 },
                 shares: Uint128::new(5_000),
                 label: None,
             },
             Destination {
                 recipient: Recipient::Bank {
-                    address: owner.clone(),
+                    address: harness.app.api().addr_make(&"test2"),
                 },
                 shares: Uint128::new(10_000),
                 label: None,
@@ -2101,7 +2073,7 @@ mod integration_tests {
             },
         ];
 
-        let total_fee_applied_shares = destinations
+        let total_shares_with_fees = destinations
             .iter()
             .fold(Uint128::zero(), |acc, d| acc + d.shares)
             .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
@@ -2110,7 +2082,7 @@ mod integration_tests {
             recipient: Recipient::Bank {
                 address: fee_collector.clone(),
             },
-            shares: total_fee_applied_shares.mul_floor(Decimal::bps(BASE_FEE_BPS)),
+            shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
             label: None,
         };
 
@@ -2125,9 +2097,6 @@ mod integration_tests {
             .with_action(Action::Distribute(distribution_action))
             .instantiate(&starting_balances);
 
-        let total_shares = destinations.iter().map(|d| d.shares).sum::<Uint128>()
-            + fee_collector_destination.shares;
-
         strategy
             .assert_bank_balance(&Coin::new(0u128, "x/ruji"))
             .assert_stats(Statistics {
@@ -2141,8 +2110,10 @@ mod integration_tests {
                                 .iter()
                                 .map(|b| {
                                     Coin::new(
-                                        b.amount
-                                            .mul_floor(Decimal::from_ratio(d.shares, total_shares)),
+                                        b.amount.mul_floor(Decimal::from_ratio(
+                                            d.shares,
+                                            total_shares_with_fees,
+                                        )),
                                         b.denom.clone(),
                                     )
                                 })
@@ -2161,20 +2132,7 @@ mod integration_tests {
         let scheduler = harness.scheduler_addr.clone();
         let fee_collector = harness.fee_collector_addr.clone();
 
-        let default_swap_action = default_swap_action(&harness);
-
-        let other_strategy = StrategyBuilder::new(&mut harness)
-            .with_action(Action::Swap(default_swap_action.clone()))
-            .instantiate(&[Coin::new(100_000u128, "eth-usdc")]);
-
         let destinations = vec![
-            Destination {
-                recipient: Recipient::Strategy {
-                    contract_address: other_strategy.strategy_addr.clone(),
-                },
-                shares: Uint128::new(5_000),
-                label: None,
-            },
             Destination {
                 recipient: Recipient::Deposit {
                     memo: "-secure:eth-usdc".to_string(),

@@ -128,7 +128,7 @@ export type OrderPriceStrategy =
       offset: {
         direction: Direction;
         offset: Offset;
-        tolerance: Offset;
+        tolerance?: Offset | null;
       };
     };
 export type Direction = "above" | "below";
@@ -154,11 +154,6 @@ export type Recipient =
   | {
       deposit: {
         memo: string;
-      };
-    }
-  | {
-      strategy: {
-        contract_address: Addr;
       };
     };
 /**

@@ -42,17 +42,14 @@ pub enum Recipient {
     Bank { address: Addr },
     Contract { address: Addr, msg: Binary },
     Deposit { memo: String },
-    Strategy { contract_address: Addr },
 }
 
 impl Recipient {
     pub fn key(&self) -> String {
         match self {
-            Recipient::Bank { address }
-            | Recipient::Contract { address, .. }
-            | Recipient::Strategy {
-                contract_address: address,
-            } => address.to_string(),
+            Recipient::Bank { address } | Recipient::Contract { address, .. } => {
+                address.to_string()
+            }
             Recipient::Deposit { memo } => memo.clone(),
         }
     }
@@ -158,10 +155,6 @@ impl Distribution {
                     to_address: address.into(),
                     amount: denom_shares.clone(),
                 }),
-                Recipient::Strategy { contract_address } => CosmosMsg::Bank(BankMsg::Send {
-                    to_address: contract_address.into(),
-                    amount: denom_shares.clone(),
-                }),
                 Recipient::Contract { address, msg, .. } => CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: address.into(),
                     msg,
@@ -198,7 +191,7 @@ impl Distribution {
 }
 
 impl StatelessOperation for Distribution {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
         }
@@ -220,22 +213,6 @@ impl StatelessOperation for Distribution {
                     deps.api.addr_validate(address.as_ref()).map_err(|_| {
                         StdError::generic_err(format!("Invalid destination address: {address}"))
                     })?;
-                }
-                Recipient::Strategy { contract_address } => {
-                    let source_contract_info = deps
-                        .querier
-                        .query_wasm_contract_info(env.contract.address.clone())?;
-
-                    let funded_contract_code_id = deps
-                        .querier
-                        .query_wasm_contract_info(contract_address.clone())?
-                        .code_id;
-
-                    if source_contract_info.code_id != funded_contract_code_id {
-                        return Err(StdError::generic_err(
-                            "Funded strategy contract must be a CALC strategy contract",
-                        ));
-                    }
                 }
                 Recipient::Deposit { memo } => {
                     if has_native_denoms {
