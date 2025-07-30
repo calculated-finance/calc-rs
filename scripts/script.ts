@@ -214,6 +214,9 @@ export const uploadAndMigrateSchedulerContract = async () => {
     "artifacts/scheduler.wasm",
     adminAddress,
     SCHEDULER_ADDRESS,
+    {
+      manager: MANAGER_ADDRESS,
+    },
   );
 };
 
@@ -238,13 +241,11 @@ export const getCodeDetails = async (codeId: number): Promise<CodeDetails> => {
 
 export const uploadAndInstantiateContractSuite = async () => {
   await uploadAndInstantiateManagerContract();
-  await uploadAndInstantiateExchangeContract();
   await uploadAndInstantiateSchedulerContract();
 };
 
 export const uploadAndMigrateContractSuite = async () => {
   await uploadAndMigrateManagerContract();
-  await uploadAndMigrateExchangeContract();
   await uploadAndMigrateSchedulerContract();
 };
 
@@ -812,8 +813,6 @@ export const queryPool = async () => {
   return QueryPoolResponse.decode(response.value).toJSON();
 };
 
-queryPool().then((pool) => console.log(JSON.stringify(pool, null, 2)));
-
 export const queryQuote = async () => {
   const stargateClient = await getSigner();
   const root = await protobuf.load("./scripts/query.proto");
@@ -841,23 +840,15 @@ export const updateStrategy = async (address: string, update: any) => {
   const cosmWasmClient = await getSigner();
   const account = await getAccount(await getWalletWithMnemonic());
 
-  const existingConfig = await cosmWasmClient.queryContractSmart(
-    STRATEGY_ADDRESS,
-    {
-      config: {},
-    },
-  );
-
   const response = await cosmWasmClient.execute(
     account,
     MANAGER_ADDRESS,
     {
       update_strategy: {
-        contract_address: STRATEGY_ADDRESS,
+        contract_address: address,
         update,
       },
     } as ManagerExecuteMsg,
-    // update,
     "auto",
   );
 

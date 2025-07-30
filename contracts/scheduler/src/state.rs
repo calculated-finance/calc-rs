@@ -2,7 +2,7 @@ use calc_rs::{
     conditions::Condition,
     scheduler::{ConditionFilter, Trigger},
 };
-use cosmwasm_std::{Addr, Coin, Decimal, Order, StdResult, Storage};
+use cosmwasm_std::{Addr, Coin, Decimal, Order, StdResult, Storage, Uint64};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 
 pub const MANAGER: Item<Addr> = Item::new("manager");
@@ -45,7 +45,7 @@ impl TriggerStore<'_> {
             storage,
             trigger_id,
             &Trigger {
-                id: trigger_id,
+                id: Uint64::from(trigger_id),
                 owner,
                 condition,
                 execution_rebate,

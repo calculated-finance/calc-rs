@@ -186,7 +186,7 @@ impl Strategy<Indexable> {
     where
         F: FnOnce(&mut dyn Storage, &Strategy<Instantiable>) -> StdResult<()>,
     {
-        let salt_data = to_json_binary(&(self.owner.to_string(), self.clone()))?;
+        let salt_data = to_json_binary(&(self.owner.to_string(), self.clone(), env.block.height))?;
         let mut hash = DefaultHasher::new();
         hash.write(salt_data.as_slice());
         let salt = hash.finish().to_le_bytes();

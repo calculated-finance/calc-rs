@@ -1,11 +1,11 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Coin, Decimal, Timestamp};
+use cosmwasm_std::{Addr, Coin, Decimal, Timestamp, Uint64};
 
 use crate::conditions::Condition;
 
 #[cw_serde]
 pub struct Trigger {
-    pub id: u64,
+    pub id: Uint64,
     pub owner: Addr,
     pub condition: Condition,
     pub execution_rebate: Vec<Coin>,
@@ -19,7 +19,7 @@ pub struct SchedulerInstantiateMsg {
 #[cw_serde]
 pub enum SchedulerExecuteMsg {
     Create(Condition),
-    Execute(Vec<u64>),
+    Execute(Vec<Uint64>),
 }
 
 #[cw_serde]
@@ -46,7 +46,7 @@ pub enum SchedulerQueryMsg {
     Owned {
         owner: Addr,
         limit: Option<usize>,
-        start_after: Option<u64>,
+        start_after: Option<Uint64>,
     },
     #[returns(Vec<Trigger>)]
     Filtered {
@@ -54,5 +54,5 @@ pub enum SchedulerQueryMsg {
         limit: Option<usize>,
     },
     #[returns(bool)]
-    CanExecute(u64),
+    CanExecute(Uint64),
 }

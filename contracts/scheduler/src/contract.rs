@@ -11,8 +11,8 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply, Response,
-    StdError, StdResult, SubMsg, SubMsgResult,
+    to_json_binary, Addr, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply,
+    Response, StdError, StdResult, SubMsg, SubMsgResult,
 };
 use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg};
 
@@ -30,10 +30,13 @@ pub fn instantiate(
 }
 
 #[cw_serde]
-pub struct MigrateMsg {}
+pub struct MigrateMsg {
+    pub manager: Addr,
+}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
+pub fn migrate(_deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, StdError> {
+    MANAGER.save(_deps.storage, &msg.manager)?;
     Ok(Response::default())
 }
 
@@ -51,9 +54,7 @@ pub fn execute(
             let trigger_id = condition.id(info.sender.clone())?;
 
             if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id) {
-                // We delete any existing trigger as we
-                // may be updating the execution rebate
-                TRIGGERS.delete(deps.storage, existing_trigger.id)?;
+                TRIGGERS.delete(deps.storage, existing_trigger.id.into())?;
 
                 sub_messages.push(SubMsg::reply_never(BankMsg::Send {
                     to_address: info.sender.to_string(),
@@ -84,8 +85,6 @@ pub fn execute(
 
                 execution_rebate.sub(bid_amount.clone())?;
 
-                // Reply never as we want to rollback the
-                // trigger storage update if the order fails
                 let set_order_msg = SubMsg::reply_never(Contract(pair_address).call(
                     to_json_binary(&ExecuteMsg::Order((
                         vec![(side, Price::Fixed(price), Some(bid_amount.amount))],
@@ -107,15 +106,13 @@ pub fn execute(
         }
         SchedulerExecuteMsg::Execute(ids) => {
             for id in ids {
-                let trigger = TRIGGERS.load(deps.storage, id).map_err(|e| {
-                    ContractError::generic_err(format!("Failed to load trigger: {e}"))
+                let trigger = TRIGGERS.load(deps.storage, id.into()).map_err(|e| {
+                    ContractError::generic_err(format!("Failed to load trigger with id {id}: {e}"))
                 })?;
 
                 if let Ok(trigger_is_satisfied) =
                     trigger.condition.is_satisfied(deps.as_ref(), &env)
                 {
-                    // Only skip execution if the condition is valid but not satisfied.
-                    // Process invalid triggers to clear them from the store & reward the executor.
                     if !trigger_is_satisfied {
                         continue;
                     }
@@ -127,7 +124,6 @@ pub fn execute(
                         ..
                     } = trigger.condition
                     {
-                        // Should never fail if the trigger is satisfied
                         let order = deps.querier.query_wasm_smart::<OrderResponse>(
                             pair_address.clone(),
                             &QueryMsg::Order((
@@ -137,8 +133,6 @@ pub fn execute(
                             )),
                         )?;
 
-                        // Rollback all msgs if the order is not retracted as we don't
-                        // want to send out the filled amount if it's not available
                         let withdraw_order_msg =
                             SubMsg::reply_never(Contract(pair_address.clone()).call(
                                 to_json_binary(&ExecuteMsg::Order((
@@ -155,7 +149,6 @@ pub fn execute(
                             &QueryMsg::Config {},
                         )?;
 
-                        // rebate the filled amount to the executor (should never be 0)
                         let rebate_msg = SubMsg::reply_never(BankMsg::Send {
                             to_address: info.sender.to_string(),
                             amount: vec![Coin::new(order.filled, pair.denoms.ask(&side))],
@@ -165,10 +158,8 @@ pub fn execute(
                     }
                 }
 
-                TRIGGERS.delete(deps.storage, trigger.id)?;
+                TRIGGERS.delete(deps.storage, trigger.id.into())?;
 
-                // swallow errors from execute trigger replies to prevent
-                // hanging triggers due to a misconfigured downstream contract.
                 let execute_msg = SubMsg::reply_on_error(
                     Contract(MANAGER.load(deps.storage)?).call(
                         to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
@@ -203,18 +194,20 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
             owner,
             limit,
             start_after,
-        } => to_json_binary(&TRIGGERS.owned(deps.storage, owner, limit, start_after)),
+        } => to_json_binary(&TRIGGERS.owned(
+            deps.storage,
+            owner,
+            limit,
+            start_after.map(|id| id.into()),
+        )),
         SchedulerQueryMsg::Filtered { filter, limit } => {
             let filtered = TRIGGERS.filtered(deps.storage, filter, limit)?;
             to_json_binary(&filtered)
         }
         SchedulerQueryMsg::CanExecute(id) => to_json_binary(
             &TRIGGERS
-                .load(deps.storage, id)?
+                .load(deps.storage, id.into())?
                 .condition
-                // We don't coalesce errors into false so that external
-                // executors can distinguish between a misconfigured trigger
-                // and a trigger that is not satisfied.
                 .is_satisfied(deps, &env)?,
         ),
     }
@@ -237,7 +230,7 @@ mod create_trigger_tests {
     use calc_rs::{conditions::Condition, scheduler::Trigger};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr, Coin, ContractResult as ContractQueryResult, Decimal, SystemResult,
+        Addr, Coin, ContractResult as ContractQueryResult, Decimal, SystemResult, Uint64,
     };
     use rujira_rs::fin::{Denoms, Price, Side, Tick};
 
@@ -263,7 +256,7 @@ mod create_trigger_tests {
         assert_eq!(
             triggers,
             vec![Trigger {
-                id: condition.id(owner.clone()).unwrap(),
+                id: Uint64::from(condition.id(owner.clone()).unwrap()),
                 owner: owner.clone(),
                 condition: condition.clone(),
                 execution_rebate: info.funds.clone(),
@@ -293,7 +286,7 @@ mod create_trigger_tests {
         assert_eq!(
             triggers,
             vec![Trigger {
-                id: condition.id(owner.clone()).unwrap(),
+                id: Uint64::from(condition.id(owner.clone()).unwrap()),
                 owner: owner.clone(),
                 condition: condition.clone(),
                 execution_rebate: info.funds.clone(),
@@ -315,7 +308,7 @@ mod create_trigger_tests {
         assert_eq!(
             updated_triggers,
             vec![Trigger {
-                id: condition.id(owner.clone()).unwrap(),
+                id: Uint64::from(condition.id(owner.clone()).unwrap()),
                 owner: owner.clone(),
                 condition: condition.clone(),
                 execution_rebate: updated_info.funds.clone(),
@@ -508,7 +501,7 @@ mod create_trigger_tests {
         assert_eq!(
             triggers,
             vec![Trigger {
-                id: condition.id(owner.clone()).unwrap(),
+                id: Uint64::from(condition.id(owner.clone()).unwrap()),
                 owner: owner.clone(),
                 condition: condition.clone(),
                 execution_rebate: vec![Coin::new(1234_u128, "eth-eth")],
@@ -522,7 +515,7 @@ mod execute_trigger_tests {
     use super::*;
     use calc_rs::conditions::Condition;
     use cosmwasm_std::testing::message_info;
-    use cosmwasm_std::{from_json, Addr, Decimal, Uint128, WasmMsg, WasmQuery};
+    use cosmwasm_std::{from_json, Addr, Decimal, Uint128, Uint64, WasmMsg, WasmQuery};
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env},
         Coin, ContractResult as CosmosContractResult, SubMsg, SystemResult,
@@ -543,7 +536,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             execution_info.clone(),
-            SchedulerExecuteMsg::Execute(vec![1]),
+            SchedulerExecuteMsg::Execute(vec![Uint64::one()]),
         )
         .unwrap_err();
 
@@ -575,7 +568,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
+            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
         )
         .unwrap();
 
@@ -649,7 +642,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
+            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
         )
         .unwrap();
 
@@ -715,7 +708,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
+            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
         )
         .unwrap();
 
@@ -758,7 +751,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
+            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
         )
         .unwrap();
 
@@ -811,7 +804,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![condition.id(owner.clone()).unwrap()]),
+            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
         )
         .unwrap();
 
@@ -826,7 +819,7 @@ mod owned_triggers_tests {
     use cosmwasm_std::{
         from_json,
         testing::{mock_dependencies, mock_env},
-        Addr,
+        Addr, Uint64,
     };
 
     use super::*;
@@ -880,7 +873,7 @@ mod owned_triggers_tests {
             response,
             (0..5)
                 .map(|i| Trigger {
-                    id: i * 2 + 1, // odd ids for the owner
+                    id: Uint64::from(i * 2 + 1 as u64), // odd ids for the owner
                     owner: Addr::unchecked("owner"),
                     condition: Condition::BlocksCompleted(env.block.height),
                     execution_rebate: vec![],
@@ -913,7 +906,7 @@ mod owned_triggers_tests {
                 SchedulerQueryMsg::Owned {
                     owner: Addr::unchecked("owner"),
                     limit: None,
-                    start_after: Some(2),
+                    start_after: Some(Uint64::from(2 as u64)),
                 },
             )
             .unwrap(),
@@ -924,7 +917,7 @@ mod owned_triggers_tests {
             response,
             (3..=5)
                 .map(|i| Trigger {
-                    id: i,
+                    id: Uint64::from(i as u64),
                     owner: Addr::unchecked("owner"),
                     condition: Condition::BlocksCompleted(env.block.height),
                     execution_rebate: vec![],
@@ -968,7 +961,7 @@ mod owned_triggers_tests {
             response,
             (1..=3)
                 .map(|i| Trigger {
-                    id: i,
+                    id: Uint64::from(i as u64),
                     owner: Addr::unchecked("owner"),
                     condition: Condition::BlocksCompleted(env.block.height),
                     execution_rebate: vec![],
@@ -1001,7 +994,7 @@ mod owned_triggers_tests {
                 SchedulerQueryMsg::Owned {
                     owner: Addr::unchecked("owner"),
                     limit: Some(3),
-                    start_after: Some(1),
+                    start_after: Some(Uint64::from(1 as u64)),
                 },
             )
             .unwrap(),
@@ -1012,7 +1005,7 @@ mod owned_triggers_tests {
             response,
             (2..=4)
                 .map(|i| Trigger {
-                    id: i,
+                    id: Uint64::from(i as u64),
                     owner: Addr::unchecked("owner"),
                     condition: Condition::BlocksCompleted(env.block.height),
                     execution_rebate: vec![],
@@ -1035,7 +1028,7 @@ mod filtered_triggers_tests {
     use cosmwasm_std::{
         from_json,
         testing::{mock_dependencies, mock_env},
-        Addr, Decimal,
+        Addr, Decimal, Uint64,
     };
     use rujira_rs::fin::Side;
 
@@ -1076,7 +1069,7 @@ mod filtered_triggers_tests {
             response,
             (3..=5)
                 .map(|i| Trigger {
-                    id: i,
+                    id: Uint64::from(i),
                     owner: Addr::unchecked("owner"),
                     condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10),),
                     execution_rebate: vec![],
@@ -1122,7 +1115,7 @@ mod filtered_triggers_tests {
             response,
             (1..=3)
                 .map(|i| Trigger {
-                    id: i,
+                    id: Uint64::from(i),
                     owner: Addr::unchecked("owner"),
                     condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10),),
                     execution_rebate: vec![],
@@ -1168,7 +1161,7 @@ mod filtered_triggers_tests {
             response,
             (3..=5)
                 .map(|i| Trigger {
-                    id: i,
+                    id: Uint64::from(i),
                     owner: Addr::unchecked("owner"),
                     condition: Condition::BlocksCompleted(env.block.height + i * 10,),
                     execution_rebate: vec![],
@@ -1214,7 +1207,7 @@ mod filtered_triggers_tests {
             response,
             (2..=4)
                 .map(|i| Trigger {
-                    id: i,
+                    id: Uint64::from(i),
                     owner: Addr::unchecked("owner"),
                     condition: Condition::BlocksCompleted(env.block.height + i * 10,),
                     execution_rebate: vec![],
@@ -1268,7 +1261,7 @@ mod filtered_triggers_tests {
                 .map(|i| {
                     let j = i * 2;
                     Trigger {
-                        id: j,
+                        id: Uint64::from(j as u64),
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
@@ -1331,7 +1324,7 @@ mod filtered_triggers_tests {
                 .map(|i| {
                     let j = i * 2;
                     Trigger {
-                        id: j,
+                        id: Uint64::from(j as u64),
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
@@ -1394,7 +1387,7 @@ mod filtered_triggers_tests {
                 .map(|i| {
                     let j = i * 2;
                     Trigger {
-                        id: j,
+                        id: Uint64::from(j as u64),
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
@@ -1457,7 +1450,7 @@ mod filtered_triggers_tests {
                 .map(|i| {
                     let j = i * 2;
                     Trigger {
-                        id: j,
+                        id: Uint64::from(j as u64),
                         owner: Addr::unchecked("owner"),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
