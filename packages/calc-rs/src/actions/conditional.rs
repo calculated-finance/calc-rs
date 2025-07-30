@@ -13,14 +13,14 @@ use crate::{
 };
 
 enum ConditionalEvent {
-    Skipped { reason: String },
+    SkipConditionalExecution { reason: String },
 }
 
 impl From<ConditionalEvent> for Event {
     fn from(val: ConditionalEvent) -> Self {
         match val {
-            ConditionalEvent::Skipped { reason } => {
-                Event::new("conditional_action_skipped").add_attribute("reason", reason)
+            ConditionalEvent::SkipConditionalExecution { reason } => {
+                Event::new("skip_conditional_execution").add_attribute("reason", reason)
             }
         }
     }
@@ -70,7 +70,7 @@ impl StatelessOperation for Conditional {
         } else {
             (
                 vec![],
-                vec![ConditionalEvent::Skipped {
+                vec![ConditionalEvent::SkipConditionalExecution {
                     reason: "Conditions not met".into(),
                 }
                 .into()],

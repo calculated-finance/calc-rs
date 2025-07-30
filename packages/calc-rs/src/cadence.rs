@@ -2,7 +2,7 @@ use std::{cmp::max, str::FromStr, time::Duration};
 
 use chrono::DateTime;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Decimal, Deps, Env, StdResult, Timestamp};
+use cosmwasm_std::{Addr, Decimal, Deps, Env, StdError, StdResult, Timestamp};
 use cron::Schedule as CronSchedule;
 use rujira_rs::fin::Side;
 
@@ -44,9 +44,8 @@ impl Cadence {
                     return Ok(true);
                 }
 
-                let schedule = CronSchedule::from_str(expr).map_err(|e| {
-                    cosmwasm_std::StdError::generic_err(format!("Invalid cron string: {e}"))
-                })?;
+                let schedule = CronSchedule::from_str(expr)
+                    .map_err(|e| StdError::generic_err(format!("Invalid cron expression: {e}")))?;
 
                 let next = schedule
                     .after(&DateTime::from_timestamp_nanos(
@@ -110,15 +109,12 @@ impl Cadence {
                 }))
             }
             Cadence::Cron { expr, previous } => {
-                let schedule = CronSchedule::from_str(expr).map_err(|e| {
-                    cosmwasm_std::StdError::generic_err(format!("Invalid cron string: {e}"))
-                })?;
+                let schedule = CronSchedule::from_str(expr)
+                    .map_err(|e| StdError::generic_err(format!("Invalid cron expression: {e}")))?;
 
                 let next = schedule
                     .after(&DateTime::from_timestamp_nanos(
-                        previous
-                            .map_or(env.block.time, |previous| max(previous, env.block.time))
-                            .nanos() as i64,
+                        previous.map_or(env.block.time, |previous| previous).nanos() as i64,
                     ))
                     .next();
 
@@ -180,7 +176,7 @@ impl Cadence {
             },
             Cadence::Cron { expr, previous } => {
                 let schedule = CronSchedule::from_str(&expr).map_err(|e| {
-                    cosmwasm_std::StdError::generic_err(format!("Invalid cron string: {e}"))
+                    cosmwasm_std::StdError::generic_err(format!("Invalid cron expression: {e}"))
                 })?;
 
                 let next = schedule
@@ -611,25 +607,35 @@ mod tests {
         let deps = mock_dependencies();
         let env = mock_env();
 
-        let cron = "* * * * * *";
-
         assert_eq!(
             Cadence::Cron {
-                expr: cron.to_string(),
-                previous: None
+                expr: "*/30 * * * * *".to_string(),
+                previous: None,
             }
             .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
             .unwrap(),
             Condition::TimestampElapsed(Timestamp::from_seconds(
-                env.block.time.seconds() - env.block.time.seconds() % 10 + 10
-            )),
+                env.block.time.seconds() - env.block.time.seconds() % 30 + 30,
+            ))
         );
 
-        let cron = "bad cron";
+        let previous = env.block.time.plus_seconds(100);
+
+        assert_eq!(
+            Cadence::Cron {
+                expr: "*/30 * * * * *".to_string(),
+                previous: Some(previous),
+            }
+            .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
+            .unwrap(),
+            Condition::TimestampElapsed(Timestamp::from_seconds(
+                previous.seconds() - previous.seconds() % 30 + 30,
+            ))
+        );
 
         assert!(Cadence::Cron {
-            expr: cron.to_string(),
-            previous: None
+            expr: "bad cron".to_string(),
+            previous: None,
         }
         .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap_err()

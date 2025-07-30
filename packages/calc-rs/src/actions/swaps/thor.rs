@@ -16,10 +16,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult, Uint128};
 
 pub enum ThorchainSwapEvent {
-    SwapSkipped {
-        reason: String,
-    },
-    Swap {
+    AttemptSwap {
         swap_amount: Coin,
         expected_receive_amount: Coin,
         streaming_swap_blocks: u64,
@@ -29,14 +26,11 @@ pub enum ThorchainSwapEvent {
 impl From<ThorchainSwapEvent> for Event {
     fn from(val: ThorchainSwapEvent) -> Self {
         match val {
-            ThorchainSwapEvent::SwapSkipped { reason } => {
-                Event::new("thorchain_swap_skipped").add_attribute("reason", reason)
-            }
-            ThorchainSwapEvent::Swap {
+            ThorchainSwapEvent::AttemptSwap {
                 swap_amount,
                 expected_receive_amount,
                 streaming_swap_blocks,
-            } => Event::new("thorchain_swap")
+            } => Event::new("attempt_thorchain_swap")
                 .add_attribute("swap_amount", swap_amount.to_string())
                 .add_attribute(
                     "expected_receive_amount",
@@ -326,7 +320,7 @@ impl Quotable for ThorchainRoute {
                     debited: vec![route.swap_amount.clone()],
                     ..Statistics::default()
                 },
-                events: vec![ThorchainSwapEvent::Swap {
+                events: vec![ThorchainSwapEvent::AttemptSwap {
                     swap_amount: route.swap_amount.clone(),
                     expected_receive_amount: route.state.expected_amount_out.clone(),
                     streaming_swap_blocks: current_swap.streaming_swap_blocks,

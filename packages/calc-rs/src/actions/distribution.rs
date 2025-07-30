@@ -15,7 +15,7 @@ use crate::strategy::{StrategyMsg, StrategyMsgPayload};
 use crate::thorchain::MsgDeposit;
 
 enum DistributionEvent {
-    DistributionSkipped {
+    SkipDistribution {
         reason: String,
     },
     Distribute {
@@ -27,8 +27,8 @@ enum DistributionEvent {
 impl From<DistributionEvent> for Event {
     fn from(val: DistributionEvent) -> Self {
         match val {
-            DistributionEvent::DistributionSkipped { reason } => {
-                Event::new("distribution_skipped").add_attribute("reason", reason)
+            DistributionEvent::SkipDistribution { reason } => {
+                Event::new("skip_distribution").add_attribute("reason", reason)
             }
             DistributionEvent::Distribute { recipient, amount } => Event::new("distribute")
                 .add_attribute("recipient", recipient)
@@ -118,7 +118,7 @@ impl Distribution {
         if balances.is_empty() {
             return Ok((
                 vec![],
-                vec![DistributionEvent::DistributionSkipped {
+                vec![DistributionEvent::SkipDistribution {
                     reason: "No balances available for distribution".to_string(),
                 }
                 .into()],
@@ -240,7 +240,7 @@ impl StatelessOperation for Distribution {
             Ok((action, messages, events)) => (action, messages, events),
             Err(err) => (
                 vec![],
-                vec![DistributionEvent::DistributionSkipped {
+                vec![DistributionEvent::SkipDistribution {
                     reason: err.to_string(),
                 }
                 .into()],

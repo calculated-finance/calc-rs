@@ -36,21 +36,21 @@ impl LimitOrderEventData {
 }
 
 enum LimitOrderEvent {
-    SetOrderSkipped { reason: String },
+    SkipSettingOrder { reason: String },
     SetOrder(LimitOrderEventData),
-    WithdrawOrderSkipped { reason: String },
+    SkipWithdrawingOrder { reason: String },
     WithdrawOrder(LimitOrderEventData),
 }
 
 impl From<LimitOrderEvent> for Event {
     fn from(val: LimitOrderEvent) -> Self {
         match val {
-            LimitOrderEvent::SetOrderSkipped { reason } => {
-                Event::new("set_order_skipped").add_attribute("reason", reason)
+            LimitOrderEvent::SkipSettingOrder { reason } => {
+                Event::new("skip_setting_order").add_attribute("reason", reason)
             }
             LimitOrderEvent::SetOrder(data) => data.to_event("set_order"),
-            LimitOrderEvent::WithdrawOrderSkipped { reason } => {
-                Event::new("withdraw_order_skipped").add_attribute("reason", reason)
+            LimitOrderEvent::SkipWithdrawingOrder { reason } => {
+                Event::new("skip_withdrawing_order").add_attribute("reason", reason)
             }
             LimitOrderEvent::WithdrawOrder(data) => data.to_event("withdraw_order"),
         }
@@ -250,7 +250,7 @@ impl LimitOrderState<UnsetOrder> {
                     price,
                     offer: Uint128::zero(),
                     messages: vec![],
-                    events: vec![LimitOrderEvent::SetOrderSkipped {
+                    events: vec![LimitOrderEvent::SkipSettingOrder {
                         reason: "No additional funding available and no price reset needed"
                             .to_string(),
                     }
@@ -380,7 +380,7 @@ impl LimitOrderState<SetOrder> {
                 withdrawing: Uint128::zero(),
                 remaining: self.state.remaining,
                 messages: vec![],
-                events: vec![LimitOrderEvent::WithdrawOrderSkipped {
+                events: vec![LimitOrderEvent::SkipWithdrawingOrder {
                     reason: "No change in target price and no filled amount to claim".to_string(),
                 }
                 .into()],
@@ -486,7 +486,7 @@ impl StatelessOperation for LimitOrder {
             Ok((action, messages, events)) => (action, messages, events),
             Err(err) => (
                 vec![],
-                vec![LimitOrderEvent::SetOrderSkipped {
+                vec![LimitOrderEvent::SkipSettingOrder {
                     reason: err.to_string(),
                 }
                 .into()],
@@ -550,7 +550,7 @@ impl StatefulOperation for LimitOrder {
         } else {
             Ok((
                 vec![],
-                vec![LimitOrderEvent::SetOrderSkipped {
+                vec![LimitOrderEvent::SkipSettingOrder {
                     reason: "No current order to withdraw".to_string(),
                 }
                 .into()],
@@ -573,7 +573,7 @@ impl StatefulOperation for LimitOrder {
         } else {
             Ok((
                 vec![],
-                vec![LimitOrderEvent::SetOrderSkipped {
+                vec![LimitOrderEvent::SkipSettingOrder {
                     reason: "No current order to withdraw".to_string(),
                 }
                 .into()],

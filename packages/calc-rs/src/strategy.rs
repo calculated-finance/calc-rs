@@ -141,28 +141,22 @@ pub struct Indexed {
 }
 
 #[cw_serde]
-pub struct Active {
-    pub contract_address: Addr,
-}
+pub struct Active;
 
 #[cw_serde]
 pub struct Executable {
-    pub contract_address: Addr,
     messages: Vec<StrategyMsg>,
     events: Vec<Event>,
 }
 
 #[cw_serde]
 pub struct Committable {
-    pub contract_address: Addr,
     messages: Vec<StrategyMsg>,
     events: Vec<Event>,
 }
 
 #[cw_serde]
-pub struct Committed {
-    pub contract_address: Addr,
-}
+pub struct Committed;
 
 impl Strategy<Json> {
     pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> StdResult<Strategy<Indexable>> {
@@ -295,9 +289,7 @@ impl Strategy<Indexed> {
             Strategy {
                 owner: self.owner,
                 action,
-                state: Committed {
-                    contract_address: self.state.contract_address.clone(),
-                },
+                state: Committed {},
             },
         )?;
 
@@ -312,9 +304,7 @@ impl Strategy<Committed> {
         Strategy {
             owner: self.owner,
             action: self.action,
-            state: Active {
-                contract_address: self.state.contract_address,
-            },
+            state: Active,
         }
     }
 }
@@ -326,11 +316,7 @@ impl Strategy<Active> {
         Ok(Strategy {
             owner: self.owner,
             action,
-            state: Executable {
-                contract_address: self.state.contract_address.clone(),
-                messages,
-                events,
-            },
+            state: Executable { messages, events },
         })
     }
 
@@ -345,11 +331,7 @@ impl Strategy<Active> {
         Ok(Strategy {
             owner: self.owner,
             action,
-            state: Executable {
-                contract_address: self.state.contract_address.clone(),
-                messages,
-                events,
-            },
+            state: Executable { messages, events },
         })
     }
 
@@ -359,11 +341,7 @@ impl Strategy<Active> {
         Ok(Strategy {
             owner: self.owner,
             action,
-            state: Executable {
-                contract_address: self.state.contract_address.clone(),
-                messages,
-                events,
-            },
+            state: Executable { messages, events },
         })
     }
 
@@ -373,11 +351,7 @@ impl Strategy<Active> {
         Ok(Strategy {
             owner: self.owner,
             action,
-            state: Committable {
-                contract_address: self.state.contract_address.clone(),
-                messages,
-                events,
-            },
+            state: Committable { messages, events },
         })
     }
 }
@@ -392,9 +366,7 @@ impl Strategy<Committable> {
             Strategy {
                 owner: self.owner,
                 action: self.action,
-                state: Committed {
-                    contract_address: self.state.contract_address.clone(),
-                },
+                state: Committed,
             },
         )?;
 
@@ -424,9 +396,7 @@ impl Strategy<Executable> {
             Strategy {
                 owner: self.owner,
                 action: self.action,
-                state: Active {
-                    contract_address: self.state.contract_address.clone(),
-                },
+                state: Active,
             },
         )?;
 

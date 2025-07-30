@@ -20,7 +20,7 @@ use rujira_rs::fin::{
 };
 
 enum FinSwapEvent {
-    Swap {
+    AttemptSwap {
         swap_amount: Coin,
         expected_receive_amount: Coin,
     },
@@ -29,10 +29,10 @@ enum FinSwapEvent {
 impl From<FinSwapEvent> for Event {
     fn from(val: FinSwapEvent) -> Self {
         match val {
-            FinSwapEvent::Swap {
+            FinSwapEvent::AttemptSwap {
                 swap_amount,
                 expected_receive_amount,
-            } => Event::new("fin_swap_attempted")
+            } => Event::new("attempt_fin_swap")
                 .add_attribute("swap_amount", swap_amount.to_string())
                 .add_attribute(
                     "expected_receive_amount",
@@ -291,7 +291,7 @@ impl Quotable for FinRoute {
                     debited: vec![route.swap_amount.clone()],
                     ..Statistics::default()
                 },
-                events: vec![FinSwapEvent::Swap {
+                events: vec![FinSwapEvent::AttemptSwap {
                     swap_amount: route.swap_amount.clone(),
                     expected_receive_amount: route.state.expected_amount_out.clone(),
                 }

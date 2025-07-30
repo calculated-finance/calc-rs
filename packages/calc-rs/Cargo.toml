@@ -14,7 +14,7 @@ anybuf = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }
-cron = { version = "0.12", default-features = false }
+cron = { version = "0.15.0" }
 cw-storage-plus = { workspace = true }
 prost = { workspace = true }
 rujira-rs = { workspace = true }

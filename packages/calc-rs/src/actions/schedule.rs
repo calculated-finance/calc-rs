@@ -25,10 +25,10 @@ impl From<ScheduleEvent> for Event {
     fn from(val: ScheduleEvent) -> Self {
         match val {
             ScheduleEvent::ExecutionSkipped { reason } => {
-                Event::new("schedule_skipped").add_attribute("reason", reason)
+                Event::new("skip_schedule").add_attribute("reason", reason)
             }
             ScheduleEvent::CreateTrigger { condition } => {
-                Event::new("trigger_created").add_attribute("condition", format!("{condition:?}"))
+                Event::new("create_trigger").add_attribute("condition", format!("{condition:?}"))
             }
         }
     }

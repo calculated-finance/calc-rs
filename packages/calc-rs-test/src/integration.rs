@@ -149,9 +149,7 @@ mod integration_tests {
             strategy: Strategy {
                 owner: owner.clone(),
                 action: Action::Swap(swap_action),
-                state: Committed {
-                    contract_address: strategy.strategy_addr.clone(),
-                },
+                state: Committed,
             },
         });
     }
@@ -693,9 +691,7 @@ mod integration_tests {
                 strategy: Strategy {
                     owner: owner.clone(),
                     action: Action::Swap(swap_action.clone()),
-                    state: Committed {
-                        contract_address: strategy.strategy_addr.clone(),
-                    },
+                    state: Committed,
                 },
             })
             .assert_bank_balances(vec![Coin::new(
@@ -1640,7 +1636,6 @@ mod integration_tests {
             .with_action(Action::LimitOrder(order_action.clone()))
             .instantiate(&[starting_balance.clone()]);
 
-        let contract_address = strategy.strategy_addr.clone();
         let remaining_amount = Uint128::new(800_000);
         let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
 
@@ -1673,7 +1668,7 @@ mod integration_tests {
                     owner,
                     // asserts that we remove the current order
                     action: Action::LimitOrder(order_action),
-                    state: Committed { contract_address },
+                    state: Committed,
                 },
                 escrowed: HashSet::from([filled_amount.denom]),
             });
@@ -1821,9 +1816,7 @@ mod integration_tests {
             manager,
             strategy: Strategy {
                 action: Action::Many(actions),
-                state: Committed {
-                    contract_address: strategy.strategy_addr.clone(),
-                },
+                state: Committed,
                 owner,
             },
             escrowed: HashSet::from([pair.denoms.quote().to_string()]),
@@ -1904,9 +1897,7 @@ mod integration_tests {
             manager,
             strategy: Strategy {
                 action: Action::Many(actions),
-                state: Committed {
-                    contract_address: strategy.strategy_addr.clone(),
-                },
+                state: Committed,
                 owner,
             },
             escrowed: HashSet::from([pair.denoms.quote().to_string()]),
@@ -2352,9 +2343,7 @@ mod integration_tests {
             strategy: Strategy {
                 owner,
                 action,
-                state: Committed {
-                    contract_address: strategy.strategy_addr.clone(),
-                },
+                state: Committed,
             },
             escrowed: HashSet::from(["eth-usdc".to_string()]),
         });

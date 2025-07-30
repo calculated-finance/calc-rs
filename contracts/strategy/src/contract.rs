@@ -361,9 +361,7 @@ mod tests {
                     strategy: Strategy {
                         owner: strategy.owner.clone(),
                         action: strategy.action.clone(),
-                        state: Committed {
-                            contract_address: env.contract.address.clone(),
-                        },
+                        state: Committed,
                     },
                     escrowed: HashSet::new(),
                 },
@@ -424,9 +422,7 @@ mod tests {
                     strategy: Strategy {
                         owner: strategy.owner.clone(),
                         action: strategy.action.clone(),
-                        state: Committed {
-                            contract_address: env.contract.address.clone(),
-                        },
+                        state: Committed,
                     },
                     escrowed: HashSet::new(),
                 },
@@ -493,9 +489,7 @@ mod tests {
                     strategy: Strategy {
                         owner: strategy.owner.clone(),
                         action: strategy.action.clone(),
-                        state: Committed {
-                            contract_address: env.contract.address.clone(),
-                        },
+                        state: Committed,
                     },
                     escrowed: HashSet::new(),
                 },
@@ -562,9 +556,7 @@ mod tests {
                     strategy: Strategy {
                         owner: strategy.owner.clone(),
                         action: strategy.action.clone(),
-                        state: Committed {
-                            contract_address: env.contract.address.clone(),
-                        },
+                        state: Committed,
                     },
                     escrowed: HashSet::new(),
                 },
@@ -633,9 +625,7 @@ mod tests {
                     strategy: Strategy {
                         owner: strategy.owner.clone(),
                         action: strategy.action.clone(),
-                        state: Committed {
-                            contract_address: env.contract.address.clone(),
-                        },
+                        state: Committed,
                     },
                     escrowed: HashSet::new(),
                 },
@@ -648,9 +638,7 @@ mod tests {
                 &Strategy {
                     owner: strategy.owner.clone(),
                     action: strategy.action.clone(),
-                    state: Active {
-                        contract_address: env.contract.address.clone(),
-                    },
+                    state: Active,
                 },
             )
             .unwrap();
@@ -717,9 +705,7 @@ mod tests {
                     strategy: Strategy {
                         owner: strategy.owner.clone(),
                         action: strategy.action.clone(),
-                        state: Committed {
-                            contract_address: env.contract.address.clone(),
-                        },
+                        state: Committed,
                     },
                     escrowed: HashSet::new(),
                 },
@@ -808,9 +794,7 @@ mod tests {
                     strategy: Strategy {
                         owner: strategy.owner.clone(),
                         action: strategy.action.clone(),
-                        state: Committed {
-                            contract_address: env.contract.address.clone(),
-                        },
+                        state: Committed,
                     },
                     escrowed: HashSet::new(),
                 },

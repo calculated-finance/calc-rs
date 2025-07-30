@@ -13,14 +13,14 @@ use crate::{
 };
 
 pub enum SwapEvent {
-    SwapSkipped { reason: String },
+    SkipSwap { reason: String },
 }
 
 impl From<SwapEvent> for Event {
     fn from(val: SwapEvent) -> Self {
         match val {
-            SwapEvent::SwapSkipped { reason } => {
-                Event::new("swap_skipped").add_attribute("reason", reason)
+            SwapEvent::SkipSwap { reason } => {
+                Event::new("skip_swap").add_attribute("reason", reason)
             }
         }
     }
@@ -261,8 +261,8 @@ impl Swap {
         } else {
             Ok((
                 vec![],
-                vec![SwapEvent::SwapSkipped {
-                    reason: "No valid swap routes found".to_string(),
+                vec![SwapEvent::SkipSwap {
+                    reason: "No viable swap route found".to_string(),
                 }
                 .into()],
                 Action::Swap(self),
@@ -309,7 +309,7 @@ impl StatelessOperation for Swap {
             Ok((action, messages, events)) => (action, messages, events),
             Err(err) => (
                 vec![],
-                vec![SwapEvent::SwapSkipped {
+                vec![SwapEvent::SkipSwap {
                     reason: format!("Swap execution failed: {err}"),
                 }
                 .into()],
