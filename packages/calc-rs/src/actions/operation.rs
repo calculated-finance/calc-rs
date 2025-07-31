@@ -7,6 +7,7 @@ use crate::{actions::action::Action, strategy::StrategyMsg};
 pub trait StatelessOperation {
     fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)>;
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action);
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
 }
 

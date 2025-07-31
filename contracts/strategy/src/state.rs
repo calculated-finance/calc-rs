@@ -8,6 +8,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, StdError, StdResult, Storage};
 use cw_storage_plus::Item;
 
+pub const DENOMS: Item<HashSet<String>> = Item::new("denoms");
 pub const ESCROWED: Item<HashSet<String>> = Item::new("escrowed");
 pub const STATE: Item<StrategyExecuteMsg> = Item::new("state");
 pub const STATS: Item<Statistics> = Item::new("stats");
@@ -30,6 +31,7 @@ pub struct StrategyStore {
 
 impl StrategyStore {
     pub fn init(&self, storage: &mut dyn Storage, config: StrategyConfig) -> StdResult<()> {
+        DENOMS.save(storage, &config.denoms)?;
         ESCROWED.save(storage, &config.escrowed)?;
         STATS.save(storage, &Statistics::default())?;
 
@@ -58,6 +60,7 @@ impl StrategyStore {
         Ok(StrategyConfig {
             manager: stored_strategy.manager,
             strategy: stored_strategy.strategy,
+            denoms: DENOMS.load(storage)?,
             escrowed: ESCROWED.load(storage)?,
         })
     }

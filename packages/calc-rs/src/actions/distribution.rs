@@ -249,6 +249,10 @@ impl StatelessOperation for Distribution {
         }
     }
 
+    fn denoms(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
+        Ok(self.denoms.iter().cloned().collect())
+    }
+
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(self.denoms.iter().cloned().collect())
     }

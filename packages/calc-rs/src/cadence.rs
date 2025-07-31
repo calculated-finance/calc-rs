@@ -39,24 +39,12 @@ impl Cadence {
             Cadence::Time { duration, previous } => previous.map_or(true, |previous| {
                 env.block.time.seconds() >= previous.seconds() + duration.as_secs()
             }),
-            Cadence::Cron { expr, previous } => {
+            Cadence::Cron { previous, .. } => {
                 if previous.is_none() {
-                    return Ok(true);
-                }
-
-                let schedule = CronSchedule::from_str(expr)
-                    .map_err(|e| StdError::generic_err(format!("Invalid cron expression: {e}")))?;
-
-                let next = schedule
-                    .after(&DateTime::from_timestamp_nanos(
-                        previous.unwrap_or(env.block.time).nanos() as i64,
-                    ))
-                    .next();
-
-                if let Some(next) = next {
-                    env.block.time.seconds() >= next.timestamp() as u64
+                    true
                 } else {
-                    false
+                    self.into_condition(deps, env, scheduler)?
+                        .is_satisfied(deps, env)?
                 }
             }
             Cadence::LimitOrder {
@@ -194,9 +182,9 @@ impl Cadence {
                     }
                 } else {
                     // Cron expression has no next occurrence, treat as never due
-                    Cadence::Blocks {
-                        interval: u64::MAX,
-                        previous: Some(u64::MAX),
+                    Cadence::Cron {
+                        expr,
+                        previous: Some(Timestamp::from_seconds(u64::MAX)),
                     }
                 }
             }

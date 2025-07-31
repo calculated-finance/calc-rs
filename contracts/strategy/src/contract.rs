@@ -5,52 +5,61 @@ use calc_rs::{
     core::{Contract, ContractError, ContractResult},
     manager::StrategyStatus,
     strategy::{
-        StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyMsgPayload,
-        StrategyQueryMsg,
+        Indexed, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyMsgPayload, StrategyQueryMsg,
     },
 };
+use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     from_json, to_json_binary, BankMsg, Binary, Coins, Deps, DepsMut, Env, MessageInfo, Reply,
-    Response, StdResult, SubMsg, SubMsgResult,
+    Response, StdError, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{ACTIVE_STRATEGY, CONFIG, ESCROWED, STATE, STATS};
+use crate::state::{ACTIVE_STRATEGY, CONFIG, DENOMS, ESCROWED, STATE, STATS};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: StrategyInstantiateMsg,
+    strategy: Strategy<Indexed>,
 ) -> ContractResult {
-    if msg.state.contract_address != env.contract.address {
+    if strategy.state.contract_address != env.contract.address {
         return Err(ContractError::generic_err(format!(
             "Strategy contract address mismatch: expected {}, got {}",
-            env.contract.address, msg.state.contract_address
+            env.contract.address, strategy.state.contract_address
         )));
     }
 
-    // Collate escrowed denoms & initialise the strategy
-    let escrowed = msg.escrowed(deps.as_ref(), &env)?;
-    let response = msg.init(&mut deps, &env, |storage, strategy| {
+    let denoms = strategy.denoms(deps.as_ref(), &env)?;
+    let escrowed = strategy.escrowed(deps.as_ref(), &env)?;
+
+    let response = strategy.init(&mut deps, &env, |storage, strategy| {
         CONFIG.init(
             storage,
             StrategyConfig {
                 manager: info.sender.clone(),
                 strategy,
+                denoms,
                 escrowed,
             },
         )
     })?;
 
-    // Execute the strategy immediately after instantiation
     Ok(response.add_submessage(SubMsg::reply_always(
         Contract(env.contract.address.clone())
             .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]),
         LOG_ERRORS_REPLY_ID,
     )))
+}
+
+#[cw_serde]
+pub struct MigrateMsg {}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
+    Ok(Response::default())
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -106,7 +115,14 @@ pub fn execute(
 
             // If no stateful actions to unwind, we can proceed with the update
             if cancel_strategy_response.messages.is_empty() {
-                // Accumulate any newly escrowed denoms
+                let denoms = update
+                    .denoms(deps.as_ref(), &env)?
+                    .union(&config.denoms)
+                    .cloned()
+                    .collect::<HashSet<String>>();
+
+                DENOMS.save(deps.storage, &denoms)?;
+
                 let escrowed = update
                     .escrowed(deps.as_ref(), &env)?
                     .union(&config.escrowed)
@@ -143,7 +159,7 @@ pub fn execute(
                     .add_submessage(update_again_msg) // Run update to setup the new strategy
             }
         }
-        StrategyExecuteMsg::Withdraw(desired) => {
+        StrategyExecuteMsg::Withdraw(mut desired) => {
             if info.sender != config.strategy.owner && info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
             }
@@ -154,6 +170,18 @@ pub fn execute(
                         "Cannot withdraw escrowed denom: {denom}"
                     )));
                 }
+            }
+
+            if desired.is_empty() {
+                desired = DENOMS
+                    .load(deps.storage)?
+                    .difference(&ESCROWED.load(deps.storage)?)
+                    .cloned()
+                    .collect::<HashSet<_>>();
+            }
+
+            if desired.is_empty() {
+                return Ok(Response::default());
             }
 
             let owner = config.strategy.owner.to_string();
@@ -309,7 +337,11 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     match msg {
         StrategyQueryMsg::Config {} => to_json_binary(&config),
         StrategyQueryMsg::Statistics {} => to_json_binary(&STATS.load(deps.storage)?),
-        StrategyQueryMsg::Balances(include) => {
+        StrategyQueryMsg::Balances(mut include) => {
+            if include.is_empty() {
+                include = DENOMS.load(deps.storage)?;
+            }
+
             let mut balances = config.strategy.balances(deps, &env, &include)?;
 
             for denom in include {
@@ -363,6 +395,7 @@ mod tests {
                         action: strategy.action.clone(),
                         state: Committed,
                     },
+                    denoms: HashSet::new(),
                     escrowed: HashSet::new(),
                 },
             )
@@ -424,6 +457,7 @@ mod tests {
                         action: strategy.action.clone(),
                         state: Committed,
                     },
+                    denoms: HashSet::new(),
                     escrowed: HashSet::new(),
                 },
             )
@@ -491,6 +525,7 @@ mod tests {
                         action: strategy.action.clone(),
                         state: Committed,
                     },
+                    denoms: HashSet::new(),
                     escrowed: HashSet::new(),
                 },
             )
@@ -558,6 +593,7 @@ mod tests {
                         action: strategy.action.clone(),
                         state: Committed,
                     },
+                    denoms: HashSet::new(),
                     escrowed: HashSet::new(),
                 },
             )
@@ -627,6 +663,7 @@ mod tests {
                         action: strategy.action.clone(),
                         state: Committed,
                     },
+                    denoms: HashSet::new(),
                     escrowed: HashSet::new(),
                 },
             )
@@ -707,6 +744,7 @@ mod tests {
                         action: strategy.action.clone(),
                         state: Committed,
                     },
+                    denoms: HashSet::new(),
                     escrowed: HashSet::new(),
                 },
             )
@@ -796,6 +834,7 @@ mod tests {
                         action: strategy.action.clone(),
                         state: Committed,
                     },
+                    denoms: HashSet::new(),
                     escrowed: HashSet::new(),
                 },
             )

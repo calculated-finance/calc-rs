@@ -149,8 +149,12 @@ impl StatelessOperation for Schedule {
         }
     }
 
-    fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::new())
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        Ok(self.action.denoms(deps, env)?)
+    }
+
+    fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        Ok(self.action.escrowed(deps, env)?)
     }
 }
 

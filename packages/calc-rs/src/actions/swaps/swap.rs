@@ -318,6 +318,13 @@ impl StatelessOperation for Swap {
         }
     }
 
+    fn denoms(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
+        Ok(HashSet::from([
+            self.swap_amount.denom.clone(),
+            self.minimum_receive_amount.denom.clone(),
+        ]))
+    }
+
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
     }

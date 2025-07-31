@@ -89,6 +89,17 @@ impl StatelessOperation for Action {
         }
     }
 
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        match self {
+            Action::Swap(action) => action.denoms(deps, env),
+            Action::LimitOrder(action) => action.denoms(deps, env),
+            Action::Distribute(action) => action.denoms(deps, env),
+            Action::Schedule(action) => action.denoms(deps, env),
+            Action::Conditional(action) => action.denoms(deps, env),
+            Action::Many(actions) => actions.denoms(deps, env),
+        }
+    }
+
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         match self {
             Action::Swap(action) => action.escrowed(deps, env),

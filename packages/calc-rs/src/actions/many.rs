@@ -49,6 +49,17 @@ impl StatelessOperation for Vec<Action> {
         (all_messages, all_events, Action::Many(new_actions))
     }
 
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        let mut denoms = HashSet::new();
+
+        for action in self.iter() {
+            let action_denoms = action.denoms(deps, env)?;
+            denoms.extend(action_denoms);
+        }
+
+        Ok(denoms)
+    }
+
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         let mut escrowed = HashSet::new();
 

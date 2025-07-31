@@ -145,12 +145,16 @@ mod integration_tests {
 
         strategy.assert_config(StrategyConfig {
             manager: manager_addr,
-            escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
             strategy: Strategy {
                 owner: owner.clone(),
-                action: Action::Swap(swap_action),
+                action: Action::Swap(swap_action.clone()),
                 state: Committed,
             },
+            denoms: HashSet::from([
+                swap_action.swap_amount.denom.clone(),
+                swap_action.minimum_receive_amount.denom.clone(),
+            ]),
+            escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
         });
     }
 
@@ -687,12 +691,16 @@ mod integration_tests {
         strategy
             .assert_config(StrategyConfig {
                 manager: manager_addr.clone(),
-                escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
                 strategy: Strategy {
                     owner: owner.clone(),
                     action: Action::Swap(swap_action.clone()),
                     state: Committed,
                 },
+                denoms: HashSet::from([
+                    swap_action.swap_amount.denom.clone(),
+                    swap_action.minimum_receive_amount.denom.clone(),
+                ]),
+                escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
             })
             .assert_bank_balances(vec![Coin::new(
                 swap_action
@@ -1670,6 +1678,10 @@ mod integration_tests {
                     action: Action::LimitOrder(order_action),
                     state: Committed,
                 },
+                denoms: HashSet::from([
+                    pair.denoms.quote().to_string(),
+                    pair.denoms.base().to_string(),
+                ]),
                 escrowed: HashSet::from([filled_amount.denom]),
             });
     }
@@ -1819,6 +1831,10 @@ mod integration_tests {
                 state: Committed,
                 owner,
             },
+            denoms: HashSet::from([
+                pair.denoms.quote().to_string(),
+                pair.denoms.base().to_string(),
+            ]),
             escrowed: HashSet::from([pair.denoms.quote().to_string()]),
         });
     }
@@ -1900,6 +1916,10 @@ mod integration_tests {
                 state: Committed,
                 owner,
             },
+            denoms: HashSet::from([
+                pair.denoms.quote().to_string(),
+                pair.denoms.base().to_string(),
+            ]),
             escrowed: HashSet::from([pair.denoms.quote().to_string()]),
         });
     }
@@ -2329,7 +2349,7 @@ mod integration_tests {
 
         let action = Action::Conditional(Conditional {
             condition: Condition::StrategyBalanceAvailable {
-                amount: Coin::new(1000u128, "x/ruji"),
+                amount: Coin::new(1000u128, "rune"),
             },
             action: Box::new(Action::Swap(default_swap_action(&harness))),
         });
@@ -2345,6 +2365,7 @@ mod integration_tests {
                 action,
                 state: Committed,
             },
+            denoms: HashSet::from(["rune".to_string(), "eth-usdc".to_string()]),
             escrowed: HashSet::from(["eth-usdc".to_string()]),
         });
     }

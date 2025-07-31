@@ -25,10 +25,9 @@ use crate::{
 pub struct StrategyConfig {
     pub manager: Addr,
     pub strategy: Strategy<Committed>,
+    pub denoms: HashSet<String>,
     pub escrowed: HashSet<String>,
 }
-
-pub type StrategyInstantiateMsg = Strategy<Indexed>;
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
@@ -61,6 +60,10 @@ pub struct Strategy<S> {
 impl<S> Strategy<S> {
     pub fn size(&self) -> usize {
         self.action.size()
+    }
+
+    pub fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        self.action.denoms(deps, env)
     }
 
     pub fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
@@ -243,7 +246,7 @@ impl Strategy<Instantiable> {
             code_id: self.state.code_id,
             label: self.state.label,
             salt: self.state.salt,
-            msg: to_json_binary(&StrategyInstantiateMsg {
+            msg: to_json_binary(&Strategy {
                 owner: self.owner,
                 action: self.action,
                 state: Indexed {

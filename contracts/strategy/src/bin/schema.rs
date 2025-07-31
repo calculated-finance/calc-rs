@@ -1,9 +1,9 @@
-use calc_rs::strategy::{StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg};
+use calc_rs::strategy::{Indexed, Strategy, StrategyExecuteMsg, StrategyQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {
     write_api! {
-        instantiate: StrategyInstantiateMsg,
+        instantiate: Strategy<Indexed>,
         execute: StrategyExecuteMsg,
         query: StrategyQueryMsg,
     }

@@ -79,6 +79,10 @@ impl StatelessOperation for Conditional {
         }
     }
 
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        self.action.denoms(deps, env)
+    }
+
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         self.action.escrowed(deps, env)
     }

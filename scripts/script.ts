@@ -134,6 +134,17 @@ export const uploadStrategyContract = async () => {
   return upload("artifacts/strategy.wasm");
 };
 
+export const migrateStrategyContract = async () => {
+  const wallet = await getWalletWithMnemonic();
+  const adminAddress = await getAccount(wallet);
+
+  return uploadAndMigrate(
+    "artifacts/strategy.wasm",
+    adminAddress,
+    STRATEGY_ADDRESS,
+  );
+};
+
 export const uploadAndInstantiateManagerContract = async () => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
@@ -146,18 +157,6 @@ export const uploadAndInstantiateManagerContract = async () => {
       strategy_code_id: await uploadStrategyContract(),
     },
     "Manager Contract",
-  );
-};
-
-export const uploadAndInstantiateExchangeContract = async () => {
-  const wallet = await getWalletWithMnemonic();
-  const adminAddress = await getAccount(wallet);
-
-  return uploadAndInstantiate(
-    "artifacts/exchanger.wasm",
-    adminAddress,
-    {},
-    "Exchange Contract",
   );
 };
 
@@ -184,25 +183,7 @@ export const uploadAndMigrateStrategyContract = async () => {
     "artifacts/strategy.wasm",
     adminAddress,
     STRATEGY_ADDRESS,
-    {
-      fee_collector: adminAddress,
-    },
-  );
-};
-
-export const uploadAndMigrateExchangeContract = async () => {
-  const wallet = await getWalletWithMnemonic();
-  const adminAddress = await getAccount(wallet);
-
-  return uploadAndMigrate(
-    "artifacts/exchanger.wasm",
-    adminAddress,
-    EXCHANGE_ADDRESS,
-    {
-      scheduler_address: SCHEDULER_ADDRESS,
-      affiliate_code: undefined,
-      affiliate_bps: undefined,
-    },
+    {},
   );
 };
 
@@ -227,7 +208,9 @@ export const uploadAndInstantiateSchedulerContract = async () => {
   return uploadAndInstantiate(
     "artifacts/scheduler.wasm",
     adminAddress,
-    {},
+    {
+      manager: MANAGER_ADDRESS,
+    },
     "Scheduler Contract",
   );
 };
@@ -273,100 +256,6 @@ export const fetchBalances = async (address: string) => {
   return balances;
 };
 
-export const canSwap = async () => {
-  const cosmWasmClient = await getSigner();
-  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
-    can_swap: {
-      swap_amount: {
-        denom: "rune",
-        amount: "100000000",
-      },
-      minimum_receive_amount: {
-        denom: "x/ruji",
-        amount: "49000",
-      },
-    },
-  });
-
-  return response;
-};
-
-export const getExpectedReceiveAmount = async (
-  swapAmount: Coin,
-  targetDenom: string,
-  route: any,
-) => {
-  const cosmWasmClient = await getSigner();
-  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
-    expected_receive_amount: {
-      swap_amount: {
-        denom: swapAmount.denom,
-        amount: `${swapAmount.amount}`,
-      },
-      target_denom: targetDenom,
-      route,
-    },
-  });
-
-  return response;
-};
-
-export const getSpotPrice = async () => {
-  const cosmWasmClient = await getSigner();
-  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
-    spot_price: {
-      swap_denom: "rune",
-      target_denom: "x/ruji",
-      period: 0,
-    },
-  });
-
-  return response;
-};
-
-export const getRoute = async () => {
-  const cosmWasmClient = await getSigner();
-  const response = await cosmWasmClient.queryContractSmart(EXCHANGE_ADDRESS, {
-    route: {
-      swap_amount: {
-        denom: "rune",
-        amount: "100000000",
-      },
-      target_denom: "x/ruji",
-    },
-  });
-
-  return response;
-};
-
-export const swap = async (
-  swapAmount: Coin,
-  targetDenom: string,
-  route: any,
-) => {
-  const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWalletWithMnemonic());
-  const response = await cosmWasmClient.execute(
-    account,
-    EXCHANGE_ADDRESS,
-    {
-      swap: {
-        minimum_receive_amount: {
-          denom: targetDenom,
-          amount: "1",
-        },
-        maximum_slippage_bps: 100,
-        route,
-      },
-    },
-    "auto",
-    "Swap",
-    [swapAmount],
-  );
-
-  return response;
-};
-
 export const getConfig = async (contractAddress: string) => {
   const cosmWasmClient = await getSigner();
   const response = await cosmWasmClient.queryContractSmart(contractAddress, {
@@ -404,107 +293,23 @@ export const executeDeposit = async (memo: string, funds: any[]) => {
   return response;
 };
 
-// const createStrategy = async () => {
-//   const cosmWasmClient = await getSigner();
-//   const account = await getAccount(await getWalletWithMnemonic());
+export const createTimeTrigger = async (time: string) => {
+  const cosmWasmClient = await getSigner();
+  const account = await getAccount(await getWalletWithMnemonic());
 
-//   const response = await cosmWasmClient.execute(
-//     account,
-//     MANAGER_ADDRESS,
-//     {
-//       instantiate_strategy: {
-//         action: {
-//           exhibit: {
-//             threshold: "any",
-//             actions: [
-//               {
-//                 exhibit: {
-//                   threshold: "all",
-//                   actions: [
-//                     {
-//                       crank: {
-//                         cadence: {
-//                           blocks: {
-//                             interval: 10,
-//                             previous: 0,
-//                           },
-//                         },
-//                         execution_rebate: [],
-//                         scheduler: SCHEDULER_ADDRESS,
-//                       },
-//                     },
-//                     {
-//                       perform: {
-//                         adjustment: "fixed",
-//                         exchange_contract: EXCHANGE_ADDRESS,
-//                         maximum_slippage_bps: 200,
-//                         minimum_receive_amount: {
-//                           denom: "eth-usdt",
-//                           amount: "1",
-//                         },
-//                         swap_amount: {
-//                           denom: "rune",
-//                           amount: "20000000",
-//                         },
-//                       },
-//                     },
-//                   ],
-//                 },
-//               },
-//               {
-//                 exhibit: {
-//                   threshold: "all",
-//                   actions: [
-//                     {
-//                       crank: {
-//                         cadence: {
-//                           blocks: {
-//                             interval: 10,
-//                             previous: 5,
-//                           },
-//                         },
-//                         execution_rebate: [],
-//                         scheduler: SCHEDULER_ADDRESS,
-//                       },
-//                     },
-//                     {
-//                       perform: {
-//                         adjustment: "fixed",
-//                         exchange_contract: EXCHANGE_ADDRESS,
-//                         maximum_slippage_bps: 200,
-//                         minimum_receive_amount: {
-//                           denom: "rune",
-//                           amount: "1",
-//                         },
-//                         swap_amount: {
-//                           denom: "eth-usdt",
-//                           amount: "20000000",
-//                         },
-//                       },
-//                     },
-//                   ],
-//                 },
-//               },
-//             ],
-//           },
-//         },
-//         affiliates: [],
-//         label: "Test",
-//         owner: account,
-//       },
-//     } as ManagerExecuteMsg,
-//     "auto",
-//     "Create Strategy",
-//     [
-//       // {
-//       //   denom: "rune",
-//       //   amount: "200000000",
-//       // },
-//     ],
-//   );
+  const response = await cosmWasmClient.execute(
+    account,
+    SCHEDULER_ADDRESS,
+    {
+      create: {
+        timestamp_elapsed: time,
+      },
+    },
+    "auto",
+  );
 
-//   return response;
-// };
+  return response;
+};
 
 export const getStrategy = async (address: string) => {
   const cosmWasmClient = await getSigner();
@@ -935,16 +740,13 @@ export const getBlock = async () => {
 export const KEEPER_ADDRESS = "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka";
 
 export const MANAGER_ADDRESS =
-  "sthor1xg6qsvyktr0zyyck3d67mgae0zun4lhwwn3v9pqkl5pk8mvkxsnscenkc0";
-
-export const EXCHANGE_ADDRESS =
-  "sthor196c0zhmpaktqu3hfgdafvsdlr3x9tz0n78qvwn7g7g2c7zmaa0jqxcd6st";
+  "sthor1a8ufsnukvnh827d35wyknvn6shyqphu3rac0yl9g64hzukx4hk7q527ln5";
 
 export const SCHEDULER_ADDRESS =
-  "sthor1x3hfzl0v43upegeszz8cjygljgex9jtygpx4l44nkxudxjsukn3setrkl6";
+  "sthor1s4wcpc6mzfe9rvu3x48t6mvmmupg04n7cfecgx3pxvcl5q3h4y3shqqv8a";
 
 export const STRATEGY_ADDRESS =
-  "sthor17rkr38lk6vxcnw9ywyu64jjymny0yf42h4c4vj2hhm6chrt44heqtvnnmu";
+  "sthor17rrm9t5e6tr3hycxfhg6x92pfpvccqs2wcgkpu90mppwshs83xrqs3ncx4";
 
 export const PAIR_ADDRESS =
   "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";
