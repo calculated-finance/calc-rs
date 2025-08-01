@@ -12,7 +12,8 @@ use crate::{
     cadence::Cadence,
     conditions::Condition,
     core::Contract,
-    scheduler::SchedulerExecuteMsg,
+    manager::ManagerExecuteMsg,
+    scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
 
@@ -37,6 +38,7 @@ impl From<ScheduleEvent> for Event {
 #[cw_serde]
 pub struct Schedule {
     pub scheduler: Addr,
+    pub manager: Addr,
     pub cadence: Cadence,
     pub execution_rebate: Vec<Coin>,
     pub action: Box<Action>,
@@ -67,7 +69,15 @@ impl Schedule {
             let condition = self.cadence.into_condition(deps, env, &self.scheduler)?;
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
-                to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
+                to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
+                    condition: condition.clone(),
+                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                        contract_address: env.contract.address.clone(),
+                    })?,
+                    contract_address: self.manager.clone(),
+                    executors: vec![],
+                    jitter: None,
+                }))?,
                 rebate.to_vec(),
             );
 
@@ -97,7 +107,15 @@ impl Schedule {
             let condition = self.cadence.into_condition(deps, env, &self.scheduler)?;
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
-                to_json_binary(&SchedulerExecuteMsg::Create(condition.clone()))?,
+                to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
+                    condition: condition.clone(),
+                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                        contract_address: env.contract.address.clone(),
+                    })?,
+                    contract_address: self.manager.clone(),
+                    executors: vec![],
+                    jitter: None,
+                }))?,
                 rebate.to_vec(),
             );
 

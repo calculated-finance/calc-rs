@@ -4,39 +4,34 @@ use calc_rs::{
     conditions::Condition,
     constants::LOG_ERRORS_REPLY_ID,
     core::{Contract, ContractError, ContractResult},
-    manager::ManagerExecuteMsg,
-    scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg},
+    scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger},
 };
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Addr, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply,
-    Response, StdError, StdResult, SubMsg, SubMsgResult,
+    to_json_binary, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply, Response,
+    StdError, StdResult, SubMsg, SubMsgResult,
 };
 use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg};
 
-use crate::state::{MANAGER, TRIGGERS};
+use crate::state::TRIGGERS;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     _deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
-    msg: SchedulerInstantiateMsg,
+    _msg: SchedulerInstantiateMsg,
 ) -> ContractResult {
-    MANAGER.save(_deps.storage, &msg.manager)?;
     Ok(Response::default())
 }
 
 #[cw_serde]
-pub struct MigrateMsg {
-    pub manager: Addr,
-}
+pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, StdError> {
-    MANAGER.save(_deps.storage, &msg.manager)?;
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
     Ok(Response::default())
 }
 
@@ -50,10 +45,10 @@ pub fn execute(
     let mut sub_messages = vec![];
 
     match msg {
-        SchedulerExecuteMsg::Create(condition) => {
-            let trigger_id = condition.id(info.sender.clone())?;
+        SchedulerExecuteMsg::Create(create_command) => {
+            let trigger_id = create_command.id()?;
 
-            if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id) {
+            if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id.into()) {
                 TRIGGERS.delete(deps.storage, existing_trigger.id.into())?;
 
                 sub_messages.push(SubMsg::reply_never(BankMsg::Send {
@@ -69,7 +64,7 @@ pub fn execute(
                 side,
                 price,
                 ..
-            } = condition.clone()
+            } = create_command.condition.clone()
             {
                 let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
                     pair_address.clone(),
@@ -98,10 +93,15 @@ pub fn execute(
 
             TRIGGERS.save(
                 deps.storage,
-                trigger_id,
-                info.sender.clone(),
-                condition,
-                execution_rebate.to_vec(),
+                &Trigger {
+                    id: trigger_id,
+                    condition: create_command.condition,
+                    msg: create_command.msg,
+                    contract_address: create_command.contract_address,
+                    executors: create_command.executors,
+                    execution_rebate: execution_rebate.to_vec(),
+                    jitter: create_command.jitter,
+                },
             )?;
         }
         SchedulerExecuteMsg::Execute(ids) => {
@@ -161,12 +161,7 @@ pub fn execute(
                 TRIGGERS.delete(deps.storage, trigger.id.into())?;
 
                 let execute_msg = SubMsg::reply_on_error(
-                    Contract(MANAGER.load(deps.storage)?).call(
-                        to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                            contract_address: trigger.owner,
-                        })?,
-                        vec![],
-                    ),
+                    Contract(trigger.contract_address).call(trigger.msg, vec![]),
                     LOG_ERRORS_REPLY_ID,
                 );
 
@@ -190,16 +185,6 @@ pub fn execute(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
-        SchedulerQueryMsg::Owned {
-            owner,
-            limit,
-            start_after,
-        } => to_json_binary(&TRIGGERS.owned(
-            deps.storage,
-            owner,
-            limit,
-            start_after.map(|id| id.into()),
-        )),
         SchedulerQueryMsg::Filtered { filter, limit } => {
             let filtered = TRIGGERS.filtered(deps.storage, filter, limit)?;
             to_json_binary(&filtered)
@@ -227,10 +212,13 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 #[cfg(test)]
 mod create_trigger_tests {
     use super::*;
-    use calc_rs::{conditions::Condition, scheduler::Trigger};
+    use calc_rs::{
+        conditions::Condition,
+        scheduler::{ConditionFilter, CreateTriggerMsg, Trigger},
+    };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr, Coin, ContractResult as ContractQueryResult, Decimal, SystemResult, Uint64,
+        Addr, Coin, ContractResult as ContractQueryResult, Decimal, SystemResult,
     };
     use rujira_rs::fin::{Denoms, Price, Side, Tick};
 
@@ -243,23 +231,43 @@ mod create_trigger_tests {
 
         let condition = Condition::BlocksCompleted(env.block.height + 10);
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            msg: Binary::default(),
+            contract_address: owner.clone(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             info.clone(),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
-        let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+        let triggers = TRIGGERS
+            .filtered(
+                deps.as_ref().storage,
+                ConditionFilter::BlockHeight {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .unwrap();
 
         assert_eq!(
             triggers,
             vec![Trigger {
-                id: Uint64::from(condition.id(owner.clone()).unwrap()),
-                owner: owner.clone(),
+                id: create_trigger_msg.id().unwrap(),
+                contract_address: owner,
+                msg: Binary::default(),
                 condition: condition.clone(),
                 execution_rebate: info.funds.clone(),
+                executors: vec![],
+                jitter: None
             }]
         );
     }
@@ -273,21 +281,41 @@ mod create_trigger_tests {
 
         let condition = Condition::BlocksCompleted(env.block.height + 10);
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            msg: Binary::default(),
+            contract_address: owner.clone(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             info.clone(),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
-        let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+        let triggers = TRIGGERS
+            .filtered(
+                deps.as_ref().storage,
+                ConditionFilter::BlockHeight {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .unwrap();
 
         assert_eq!(
             triggers,
             vec![Trigger {
-                id: Uint64::from(condition.id(owner.clone()).unwrap()),
-                owner: owner.clone(),
+                id: create_trigger_msg.id().unwrap(),
+                contract_address: owner.clone(),
+                msg: Binary::default(),
+                executors: vec![],
+                jitter: None,
                 condition: condition.clone(),
                 execution_rebate: info.funds.clone(),
             }]
@@ -295,21 +323,41 @@ mod create_trigger_tests {
 
         let updated_info = message_info(&owner.clone(), &[Coin::new(1234_u128, "rune")]);
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            msg: Binary::default(),
+            contract_address: owner.clone(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             updated_info.clone(),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
-        let updated_triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+        let updated_triggers = TRIGGERS
+            .filtered(
+                deps.as_ref().storage,
+                ConditionFilter::Timestamp {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .unwrap();
 
         assert_eq!(
             updated_triggers,
             vec![Trigger {
-                id: Uint64::from(condition.id(owner.clone()).unwrap()),
-                owner: owner.clone(),
+                id: create_trigger_msg.id().unwrap(),
+                contract_address: owner,
+                msg: Binary::default(),
+                executors: vec![],
+                jitter: None,
                 condition: condition.clone(),
                 execution_rebate: updated_info.funds.clone(),
             }]
@@ -350,7 +398,13 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&owner, &[]),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+                condition: condition.clone(),
+                msg: Binary::default(),
+                contract_address: owner.clone(),
+                executors: vec![],
+                jitter: None
+            }),
         )
         .unwrap_err()
         .to_string()
@@ -360,7 +414,13 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&owner, &[Coin::new(1213_u128, "random-denom")]),
-            SchedulerExecuteMsg::Create(condition),
+            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+                condition: condition.clone(),
+                msg: Binary::default(),
+                contract_address: owner.clone(),
+                executors: vec![],
+                jitter: None
+            }),
         )
         .unwrap_err()
         .to_string()
@@ -387,7 +447,13 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             info,
-            SchedulerExecuteMsg::Create(condition),
+            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+                condition: condition.clone(),
+                msg: Binary::default(),
+                contract_address: owner.clone(),
+                executors: vec![],
+                jitter: None
+            }),
         )
         .unwrap_err()
         .to_string()
@@ -432,7 +498,13 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             info,
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+                condition: condition.clone(),
+                msg: Binary::default(),
+                contract_address: owner.clone(),
+                executors: vec![],
+                jitter: None,
+            }),
         )
         .unwrap();
 
@@ -488,21 +560,42 @@ mod create_trigger_tests {
             ))
         });
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            msg: Binary::default(),
+            contract_address: owner.clone(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             info,
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
-        let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+        let triggers = TRIGGERS
+            .filtered(
+                deps.as_ref().storage,
+                ConditionFilter::LimitOrder {
+                    pair_address: pair_address.clone(),
+                    price_range: None,
+                    start_after: None,
+                },
+                None,
+            )
+            .unwrap();
 
         assert_eq!(
             triggers,
             vec![Trigger {
-                id: Uint64::from(condition.id(owner.clone()).unwrap()),
-                owner: owner.clone(),
+                id: create_trigger_msg.id().unwrap(),
+                contract_address: owner,
+                msg: Binary::default(),
+                executors: vec![],
+                jitter: None,
                 condition: condition.clone(),
                 execution_rebate: vec![Coin::new(1234_u128, "eth-eth")],
             }]
@@ -514,6 +607,8 @@ mod create_trigger_tests {
 mod execute_trigger_tests {
     use super::*;
     use calc_rs::conditions::Condition;
+    use calc_rs::manager::ManagerExecuteMsg;
+    use calc_rs::scheduler::{ConditionFilter, CreateTriggerMsg};
     use cosmwasm_std::testing::message_info;
     use cosmwasm_std::{from_json, Addr, Decimal, Uint128, Uint64, WasmMsg, WasmQuery};
     use cosmwasm_std::{
@@ -547,20 +642,24 @@ mod execute_trigger_tests {
     fn fails_silently_if_trigger_cannot_execute() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let manager = deps.api.addr_make("creator");
-
-        MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
         let condition =
             Condition::BlocksCompleted(cosmwasm_std::testing::mock_env().block.height + 10);
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            msg: Binary::default(),
+            contract_address: owner.clone(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             message_info(&owner, &[Coin::new(327612u128, "rune")]),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
@@ -568,7 +667,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
+            SchedulerExecuteMsg::Execute(vec![create_trigger_msg.id().unwrap()]),
         )
         .unwrap();
 
@@ -579,12 +678,9 @@ mod execute_trigger_tests {
     fn withdraws_limit_order_if_trigger_can_execute() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let manager = deps.api.addr_make("manager");
-
-        MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
+        let manager = deps.api.addr_make("manager");
 
         let side = Side::Base;
         let price = Decimal::percent(100);
@@ -631,10 +727,18 @@ mod execute_trigger_tests {
         TRIGGERS
             .save(
                 deps.as_mut().storage,
-                condition.id(owner.clone()).unwrap(),
-                owner.clone(),
-                condition.clone(),
-                vec![remaining_rebate.clone()],
+                &Trigger {
+                    id: Uint64::from(condition.id(owner.clone()).unwrap()),
+                    contract_address: manager.clone(),
+                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                        contract_address: owner.clone(),
+                    })
+                    .unwrap(),
+                    condition: condition.clone(),
+                    execution_rebate: vec![remaining_rebate.clone()],
+                    executors: vec![],
+                    jitter: None,
+                },
             )
             .unwrap();
 
@@ -687,20 +791,28 @@ mod execute_trigger_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let manager = deps.api.addr_make("creator");
-
-        MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
         let create_trigger_info = message_info(&owner, &[Coin::new(235463u128, "rune")]);
 
         let condition = Condition::BlocksCompleted(env.block.height - 10);
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                contract_address: owner.clone(),
+            })
+            .unwrap(),
+            contract_address: manager.clone(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             create_trigger_info.clone(),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
@@ -708,7 +820,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
+            SchedulerExecuteMsg::Execute(vec![create_trigger_msg.id().unwrap()]),
         )
         .unwrap();
 
@@ -730,20 +842,28 @@ mod execute_trigger_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let manager = deps.api.addr_make("creator");
-
-        MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
         let create_trigger_info = message_info(&owner, &[Coin::new(235463u128, "rune")]);
 
         let condition = Condition::BlocksCompleted(env.block.height - 10);
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            contract_address: manager.clone(),
+            msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                contract_address: owner.clone(),
+            })
+            .unwrap(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             create_trigger_info.clone(),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
@@ -751,7 +871,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
+            SchedulerExecuteMsg::Execute(vec![create_trigger_msg.id().unwrap()]),
         )
         .unwrap();
 
@@ -779,239 +899,61 @@ mod execute_trigger_tests {
     fn deletes_trigger_if_trigger_can_execute() {
         let mut deps = mock_dependencies();
         let env = mock_env();
-        let manager = deps.api.addr_make("manager");
-
-        MANAGER.save(deps.as_mut().storage, &manager).unwrap();
-
         let owner = deps.api.addr_make("creator");
         let executor = deps.api.addr_make("executor");
         let create_trigger_info = message_info(&owner, &[Coin::new(235463u128, "rune")]);
 
         let condition = Condition::BlocksCompleted(env.block.height - 10);
 
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: condition.clone(),
+            msg: Binary::default(),
+            contract_address: owner.clone(),
+            executors: vec![],
+            jitter: None,
+        };
+
         execute(
             deps.as_mut(),
             env.clone(),
             create_trigger_info.clone(),
-            SchedulerExecuteMsg::Create(condition.clone()),
+            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
         )
         .unwrap();
 
-        let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+        let triggers = TRIGGERS
+            .filtered(
+                deps.as_ref().storage,
+                ConditionFilter::Timestamp {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .unwrap();
+
         assert!(!triggers.is_empty());
 
         execute(
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
+            SchedulerExecuteMsg::Execute(vec![create_trigger_msg.id().unwrap()]),
         )
         .unwrap();
 
-        let triggers = TRIGGERS.owned(deps.as_ref().storage, owner.clone(), None, None);
+        let triggers = TRIGGERS
+            .filtered(
+                deps.as_ref().storage,
+                ConditionFilter::Timestamp {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .unwrap();
+
         assert!(triggers.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod owned_triggers_tests {
-    use calc_rs::{conditions::Condition, scheduler::Trigger};
-    use cosmwasm_std::{
-        from_json,
-        testing::{mock_dependencies, mock_env},
-        Addr, Uint64,
-    };
-
-    use super::*;
-
-    #[test]
-    fn fetches_owned_triggers() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-
-        let mut id = 0;
-
-        for i in 1..=5 {
-            id += 1;
-            TRIGGERS
-                .save(
-                    deps.as_mut().storage,
-                    id,
-                    Addr::unchecked("owner"),
-                    Condition::BlocksCompleted(env.block.height),
-                    vec![],
-                )
-                .unwrap();
-
-            id += 1;
-            TRIGGERS
-                .save(
-                    deps.as_mut().storage,
-                    id,
-                    Addr::unchecked(format!("other-owner-{i}")),
-                    Condition::BlocksCompleted(env.block.height),
-                    vec![],
-                )
-                .unwrap();
-        }
-
-        let response = from_json::<Vec<Trigger>>(
-            query(
-                deps.as_ref(),
-                env.clone(),
-                SchedulerQueryMsg::Owned {
-                    owner: Addr::unchecked("owner"),
-                    limit: None,
-                    start_after: None,
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            response,
-            (0..5)
-                .map(|i| Trigger {
-                    id: Uint64::from(i * 2 + 1 as u64), // odd ids for the owner
-                    owner: Addr::unchecked("owner"),
-                    condition: Condition::BlocksCompleted(env.block.height),
-                    execution_rebate: vec![],
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn fetches_owned_triggers_after_start_after() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-
-        for i in 1..=5 {
-            TRIGGERS
-                .save(
-                    deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::BlocksCompleted(env.block.height),
-                    vec![],
-                )
-                .unwrap();
-        }
-
-        let response = from_json::<Vec<Trigger>>(
-            query(
-                deps.as_ref(),
-                env.clone(),
-                SchedulerQueryMsg::Owned {
-                    owner: Addr::unchecked("owner"),
-                    limit: None,
-                    start_after: Some(Uint64::from(2 as u64)),
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            response,
-            (3..=5)
-                .map(|i| Trigger {
-                    id: Uint64::from(i as u64),
-                    owner: Addr::unchecked("owner"),
-                    condition: Condition::BlocksCompleted(env.block.height),
-                    execution_rebate: vec![],
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn fetches_owned_triggers_with_limit() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-
-        for i in 1..=5 {
-            TRIGGERS
-                .save(
-                    deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::BlocksCompleted(env.block.height),
-                    vec![],
-                )
-                .unwrap();
-        }
-
-        let response = from_json::<Vec<Trigger>>(
-            query(
-                deps.as_ref(),
-                env.clone(),
-                SchedulerQueryMsg::Owned {
-                    owner: Addr::unchecked("owner"),
-                    limit: Some(3),
-                    start_after: None,
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            response,
-            (1..=3)
-                .map(|i| Trigger {
-                    id: Uint64::from(i as u64),
-                    owner: Addr::unchecked("owner"),
-                    condition: Condition::BlocksCompleted(env.block.height),
-                    execution_rebate: vec![],
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn fetches_owned_triggers_with_limit_and_start_after() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-
-        for i in 1..=5 {
-            TRIGGERS
-                .save(
-                    deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::BlocksCompleted(env.block.height),
-                    vec![],
-                )
-                .unwrap();
-        }
-
-        let response = from_json::<Vec<Trigger>>(
-            query(
-                deps.as_ref(),
-                env.clone(),
-                SchedulerQueryMsg::Owned {
-                    owner: Addr::unchecked("owner"),
-                    limit: Some(3),
-                    start_after: Some(Uint64::from(1 as u64)),
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            response,
-            (2..=4)
-                .map(|i| Trigger {
-                    id: Uint64::from(i as u64),
-                    owner: Addr::unchecked("owner"),
-                    condition: Condition::BlocksCompleted(env.block.height),
-                    execution_rebate: vec![],
-                })
-                .collect::<Vec<_>>()
-        );
     }
 }
 
@@ -1041,10 +983,15 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
-                    vec![],
+                    &Trigger {
+                        id: Uint64::from(i),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
+                        condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
+                    },
                 )
                 .unwrap();
         }
@@ -1070,9 +1017,12 @@ mod filtered_triggers_tests {
             (3..=5)
                 .map(|i| Trigger {
                     id: Uint64::from(i),
-                    owner: Addr::unchecked("owner"),
+                    contract_address: Addr::unchecked("manager"),
+                    msg: Binary::default(),
                     condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10),),
                     execution_rebate: vec![],
+                    executors: vec![],
+                    jitter: None
                 })
                 .collect::<Vec<_>>()
         );
@@ -1087,10 +1037,15 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
-                    vec![],
+                    &Trigger {
+                        id: Uint64::from(i),
+                        condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10)),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
+                    },
                 )
                 .unwrap();
         }
@@ -1116,9 +1071,12 @@ mod filtered_triggers_tests {
             (1..=3)
                 .map(|i| Trigger {
                     id: Uint64::from(i),
-                    owner: Addr::unchecked("owner"),
                     condition: Condition::TimestampElapsed(env.block.time.plus_seconds(i * 10),),
+                    contract_address: Addr::unchecked("manager"),
+                    msg: Binary::default(),
                     execution_rebate: vec![],
+                    executors: vec![],
+                    jitter: None
                 })
                 .collect::<Vec<_>>()
         );
@@ -1133,10 +1091,15 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::BlocksCompleted(env.block.height + i * 10),
-                    vec![],
+                    &Trigger {
+                        id: Uint64::from(i),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
+                        condition: Condition::BlocksCompleted(env.block.height + i * 10),
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
+                    },
                 )
                 .unwrap();
         }
@@ -1162,9 +1125,12 @@ mod filtered_triggers_tests {
             (3..=5)
                 .map(|i| Trigger {
                     id: Uint64::from(i),
-                    owner: Addr::unchecked("owner"),
+                    contract_address: Addr::unchecked("manager"),
+                    msg: Binary::default(),
                     condition: Condition::BlocksCompleted(env.block.height + i * 10,),
                     execution_rebate: vec![],
+                    executors: vec![],
+                    jitter: None
                 })
                 .collect::<Vec<_>>()
         );
@@ -1179,10 +1145,15 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::BlocksCompleted(env.block.height + i * 10),
-                    vec![],
+                    &Trigger {
+                        id: Uint64::from(i),
+                        condition: Condition::BlocksCompleted(env.block.height + i * 10),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
+                    },
                 )
                 .unwrap();
         }
@@ -1208,9 +1179,12 @@ mod filtered_triggers_tests {
             (2..=4)
                 .map(|i| Trigger {
                     id: Uint64::from(i),
-                    owner: Addr::unchecked("owner"),
                     condition: Condition::BlocksCompleted(env.block.height + i * 10,),
+                    contract_address: Addr::unchecked("manager"),
+                    msg: Binary::default(),
                     execution_rebate: vec![],
+                    executors: vec![],
+                    jitter: None
                 })
                 .collect::<Vec<_>>()
         );
@@ -1225,15 +1199,20 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::LimitOrderFilled {
-                        owner: Addr::unchecked("owner"),
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
-                        side: Side::Base,
-                        price: Decimal::from_str(&i.to_string()).unwrap(),
+                    &Trigger {
+                        id: Uint64::from(i as u64),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
+                        condition: Condition::LimitOrderFilled {
+                            owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
+                            side: Side::Base,
+                            price: Decimal::from_str(&i.to_string()).unwrap(),
+                        },
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     },
-                    vec![],
                 )
                 .unwrap();
         }
@@ -1262,7 +1241,8 @@ mod filtered_triggers_tests {
                     let j = i * 2;
                     Trigger {
                         id: Uint64::from(j as u64),
-                        owner: Addr::unchecked("owner"),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
@@ -1270,6 +1250,8 @@ mod filtered_triggers_tests {
                             price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     }
                 })
                 .collect::<Vec<_>>()
@@ -1285,15 +1267,20 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::LimitOrderFilled {
-                        owner: Addr::unchecked("owner"),
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
-                        side: Side::Base,
-                        price: Decimal::from_str(&i.to_string()).unwrap(),
+                    &Trigger {
+                        id: Uint64::from(i as u64),
+                        msg: Binary::default(),
+                        contract_address: Addr::unchecked("manager"),
+                        condition: Condition::LimitOrderFilled {
+                            owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
+                            side: Side::Base,
+                            price: Decimal::from_str(&i.to_string()).unwrap(),
+                        },
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     },
-                    vec![],
                 )
                 .unwrap();
         }
@@ -1325,7 +1312,8 @@ mod filtered_triggers_tests {
                     let j = i * 2;
                     Trigger {
                         id: Uint64::from(j as u64),
-                        owner: Addr::unchecked("owner"),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
@@ -1333,6 +1321,8 @@ mod filtered_triggers_tests {
                             price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     }
                 })
                 .collect::<Vec<_>>()
@@ -1348,15 +1338,20 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::LimitOrderFilled {
-                        owner: Addr::unchecked("owner"),
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
-                        side: Side::Base,
-                        price: Decimal::from_str(&i.to_string()).unwrap(),
+                    &Trigger {
+                        id: Uint64::from(i as u64),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
+                        condition: Condition::LimitOrderFilled {
+                            owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
+                            side: Side::Base,
+                            price: Decimal::from_str(&i.to_string()).unwrap(),
+                        },
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     },
-                    vec![],
                 )
                 .unwrap();
         }
@@ -1388,7 +1383,8 @@ mod filtered_triggers_tests {
                     let j = i * 2;
                     Trigger {
                         id: Uint64::from(j as u64),
-                        owner: Addr::unchecked("owner"),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
@@ -1396,6 +1392,8 @@ mod filtered_triggers_tests {
                             price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     }
                 })
                 .collect::<Vec<_>>()
@@ -1411,15 +1409,20 @@ mod filtered_triggers_tests {
             TRIGGERS
                 .save(
                     deps.as_mut().storage,
-                    i,
-                    Addr::unchecked("owner"),
-                    Condition::LimitOrderFilled {
-                        owner: Addr::unchecked("owner"),
-                        pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
-                        side: Side::Base,
-                        price: Decimal::from_str(&i.to_string()).unwrap(),
+                    &Trigger {
+                        id: Uint64::from(i as u64),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
+                        condition: Condition::LimitOrderFilled {
+                            owner: Addr::unchecked("owner"),
+                            pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
+                            side: Side::Base,
+                            price: Decimal::from_str(&i.to_string()).unwrap(),
+                        },
+                        execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     },
-                    vec![],
                 )
                 .unwrap();
         }
@@ -1451,7 +1454,8 @@ mod filtered_triggers_tests {
                     let j = i * 2;
                     Trigger {
                         id: Uint64::from(j as u64),
-                        owner: Addr::unchecked("owner"),
+                        contract_address: Addr::unchecked("manager"),
+                        msg: Binary::default(),
                         condition: Condition::LimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
@@ -1459,6 +1463,8 @@ mod filtered_triggers_tests {
                             price: Decimal::from_str(&j.to_string()).unwrap(),
                         },
                         execution_rebate: vec![],
+                        executors: vec![],
+                        jitter: None,
                     }
                 })
                 .collect::<Vec<_>>()

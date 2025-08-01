@@ -297,36 +297,6 @@ impl CalcTestApp {
         Ok(AppResponse::default())
     }
 
-    pub fn execute_owned_triggers(
-        &mut self,
-        sender: &Addr,
-        strategy_addr: &Addr,
-    ) -> AnyResult<AppResponse> {
-        let triggers = self
-            .app
-            .wrap()
-            .query_wasm_smart::<Vec<Trigger>>(
-                self.scheduler_addr.clone(),
-                &SchedulerQueryMsg::Owned {
-                    owner: strategy_addr.clone(),
-                    limit: None,
-                    start_after: None,
-                },
-            )
-            .unwrap();
-
-        self.app
-            .execute_contract(
-                sender.clone(),
-                self.scheduler_addr.clone(),
-                &SchedulerExecuteMsg::Execute(triggers.iter().map(|t| t.id).collect()),
-                &[],
-            )
-            .unwrap();
-
-        Ok(AppResponse::default())
-    }
-
     pub fn execute_strategy(
         &mut self,
         sender: &Addr,
@@ -346,20 +316,6 @@ impl CalcTestApp {
         self.app
             .send_tokens(sender.clone(), contract_address.clone(), funds)
             .unwrap();
-    }
-
-    pub fn query_triggers(&self, owner: &Addr) -> Vec<Trigger> {
-        self.app
-            .wrap()
-            .query_wasm_smart(
-                self.scheduler_addr.clone(),
-                &SchedulerQueryMsg::Owned {
-                    owner: owner.clone(),
-                    limit: None,
-                    start_after: None,
-                },
-            )
-            .unwrap()
     }
 
     pub fn query_strategy(&self, strategy_addr: &Addr) -> StrategyHandle {

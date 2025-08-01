@@ -1,9 +1,7 @@
 use std::{collections::HashSet, fmt::Debug};
 
 use calc_rs::{
-    manager::StrategyStatus,
-    scheduler::{ConditionFilter, Trigger},
-    statistics::Statistics,
+    manager::StrategyStatus, scheduler::ConditionFilter, statistics::Statistics,
     strategy::StrategyConfig,
 };
 use cosmwasm_std::{Addr, Coin, Decimal, Uint128};
@@ -120,9 +118,9 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
-    pub fn execute_triggers(&mut self) -> &mut Self {
+    pub fn execute_triggers(&mut self, filter: ConditionFilter) -> &mut Self {
         self.harness
-            .execute_owned_triggers(&self.keeper, &self.strategy_addr)
+            .execute_filtered_triggers(&self.keeper, filter)
             .unwrap();
         self
     }
@@ -263,31 +261,6 @@ impl<'a> StrategyHandler<'a> {
         assert_eq!(
             config, expected_config,
             "Expected config does not match current config: expected {expected_config:#?}, got {config:#?}"
-        );
-        self
-    }
-
-    pub fn assert_triggers(&mut self, expected_triggers: Vec<Trigger>) -> &mut Self {
-        println!("[StrategyHandler] Asserting strategy triggers are {expected_triggers:#?}");
-        let triggers = self.harness.query_triggers(&self.strategy_addr);
-        for trigger in expected_triggers {
-            let actual = triggers.iter().find(|t| t.id == trigger.id);
-            assert!(
-                actual.is_some(),
-                "Expected trigger not found: {trigger:#?}\n\nAll triggers: {triggers:#?}"
-            );
-        }
-        self
-    }
-
-    pub fn assert_total_triggers(&mut self, expected_triggers: usize) -> &mut Self {
-        println!("[StrategyHandler] Asserting exactly {expected_triggers:#?} strategy triggers");
-        let triggers = self.harness.query_triggers(&self.strategy_addr);
-        assert_eq!(
-            triggers.len(),
-            expected_triggers,
-            "Expected {expected_triggers} triggers, found {}: {triggers:#?}",
-            triggers.len()
         );
         self
     }

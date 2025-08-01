@@ -2,13 +2,13 @@ use calc_rs::{
     conditions::Condition,
     scheduler::{ConditionFilter, Trigger},
 };
-use cosmwasm_std::{Addr, Coin, Decimal, Order, StdResult, Storage, Uint64};
+use cosmwasm_std::{Addr, Decimal, Order, StdResult, Storage, Uint64};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 
 pub const MANAGER: Item<Addr> = Item::new("manager");
 
 pub struct TriggerIndexes<'a> {
-    pub owner: MultiIndex<'a, Addr, Trigger, u64>,
+    // pub owner: MultiIndex<'a, Addr, Trigger, u64>,
     pub timestamp: MultiIndex<'a, u64, Trigger, u64>,
     pub block_height: MultiIndex<'a, u64, Trigger, u64>,
     pub limit_order_pair: MultiIndex<'a, Addr, Trigger, u64>,
@@ -18,7 +18,7 @@ pub struct TriggerIndexes<'a> {
 impl<'a> IndexList<Trigger> for TriggerIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Trigger>> + '_> {
         let v: Vec<&dyn Index<Trigger>> = vec![
-            &self.owner,
+            // &self.owner,
             &self.timestamp,
             &self.block_height,
             &self.limit_order_pair,
@@ -33,50 +33,12 @@ pub struct TriggerStore<'a> {
 }
 
 impl TriggerStore<'_> {
-    pub fn save(
-        &self,
-        storage: &mut dyn Storage,
-        trigger_id: u64,
-        owner: Addr,
-        condition: Condition,
-        execution_rebate: Vec<Coin>,
-    ) -> StdResult<()> {
-        self.triggers.save(
-            storage,
-            trigger_id,
-            &Trigger {
-                id: Uint64::from(trigger_id),
-                owner,
-                condition,
-                execution_rebate,
-            },
-        )
+    pub fn save(&self, storage: &mut dyn Storage, trigger: &Trigger) -> StdResult<()> {
+        self.triggers.save(storage, trigger.id.into(), trigger)
     }
 
-    pub fn load(&self, storage: &dyn Storage, id: u64) -> StdResult<Trigger> {
-        self.triggers.load(storage, id)
-    }
-
-    pub fn owned(
-        &self,
-        storage: &dyn Storage,
-        owner: Addr,
-        limit: Option<usize>,
-        start_after: Option<u64>,
-    ) -> Vec<Trigger> {
-        self.triggers
-            .idx
-            .owner
-            .prefix(owner)
-            .range(
-                storage,
-                start_after.map(Bound::exclusive),
-                None,
-                Order::Ascending,
-            )
-            .take(limit.unwrap_or(30))
-            .flat_map(|r| r.map(|(_, v)| v))
-            .collect::<Vec<_>>()
+    pub fn load(&self, storage: &dyn Storage, id: Uint64) -> StdResult<Trigger> {
+        self.triggers.load(storage, id.into())
     }
 
     pub fn filtered(
@@ -146,7 +108,6 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
     triggers: IndexedMap::new(
         "triggers",
         TriggerIndexes {
-            owner: MultiIndex::new(|_, t| t.owner.clone(), "triggers", "triggers__owner"),
             timestamp: MultiIndex::new(
                 |_, t| match t.condition {
                     Condition::TimestampElapsed(timestamp) => timestamp.seconds(),
