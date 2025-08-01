@@ -75,7 +75,7 @@ pub fn execute(
     // could result in recursive calls between strategies and/or other
     // contracts. This is a safety check to short circuit that.
     if let Some(state) = state {
-        if msg == state {
+        if msg == state && info.sender != env.contract.address {
             return Err(ContractError::generic_err(format!(
                 "Contract is already in the {state:?} state, cannot execute again"
             )));
@@ -152,9 +152,6 @@ pub fn execute(
                     LOG_ERRORS_REPLY_ID,
                 );
 
-                // Clear the state so we can run update again
-                STATE.remove(deps.storage);
-
                 cancel_strategy_response // Unwind any stateful actions before we overwrite them
                     .add_submessage(update_again_msg) // Run update to setup the new strategy
             }
@@ -224,9 +221,6 @@ pub fn execute(
                     ),
                     LOG_ERRORS_REPLY_ID,
                 );
-
-                // Clear the state so we can run withdraw again
-                STATE.remove(deps.storage);
 
                 withdraw_from_strategy_response.add_submessage(withdraw_again_msg)
             }

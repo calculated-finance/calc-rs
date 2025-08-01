@@ -20,9 +20,7 @@ pub struct Trigger {
 }
 
 #[cw_serde]
-pub struct SchedulerInstantiateMsg {
-    pub manager: Addr,
-}
+pub struct SchedulerInstantiateMsg {}
 
 #[cw_serde]
 pub struct CreateTriggerMsg {

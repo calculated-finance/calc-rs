@@ -110,6 +110,10 @@ pub fn execute(
                     ContractError::generic_err(format!("Failed to load trigger with id {id}: {e}"))
                 })?;
 
+                if !trigger.executors.is_empty() && !trigger.executors.contains(&info.sender) {
+                    continue;
+                }
+
                 if let Ok(trigger_is_satisfied) =
                     trigger.condition.is_satisfied(deps.as_ref(), &env)
                 {

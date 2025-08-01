@@ -2,128 +2,280 @@
 
 ## High-Level Behaviour
 
-The `strategy` contract is the on-chain runtime for a declarative trading strategy. It executes a logical plan, structured as a tree of `Action`s, separating the user's desired actions from the contract's execution logic.
+The `strategy` contract is the on-chain runtime environment for executing declarative trading strategies. It manages the complete lifecycle of a strategy, from initialization through execution, updates, and withdrawal.
 
-The contract manages the lifecycle of a `Strategy` entity, which encapsulates an `Action` tree and its state. It transitions the `Strategy` through a state machine to ensure safe, atomic, and predictable execution.
+Each strategy contract is an isolated execution environment that owns and manages its own funds, executes its defined actions autonomously, and maintains statistics about its operations. The contract separates strategy definition (the _what_) from execution logic (the _how_), enabling strategies to be expressed declaratively.
 
-### The Strategy Domain Model
+## Key Features
 
-The logical definition of a strategy is composed of several key domain models from the `calc-rs` package:
+- **Atomic Execution:** Two-phase commit pattern ensures strategy state consistency
+- **State Machine Management:** Transitions through Committed → Active → Executable states
+- **Reentrancy Protection:** Guards against recursive calls and state corruption
+- **Stateful Operations:** Handles stateful operations like limit orders and scheduled actions
+- **Fund Isolation:** Each strategy manages its own isolated funds
+- **Statistics Tracking:** Comprehensive tracking of debits, credits, and distributions
+- **Dynamic Updates:** Hot-swapping of strategy logic with proper state unwinding
+- **Flexible Withdrawals:** Selective fund withdrawal with escrowed balance protection
 
-- **`Action`**: A recursive enum that defines the building blocks of a strategy. An `Action` can be:
-  - `Swap`: Executes a token swap.
-  - `Distribute`: Distributes funds to multiple destinations.
-  - `LimitOrder`: A stateful action that places and manages a limit order on a DEX.
-  - `Schedule`: Executes another `Action` based on a recurring `Cadence`.
-  - `Conditional`: Executes another `Action` only when a specific `Condition` is met.
-  - `Many`: A container for executing multiple `Action`s in sequence.
+## Strategy Domain Model
 
-- **`Condition`**: An enum for creating reactive strategies. A `Conditional` action triggers only if its `Condition` is met. Conditions can be based on time (`TimestampElapsed`), block height (`BlocksCompleted`), market state (`CanSwap`, `LimitOrderFilled`), or balances (`BalanceAvailable`).
+The strategy execution model is built around several key components:
 
-- **`Cadence`**: An enum used by the `Schedule` action to define recurring execution, based on a block interval, time duration, or a cron expression.
+### Action Types
 
-### Contract State Machine
+- **`Swap`:** Execute token swaps across multiple DEX protocols
+- **`Distribute`:** Send funds to multiple recipients with share based allocations
+- **`LimitOrder`:** Place and manage static or dynamic limit orders
+- **`Schedule`:** Execute actions on recurring schedules (time/block/cron/price-based)
+- **`Conditional`:** Execute actions only when specific conditions are met
+- **`Many`:** Execute multiple actions in sequence
 
-The contract transitions a `Strategy` through `Committed`, `Active`, and `Executable` states to handle stateful operations atomically (e.g., waiting for a limit order to fill). An `Execute` message initiates the state transitions, generating `CosmosMsg`s for the action. After the sub-messages complete, a `Commit` message returns the strategy to the `Committed` state, updating its internal logic (e.g., setting the next execution time for a scheduled action).
+### Condition Types
+
+- **Time-based:** `TimestampElapsed`, `BlocksCompleted`
+- **Market-based:** `CanSwap`, `LimitOrderFilled`, `OraclePrice`
+- **Balance-based:** `BalanceAvailable`, `StrategyBalanceAvailable`
+- **Strategy-based:** `StrategyStatus`
+- **Logical:** `Not`, `Composite` (AND/OR combinations)
+
+## Contract State Machine
+
+The strategy contract implements a state machine to handle stateful operations:
+
+### State Transitions
+
+1. **Committed:** Strategy is at rest, ready for execution
+2. **Active:** Strategy is preparing for execution, generating messages
+3. **Executable:** Strategy has generated messages and is executing them
+4. **Committable:** Execution complete, ready to commit state changes
+
+### Execution Flow
+
+```
+Committed → prepare_to_execute() → Active → execute() → Executable
+    ↑                                                        ↓
+    ← commit() ← Committable ← sub-messages complete ←————————
+```
+
+This pattern ensures that:
+
+- All strategy actions execute atomically
+- State is never left in an inconsistent state
+- Complex stateful operations (like limit orders) are properly managed
+- Recursive execution is prevented
 
 ## Instantiate Message
 
-Initializes a new strategy contract.
+```rust
+pub struct Strategy<Indexed> {
+    pub owner: Addr,
+    pub action: Action,
+    pub state: Indexed { contract_address: Addr },
+}
+```
 
-- **Authorization:** Can be called by any address. The `info.sender` is designated as the `manager` for the new strategy.
+Initializes a new strategy contract instance.
+
+- **Authorization:** Can be called by any address (typically the manager contract)
+- **Parameters:** A fully configured strategy with indexed state
 - **Logic:**
-  1.  The incoming `StrategyInstantiateMsg` (a type alias for `Strategy<Indexed>`) is received.
-  2.  The `escrowed()` method is called on the strategy's `Action` tree to determine which denoms are required for its operations. These are stored in the `ESCROWED` state.
-  3.  The `init()` method is called, which validates the strategy's size and recursively validates the `Action` tree.
-  4.  The fully initialized strategy is saved to the `CONFIG` state with a `Committed` status.
-  5.  An `Execute` sub-message is dispatched to immediately start the strategy's execution cycle.
+  1. Validates contract address matches the strategy's expected address
+  2. Analyzes the action tree to determine required and escrowed denominations
+  3. Initializes the strategy through validation and setup
+  4. Saves the strategy configuration in committed state
+  5. Immediately triggers first execution cycle
 
 ## Execute Messages
 
-The `strategy` contract exposes the following execute messages:
-
 ### `Execute`
 
-The main entry point for running the strategy's logic.
+Triggers the main strategy execution cycle.
 
-- **Authorization:** `manager` contract or the `strategy` contract itself.
+```rust
+StrategyExecuteMsg::Execute
+```
+
+- **Authorization:** Manager contract or self-call only
 - **Logic:**
-  1.  The `Committed` strategy is loaded from `CONFIG` and transitioned to `Active`.
-  2.  `prepare_to_execute` is called on the `Active` strategy. This recursively traverses the `Action` tree, evaluates any `Condition`s, and generates the `CosmosMsg`s required to perform the strategy's logic for the current block.
-  3.  The `Active` strategy state is saved to `ACTIVE_STRATEGY` in storage. This acts as a temporary, "in-flight" version of the strategy.
-  4.  The generated messages are dispatched as sub-messages. A `Commit` message is scheduled to run after all of the strategy generated sub-messages complete.
+  1. Loads committed strategy from storage
+  2. Transitions to active state via `activate()`
+  3. Calls `prepare_to_execute()` to analyze action tree and generate messages
+  4. Saves active strategy state for state machine tracking
+  5. Dispatches generated messages with commit callback
+  6. Automatically schedules `Commit` message after sub-message completion
 
-### `Update`
+### `Update(Strategy<Indexed>)`
 
-Updates the strategy's configuration with a new `Action` tree.
+Updates the strategy with a new action definition.
 
-- **Authorization:** `manager` contract only.
+```rust
+StrategyExecuteMsg::Update(new_strategy)
+```
+
+- **Authorization:** Manager contract only
 - **Logic:**
-  1.  The contract calls `prepare_to_cancel` on the current strategy. This generates messages to unwind any stateful operations (e.g., cancelling active limit orders). The `Active` strategy state is saved to `ACTIVE_STRATEGY` in storage.
-  2.  If unwind messages are generated, they are executed, and the contract recursively calls `Update` to try again once the state is clear.
-  3.  If no unwind is needed, the new strategy is initialized via `init`, which validates the `Action` tree and performs any necessary setup. The new configuration is saved.
-  4.  The contract immediately calls the `Execute` message to begin execution of the newly updated strategy.
+  1. **Phase 1 - Unwind:** Calls `prepare_to_cancel()` to generate cleanup messages for stateful actions
+  2. **Phase 2 - Conditional:** If cleanup needed, executes cleanup and recursively calls update
+  3. **Phase 3 - Replace:** If no cleanup needed, initializes new strategy and replaces current
+  4. **Phase 4 - Execute:** Immediately executes the new strategy
 
-### `Withdraw`
+This ensures safe hot-swapping of strategy logic without losing funds or corrupting state.
 
-Allows the strategy `owner` to withdraw funds from the contract.
+### `Withdraw(HashSet<String>)`
 
-- **Authorization:** `owner` or the `strategy` contract itself (for 2 stage withdrawals).
+Withdraws funds from the strategy contract.
+
+```rust
+StrategyExecuteMsg::Withdraw(desired_denoms)
+```
+
+- **Authorization:** Strategy owner or self-call
+- **Parameters:** Set of denominations to withdraw (empty = all non-escrowed)
 - **Logic:**
-  1.  Checks that the requested denoms for withdrawal are not part of the strategy's `escrowed` funds. The `Active` strategy state is saved to `ACTIVE_STRATEGY` in storage.
-  2.  Calls `prepare_to_withdraw` on the strategy to generate messages that release any funds held in stateful actions.
-  3.  If unwind messages are needed, they are executed, and the contract recursively calls `Withdraw` to try again.
-  4.  If no unwind is needed, the contract queries its own balances for the desired denoms and sends them to the `owner` via a `BankMsg::Send`.
+  1. Validates requested denoms are not escrowed (protected from withdrawal)
+  2. Calls `prepare_to_withdraw()` to release funds from stateful actions
+  3. If release needed, executes release and recursively calls withdraw
+  4. If no release needed, queries contract balances and sends to owner
+  5. Protects funds escrowed for CALC and affiliate fee disbursements
 
-### `UpdateStatus`
+### `UpdateStatus(StrategyStatus)`
 
 Changes the strategy's operational status.
 
-- **Authorization:** `manager` contract only.
+```rust
+pub enum StrategyStatus {
+    Active,    // Strategy executes normally
+    Paused,    // Strategy execution suspended
+    Archived,  // Same as paused (used for filtering)
+}
+```
+
+- **Authorization:** Manager contract only
 - **Logic:**
-  - `Active`: Calls `prepare_to_execute` and runs the strategy's execution logic.
-  - `Paused` | `Archived`: Calls `prepare_to_cancel` to unwind any active state. The statuses themselves are primarily for off-chain filtering and do not introduce unique on-chain logic beyond pausing execution.
-  - The `Active` strategy state is saved to `ACTIVE_STRATEGY` in storage.
+  - **Active:** Prepares and executes strategy normally
+  - **Paused/Archived:** Calls `prepare_to_cancel()` to unwind active state
+  - Status is primarily used for manager-level filtering and control
 
 ### `Commit`
 
-Commits the result of an execution, finalizing the state transition. This enables stateful strategy actions to verify the changes they made were successful.
+Finalizes strategy execution and commits state changes.
 
-- **Authorization:** `strategy` contract itself only.
+```rust
+StrategyExecuteMsg::Commit
+```
+
+- **Authorization:** Self-call only (automatic after sub-message completion)
 - **Logic:**
-  1.  Called as a reply from `Execute`, `Update`, `Withdraw`, and `UpdateStatus` message's sub-messages.
-  2.  Loads the `ACTIVE_STRATEGY` from storage.
-  3.  Calls `prepare_to_commit` on it. This updates the internal state of the `Action` tree (e.g., advancing a `Schedule` to its next occurrence).
-  4.  The now-updated strategy is transitioned back to the `Committed` state and saved over the previous version in `CONFIG`.
-  5.  The temporary `ACTIVE_STRATEGY` is cleared from storage.
+  1. Loads active strategy from temporary storage
+  2. Calls `prepare_to_commit()` to finalize state updates
+  3. Updates internal action state (e.g., advancing schedule timing)
+  4. Transitions back to committed state and saves to permanent storage
+  5. Clears temporary active strategy state
 
 ### `Clear`
 
-A utility function to clear the re-entrancy guard.
+Utility function to reset reentrancy protection.
 
-- **Authorization:** `strategy` contract itself or the `owner`.
-- **Logic:** Removes the `STATE` item from storage. This is called as the final sub-message in any top-level execute flow to ensure the re-entrancy guard is reset, allowing the contract to process a new message.
+```rust
+StrategyExecuteMsg::Clear
+```
+
+- **Authorization:** Self-call or strategy owner
+- **Logic:** Removes the execution state guard to allow new message processing
 
 ## Query Messages
 
-The `strategy` contract exposes the following query messages:
-
 ### `Config`
 
-This message is used to query the strategy's configuration.
+Returns the complete strategy configuration.
 
-- **Returns:** The strategy's configuration, including the `manager`, `strategy`, and `escrowed` denoms.
+```rust
+pub struct StrategyConfig {
+    pub manager: Addr,           // Manager contract address
+    pub strategy: Strategy<Committed>, // Current strategy definition
+    pub denoms: HashSet<String>, // All denominations used by strategy
+    pub escrowed: HashSet<String>, // Denominations locked for operations
+}
+```
 
 ### `Statistics`
 
-This message is used to query the strategy's statistics.
+Returns execution statistics and performance metrics.
 
-- **Returns:** The strategy's statistics
-  - `outgoing`: The total amount of debit transactions made by the strategy. Includes swaps and limit orders, but not distributions or withdrawals.
-  - `distributions`: The total amount of funds distributed by the strategy to other addresses.
+```rust
+pub struct Statistics {
+    pub debited: Vec<Coin>,                    // Total outgoing transactions
+    pub credited: Vec<(Recipient, Vec<Coin>)>, // Total distributions by recipient
+}
+```
 
-### `Balances`
+Tracks:
 
-This message is used to query the strategy's balances.
+- **Debited:** All outgoing transactions (swaps, limit orders, etc.)
+- **Credited:** All distributions to external addresses
+- **Performance:** Success/failure rates for different action types
 
-- **Returns:** The strategy's balances, including the balances of all denoms held in other protocols by the strategy.
+### `Balances(HashSet<String>)`
+
+Returns strategy balances across all holdings.
+
+- **Parameters:** Set of denominations to query (empty = all tracked denoms)
+- **Returns:** `Vec<Coin>` with complete balance information
+- **Sources:**
+  - Direct contract balances
+  - Balances held in external protocols (i.e. pending limit orders)
+
+## State Management
+
+### Storage Layout
+
+- **`CONFIG`:** Primary strategy configuration and committed state
+- **`ACTIVE_STRATEGY`:** Temporary state during execution cycles
+- **`DENOMS`:** Set of all denominations used by the strategy
+- **`ESCROWED`:** Set of denominations protected from withdrawal
+- **`STATS`:** Cumulative execution statistics
+- **`STATE`:** Reentrancy protection guard
+
+### Reentrancy Protection
+
+The contract implements sophisticated reentrancy protection:
+
+1. **State Guard:** Prevents multiple concurrent executions
+2. **Message Validation:** Rejects recursive calls to same message type
+3. **Clear Mechanism:** Automatic cleanup of guard state
+4. **Self-Call Detection:** Allows legitimate self-calls while blocking recursion
+
+### Error Handling and Recovery
+
+- **Reply Mechanism:** All sub-messages use reply handlers for error tracking
+- **State Recovery:** Failed executions don't corrupt strategy state
+- **Partial Execution:** Individual action failures don't prevent other actions
+- **Debugging Support:** Comprehensive error attributes for troubleshooting
+
+## Integration Patterns
+
+### Manager Integration
+
+The strategy contract integrates closely with the manager contract:
+
+- Manager instantiates strategies with proper configuration
+- Manager controls strategy lifecycle (active/paused/archived)
+- Manager can update strategy definitions
+- Manager masters strategy status & label
+
+### Scheduler Integration
+
+Strategies work with the scheduler for automation:
+
+- Scheduled actions create triggers in scheduler contract
+- Scheduler executes strategies when conditions are met
+- Rebate mechanisms incentivize keeper participation
+
+## Security Considerations
+
+- **Fund Isolation:** Each strategy contract holds its own funds separately
+- **Authorization:** Strict access control for sensitive operations
+- **State Consistency:** Two-phase commit prevents state corruption
+- **Reentrancy Protection:** Multiple layers of protection against recursive attacks
+- **Validation:** Comprehensive input validation and size limits
+- **Recovery:** Graceful handling of external protocol failures

@@ -106,9 +106,7 @@ impl CalcTestApp {
             .instantiate_contract(
                 scheduler_code_id,
                 admin.clone(),
-                &SchedulerInstantiateMsg {
-                    manager: manager_addr.clone(),
-                },
+                &SchedulerInstantiateMsg {},
                 &[],
                 "calc-scheduler",
                 Some(admin.clone().to_string()),
