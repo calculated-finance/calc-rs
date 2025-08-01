@@ -97,7 +97,8 @@ mod integration_tests {
     fn default_schedule_action(harness: &CalcTestApp) -> Schedule {
         Schedule {
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             execution_rebate: vec![],
             cadence: Cadence::Blocks {
                 interval: 5,
@@ -217,7 +218,8 @@ mod integration_tests {
         assert!(StrategyBuilder::new(&mut harness)
             .with_action(Action::Schedule(Schedule {
                 scheduler: scheduler_addr,
-                manager: manager_addr,
+                contract_address: manager_addr,
+                msg: None,
                 cadence: Cadence::Blocks {
                     interval: 10,
                     previous: None
@@ -2895,7 +2897,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(default_swap_action(&harness))),
             scheduler: Addr::unchecked("scheduler"),
-            manager: Addr::unchecked("manager"),
+            contract_address: Addr::unchecked("manager"),
+            msg: None,
             cadence: Cadence::Cron {
                 expr: "invalid cron".to_string(),
                 previous: None,
@@ -2921,7 +2924,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Many(nested_actions)),
             scheduler: Addr::unchecked("scheduler"),
-            manager: Addr::unchecked("manager"),
+            contract_address: Addr::unchecked("manager"),
+            msg: None,
             cadence: Cadence::Cron {
                 expr: "invalid cron".to_string(),
                 previous: None,
@@ -2945,7 +2949,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: None,
@@ -2973,7 +2978,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: Some(harness.app.block_info().time),
@@ -3007,7 +3013,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Blocks {
                 interval: 60,
                 previous: None,
@@ -3035,7 +3042,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Blocks {
                 interval: 60,
                 previous: Some(harness.app.block_info().height),
@@ -3069,7 +3077,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Cron {
                 expr: "0 0 * * * *".to_string(),
                 previous: None,
@@ -3097,7 +3106,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Cron {
                 expr: "0 0 * * * *".to_string(),
                 previous: Some(harness.app.block_info().time),
@@ -3127,7 +3137,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: Some(harness.app.block_info().time),
@@ -3164,7 +3175,8 @@ mod integration_tests {
         let action = Action::Schedule(Schedule {
             action: Box::new(Action::Swap(swap_action.clone())),
             scheduler: harness.scheduler_addr.clone(),
-            manager: harness.manager_addr.clone(),
+            contract_address: harness.manager_addr.clone(),
+            msg: None,
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: Some(harness.app.block_info().time),

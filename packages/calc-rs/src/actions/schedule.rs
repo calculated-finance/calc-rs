@@ -1,7 +1,7 @@
 use std::{cmp::min, collections::HashSet, str::FromStr};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, Deps, Env, Event, StdResult};
+use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Coins, Deps, Env, Event, StdResult};
 use cron::Schedule as CronSchedule;
 
 use crate::{
@@ -38,7 +38,8 @@ impl From<ScheduleEvent> for Event {
 #[cw_serde]
 pub struct Schedule {
     pub scheduler: Addr,
-    pub manager: Addr,
+    pub contract_address: Addr,
+    pub msg: Option<Binary>,
     pub cadence: Cadence,
     pub execution_rebate: Vec<Coin>,
     pub action: Box<Action>,
@@ -71,10 +72,12 @@ impl Schedule {
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
                     condition: condition.clone(),
-                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                        contract_address: env.contract.address.clone(),
-                    })?,
-                    contract_address: self.manager.clone(),
+                    msg: self.msg.clone().unwrap_or(to_json_binary(
+                        &ManagerExecuteMsg::ExecuteStrategy {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    )?),
+                    contract_address: self.contract_address.clone(),
                     executors: vec![],
                     jitter: None,
                 }))?,
@@ -109,10 +112,12 @@ impl Schedule {
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
                     condition: condition.clone(),
-                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
-                        contract_address: env.contract.address.clone(),
-                    })?,
-                    contract_address: self.manager.clone(),
+                    msg: self.msg.clone().unwrap_or(to_json_binary(
+                        &ManagerExecuteMsg::ExecuteStrategy {
+                            contract_address: env.contract.address.clone(),
+                        },
+                    )?),
+                    contract_address: self.contract_address.clone(),
                     executors: vec![],
                     jitter: None,
                 }))?,

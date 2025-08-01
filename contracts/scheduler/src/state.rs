@@ -8,21 +8,19 @@ use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 pub const MANAGER: Item<Addr> = Item::new("manager");
 
 pub struct TriggerIndexes<'a> {
-    // pub owner: MultiIndex<'a, Addr, Trigger, u64>,
     pub timestamp: MultiIndex<'a, u64, Trigger, u64>,
     pub block_height: MultiIndex<'a, u64, Trigger, u64>,
     pub limit_order_pair: MultiIndex<'a, Addr, Trigger, u64>,
-    pub limit_order_pair_rate: MultiIndex<'a, (Addr, String), Trigger, u64>,
+    pub limit_order_pair_price: MultiIndex<'a, (Addr, String), Trigger, u64>,
 }
 
 impl<'a> IndexList<Trigger> for TriggerIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Trigger>> + '_> {
         let v: Vec<&dyn Index<Trigger>> = vec![
-            // &self.owner,
             &self.timestamp,
             &self.block_height,
             &self.limit_order_pair,
-            &self.limit_order_pair_rate,
+            &self.limit_order_pair_price,
         ];
         Box::new(v.into_iter())
     }
@@ -79,7 +77,7 @@ impl TriggerStore<'_> {
                 Some((above, below)) => self
                     .triggers
                     .idx
-                    .limit_order_pair_rate
+                    .limit_order_pair_price
                     .sub_prefix(pair_address)
                     .range(
                         storage,
@@ -132,7 +130,7 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
                 "triggers",
                 "triggers__limit_order_pair",
             ),
-            limit_order_pair_rate: MultiIndex::new(
+            limit_order_pair_price: MultiIndex::new(
                 |_, t| match t.condition.clone() {
                     Condition::LimitOrderFilled {
                         pair_address,
@@ -142,7 +140,7 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
                     _ => (Addr::unchecked(""), Decimal::zero().to_string()),
                 },
                 "triggers",
-                "triggers__limit_order_pair_rate",
+                "triggers__limit_order_pair_price",
             ),
         },
     ),
