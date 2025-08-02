@@ -321,7 +321,11 @@ export interface Destination {
 export interface Schedule {
   action: Action;
   cadence: Cadence;
+  contract_address: Addr;
   execution_rebate: Coin[];
+  executors: Addr[];
+  jitter?: Duration | null;
+  msg?: Binary | null;
   scheduler: Addr;
 }
 export interface Duration {
@@ -346,22 +350,16 @@ export type ArrayOf_Trigger = Trigger[];
 
 export interface Trigger {
   condition: Condition;
+  contract_address: Addr;
   execution_rebate: Coin[];
-  id: number;
-  owner: Addr;
+  executors: Addr[];
+  id: Uint64;
+  jitter?: Duration | null;
+  msg: Binary;
 }
 
-export interface SchedulerInstantiateMsg {
-  manager: Addr;
-}
+export interface SchedulerInstantiateMsg {}
 export type SchedulerQueryMsg =
-  | {
-      owned: {
-        limit?: number | null;
-        owner: Addr;
-        start_after?: number | null;
-      };
-    }
   | {
       filtered: {
         filter: ConditionFilter;
@@ -369,7 +367,7 @@ export type SchedulerQueryMsg =
       };
     }
   | {
-      can_execute: number;
+      can_execute: Uint64;
     };
 export type ConditionFilter =
   | {
@@ -397,11 +395,20 @@ export type ConditionFilter =
     };
 export type SchedulerExecuteMsg =
   | {
-      create: Condition;
+      create: CreateTriggerMsg;
     }
   | {
-      execute: number[];
+      execute: Uint64[];
     };
+
+export interface CreateTriggerMsg {
+  condition: Condition;
+  contract_address: Addr;
+  executors: Addr[];
+  jitter?: Duration | null;
+  msg: Binary;
+}
+
 export type Boolean = boolean;
 
 export interface Statistics {
@@ -447,8 +454,10 @@ export interface StrategyFor_Indexed {
 }
 
 export type ArrayOf_Coin = Coin[];
+export type Committed = null;
 
 export interface StrategyConfig {
+  denoms: string[];
   escrowed: string[];
   manager: Addr;
   strategy: StrategyFor_Committed;
@@ -457,8 +466,4 @@ export interface StrategyFor_Committed {
   action: Action;
   owner: Addr;
   state: Committed;
-}
-
-export interface Committed {
-  contract_address: Addr;
 }

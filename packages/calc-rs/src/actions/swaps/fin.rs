@@ -23,6 +23,7 @@ enum FinSwapEvent {
     AttemptSwap {
         swap_amount: Coin,
         expected_receive_amount: Coin,
+        maximum_slippage_bps: u64,
     },
 }
 
@@ -32,12 +33,19 @@ impl From<FinSwapEvent> for Event {
             FinSwapEvent::AttemptSwap {
                 swap_amount,
                 expected_receive_amount,
+                maximum_slippage_bps,
             } => Event::new("attempt_fin_swap")
-                .add_attribute("swap_amount", swap_amount.to_string())
+                .add_attribute("swap_amount", swap_amount.amount.to_string())
+                .add_attribute("swap_denom", swap_amount.denom.to_string())
                 .add_attribute(
                     "expected_receive_amount",
-                    expected_receive_amount.to_string(),
-                ),
+                    expected_receive_amount.amount.to_string(),
+                )
+                .add_attribute(
+                    "expected_receive_denom",
+                    expected_receive_amount.denom.to_string(),
+                )
+                .add_attribute("maximum_slippage_bps", maximum_slippage_bps.to_string()),
         }
     }
 }
@@ -294,6 +302,7 @@ impl Quotable for FinRoute {
                 events: vec![FinSwapEvent::AttemptSwap {
                     swap_amount: route.swap_amount.clone(),
                     expected_receive_amount: route.state.expected_amount_out.clone(),
+                    maximum_slippage_bps: route.maximum_slippage_bps,
                 }
                 .into()],
             },

@@ -88,7 +88,7 @@ impl StrategyMsgPayload {
             .clone()
             .into_iter()
             .map(|mut event| {
-                event.ty = format!("calc_event:{}_{}", event.ty, decorator);
+                event.ty = format!("calc/{}/{}", event.ty, decorator);
                 event
             })
             .collect()

@@ -398,17 +398,6 @@ export const getAllTriggers = async () => {
   return [...(await getBlockTriggers()), ...(await getTimeTriggers())];
 };
 
-export const getOwnedTriggers = async (owner: string) => {
-  const cosmWasmClient = await getSigner();
-  const triggers = await cosmWasmClient.queryContractSmart(SCHEDULER_ADDRESS, {
-    owned: {
-      owner,
-    },
-  } as SchedulerQueryMsg);
-
-  return triggers;
-};
-
 export const executeTriggersWith = async (
   getTriggers: () => Promise<any[]>,
 ) => {
@@ -746,7 +735,7 @@ export const SCHEDULER_ADDRESS =
   "sthor1s4wcpc6mzfe9rvu3x48t6mvmmupg04n7cfecgx3pxvcl5q3h4y3shqqv8a";
 
 export const STRATEGY_ADDRESS =
-  "sthor17rrm9t5e6tr3hycxfhg6x92pfpvccqs2wcgkpu90mppwshs83xrqs3ncx4";
+  "sthor1z7y08s5wkp89s9fafvtsas76e6yws5ytdfuq6424lad0rac98xmqg3jmx0";
 
 export const PAIR_ADDRESS =
   "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r";

@@ -2,8 +2,8 @@ use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, Env, Event, StdError, StdResult,
-    Uint128, WasmMsg,
+    to_json_binary, Addr, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, Env, Event,
+    StdError, StdResult, Uint128, WasmMsg,
 };
 
 use crate::actions::action::Action;
@@ -32,7 +32,12 @@ impl From<DistributionEvent> for Event {
             }
             DistributionEvent::Distribute { recipient, amount } => Event::new("distribute")
                 .add_attribute("recipient", recipient)
-                .add_attribute("amount", format!("{amount:?}")),
+                .add_attribute(
+                    "amount",
+                    to_json_binary(&amount)
+                        .unwrap_or(Binary::default())
+                        .to_string(),
+                ),
         }
     }
 }

@@ -19,6 +19,7 @@ pub enum ThorchainSwapEvent {
     AttemptSwap {
         swap_amount: Coin,
         expected_receive_amount: Coin,
+        maximum_slippage_bps: u64,
         streaming_swap_blocks: u64,
     },
 }
@@ -29,6 +30,7 @@ impl From<ThorchainSwapEvent> for Event {
             ThorchainSwapEvent::AttemptSwap {
                 swap_amount,
                 expected_receive_amount,
+                maximum_slippage_bps,
                 streaming_swap_blocks,
             } => Event::new("attempt_thorchain_swap")
                 .add_attribute("swap_amount", swap_amount.to_string())
@@ -36,6 +38,7 @@ impl From<ThorchainSwapEvent> for Event {
                     "expected_receive_amount",
                     expected_receive_amount.to_string(),
                 )
+                .add_attribute("maximum_slippage_bps", maximum_slippage_bps.to_string())
                 .add_attribute("streaming_swap_blocks", streaming_swap_blocks.to_string()),
         }
     }
@@ -323,6 +326,7 @@ impl Quotable for ThorchainRoute {
                 events: vec![ThorchainSwapEvent::AttemptSwap {
                     swap_amount: route.swap_amount.clone(),
                     expected_receive_amount: route.state.expected_amount_out.clone(),
+                    maximum_slippage_bps: route.maximum_slippage_bps,
                     streaming_swap_blocks: current_swap.streaming_swap_blocks,
                 }
                 .into()],

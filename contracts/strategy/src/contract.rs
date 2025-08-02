@@ -794,7 +794,7 @@ mod tests {
             execute(
                 deps.as_mut(),
                 env.clone(),
-                message_info(&env.contract.address, &[]),
+                message_info(&Addr::unchecked("anyone"), &[]),
                 StrategyExecuteMsg::Execute
             ),
             Err(ContractError::generic_err(

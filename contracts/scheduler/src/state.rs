@@ -104,31 +104,31 @@ impl TriggerStore<'_> {
 
 pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
     triggers: IndexedMap::new(
-        "triggers",
+        "triggers_v1",
         TriggerIndexes {
             timestamp: MultiIndex::new(
                 |_, t| match t.condition {
                     Condition::TimestampElapsed(timestamp) => timestamp.seconds(),
                     _ => u64::MAX,
                 },
-                "triggers",
-                "triggers__timestamp",
+                "triggers_v1",
+                "triggers_v1__timestamp",
             ),
             block_height: MultiIndex::new(
                 |_, t| match t.condition {
                     Condition::BlocksCompleted(height) => height,
                     _ => u64::MAX,
                 },
-                "triggers",
-                "triggers__block_height",
+                "triggers_v1",
+                "triggers_v1__block_height",
             ),
             limit_order_pair: MultiIndex::new(
                 |_, t| match t.condition.clone() {
                     Condition::LimitOrderFilled { pair_address, .. } => pair_address,
                     _ => Addr::unchecked(""),
                 },
-                "triggers",
-                "triggers__limit_order_pair",
+                "triggers_v1",
+                "triggers_v1__limit_order_pair",
             ),
             limit_order_pair_price: MultiIndex::new(
                 |_, t| match t.condition.clone() {
@@ -139,8 +139,8 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
                     } => (pair_address, price.to_string()),
                     _ => (Addr::unchecked(""), Decimal::zero().to_string()),
                 },
-                "triggers",
-                "triggers__limit_order_pair_price",
+                "triggers_v1",
+                "triggers_v1__limit_order_pair_price",
             ),
         },
     ),

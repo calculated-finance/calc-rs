@@ -46,7 +46,7 @@ The CALC protocol is a decentralized framework for creating, managing, and autom
 4. **Generate contract schemas and TypeScript types:**
    ```bash
    ./scripts/schema.sh
-   bun run types
+   bun types
    ```
 
 ### Running Tests

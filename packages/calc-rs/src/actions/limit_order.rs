@@ -28,7 +28,7 @@ struct LimitOrderEventData {
 impl LimitOrderEventData {
     pub fn to_event(&self, event_type: &str) -> Event {
         Event::new(event_type)
-            .add_attribute("pair_address", self.pair_address.to_string())
+            .add_attribute("pair", self.pair_address.to_string())
             .add_attribute("side", self.side.to_string())
             .add_attribute("price", self.price.to_string())
             .add_attribute("amount", self.amount.to_string())

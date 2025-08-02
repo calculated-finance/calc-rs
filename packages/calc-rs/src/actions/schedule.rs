@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashSet, str::FromStr};
+use std::{cmp::min, collections::HashSet, str::FromStr, time::Duration};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Coins, Deps, Env, Event, StdResult};
@@ -28,9 +28,13 @@ impl From<ScheduleEvent> for Event {
             ScheduleEvent::ExecutionSkipped { reason } => {
                 Event::new("skip_schedule").add_attribute("reason", reason)
             }
-            ScheduleEvent::CreateTrigger { condition } => {
-                Event::new("create_trigger").add_attribute("condition", format!("{condition:?}"))
-            }
+            ScheduleEvent::CreateTrigger { condition } => Event::new("create_trigger")
+                .add_attribute(
+                    "condition",
+                    to_json_binary(&condition)
+                        .unwrap_or(Binary::default())
+                        .to_string(),
+                ),
         }
     }
 }
@@ -43,6 +47,8 @@ pub struct Schedule {
     pub cadence: Cadence,
     pub execution_rebate: Vec<Coin>,
     pub action: Box<Action>,
+    pub executors: Vec<Addr>,
+    pub jitter: Option<Duration>,
 }
 
 impl Schedule {
@@ -78,8 +84,8 @@ impl Schedule {
                         },
                     )?),
                     contract_address: self.contract_address.clone(),
-                    executors: vec![],
-                    jitter: None,
+                    executors: self.executors.clone(),
+                    jitter: self.jitter,
                 }))?,
                 rebate.to_vec(),
             );
@@ -118,8 +124,8 @@ impl Schedule {
                         },
                     )?),
                     contract_address: self.contract_address.clone(),
-                    executors: vec![],
-                    jitter: None,
+                    executors: self.executors.clone(),
+                    jitter: self.jitter,
                 }))?,
                 rebate.to_vec(),
             );
