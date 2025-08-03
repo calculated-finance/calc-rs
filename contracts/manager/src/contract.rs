@@ -349,7 +349,7 @@ mod tests {
                 contract_address: strategy.contract_address.clone(),
                 update: Strategy {
                     owner: info.sender.clone(),
-                    action: Action::Many(vec![]),
+                    actions: vec![],
                     state: Json
                 }
             },
@@ -366,7 +366,7 @@ mod tests {
                 contract_address: strategy.contract_address.clone(),
                 update: Strategy {
                     owner: info.sender.clone(),
-                    action: Action::Many(vec![]),
+                    actions: vec![],
                     state: Json
                 }
             },
@@ -500,7 +500,7 @@ mod tests {
                 contract_address: strategy.contract_address.clone(),
                 update: Strategy {
                     owner: info.sender.clone(),
-                    action: Action::Many(vec![]),
+                    actions: vec![],
                     state: Json,
                 },
             },

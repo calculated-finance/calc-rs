@@ -403,7 +403,10 @@ impl CalcTestApp {
         self.app.execute_contract(
             sender.clone(),
             strategy_addr.clone(),
-            &StrategyExecuteMsg::Withdraw(denoms),
+            &StrategyExecuteMsg::Withdraw {
+                denoms,
+                from_actions: true,
+            },
             &[],
         )
     }

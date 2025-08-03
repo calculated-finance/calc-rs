@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
+use cosmwasm_std::{Addr, Coins, Deps, Env, Event, StdResult};
 
 use crate::{actions::action::Action, strategy::StrategyMsg};
 
@@ -12,7 +12,7 @@ pub trait StatelessOperation {
 }
 
 pub trait StatefulOperation {
-    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)>;
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<Action>;
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
     fn withdraw(
         self,

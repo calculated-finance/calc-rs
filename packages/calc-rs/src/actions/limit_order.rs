@@ -314,7 +314,7 @@ impl LimitOrderState<SettingOrder> {
 }
 
 impl LimitOrderState<SetOrder> {
-    pub fn withdraw(self, _deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
+    pub fn withdraw(self) -> StdResult<LimitOrderState<WithdrawingOrder>> {
         let withdraw_order_message = StrategyMsg::with_payload(
             Contract(self.config.pair_address.clone()).call(
                 to_json_binary(&ExecuteMsg::Order((
@@ -371,7 +371,7 @@ impl LimitOrderState<SetOrder> {
                 .should_reset(self.state.price, new_price);
 
         if should_withdraw {
-            return self.withdraw(deps);
+            return self.withdraw();
         }
 
         Ok(LimitOrderState {
@@ -554,7 +554,7 @@ impl StatefulOperation for LimitOrder {
                 state: existing_order.refresh(deps, env, &self)?,
             };
 
-            let (messages, events, _) = order_state.withdraw(deps)?.execute();
+            let (messages, events, _) = order_state.withdraw()?.execute();
 
             // We let the confirm stage remove the current order
             Ok((messages, events, Action::LimitOrder(self)))
@@ -577,9 +577,9 @@ impl StatefulOperation for LimitOrder {
                 state: existing_order.refresh(deps, env, &self)?,
             };
 
-            let (messages, events, _) = order_state.withdraw(deps)?.execute();
+            let (messages, events, _) = order_state.withdraw()?.execute();
 
-            // We let the confirm stage remove the current order
+            // We let the commit stage remove the current order
             Ok((messages, events, Action::LimitOrder(self)))
         } else {
             Ok((
@@ -593,22 +593,18 @@ impl StatefulOperation for LimitOrder {
         }
     }
 
-    fn commit(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<Action> {
         if let Some(existing_order) = self.current_order.clone() {
             match existing_order.refresh(deps, env, &self) {
-                Ok(_) => Ok((vec![], vec![], Action::LimitOrder(self))),
-                Err(_) => Ok((
-                    vec![],
-                    vec![],
-                    Action::LimitOrder(LimitOrder {
-                        // Wipe the cached order if it does not exist
-                        current_order: None,
-                        ..self
-                    }),
-                )),
+                Ok(_) => Ok(Action::LimitOrder(self)),
+                Err(_) => Ok(Action::LimitOrder(LimitOrder {
+                    // Wipe the cached order if it does not exist
+                    current_order: None,
+                    ..self
+                })),
             }
         } else {
-            Ok((vec![], vec![], Action::LimitOrder(self)))
+            Ok(Action::LimitOrder(self))
         }
     }
 }

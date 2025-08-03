@@ -7,7 +7,7 @@ use std::{
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
     instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Deps, DepsMut, Env,
-    Event, MessageInfo, Response, StdError, StdResult, Storage, SubMsg, WasmMsg,
+    Event, MessageInfo, StdError, StdResult, Storage, SubMsg, WasmMsg,
 };
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
         action::Action,
         operation::{StatefulOperation, StatelessOperation},
     },
-    constants::{LOG_ERRORS_REPLY_ID, MAX_STRATEGY_SIZE, PROCESS_PAYLOAD_REPLY_ID},
+    constants::PROCESS_PAYLOAD_REPLY_ID,
     core::Contract,
     manager::{Affiliate, StrategyStatus},
     statistics::Statistics,
@@ -24,19 +24,36 @@ use crate::{
 #[cw_serde]
 pub struct StrategyConfig {
     pub manager: Addr,
-    pub strategy: Strategy<Committed>,
+    pub strategy: Strategy<Indexed>,
     pub denoms: HashSet<String>,
     pub escrowed: HashSet<String>,
 }
 
 #[cw_serde]
-pub enum StrategyExecuteMsg {
+pub enum StrategyOperation {
+    Init,
     Execute,
     Withdraw(HashSet<String>),
+    Cancel,
+}
+
+#[cw_serde]
+pub enum StrategyExecuteMsg {
+    Execute,
+    Withdraw {
+        denoms: HashSet<String>,
+        from_actions: bool,
+    },
     Update(Strategy<Indexed>),
     UpdateStatus(StrategyStatus),
-    Commit,
-    Clear,
+    Process {
+        operation: StrategyOperation,
+        strategy: Strategy<Indexed>,
+    },
+    ProcessNext {
+        operation: StrategyOperation,
+        previous: Option<ActionNode>,
+    },
 }
 
 #[cw_serde]
@@ -53,25 +70,49 @@ pub enum StrategyQueryMsg {
 #[cw_serde]
 pub struct Strategy<S> {
     pub owner: Addr,
-    pub action: Action,
+    pub actions: Vec<Action>,
     pub state: S,
 }
 
 impl<S> Strategy<S> {
     pub fn size(&self) -> usize {
-        self.action.size()
+        self.actions.iter().map(|a| a.size()).sum::<usize>() + 1
     }
 
     pub fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        self.action.denoms(deps, env)
+        let mut denoms = HashSet::new();
+
+        for action in self.actions.iter() {
+            let action_denoms = action.denoms(deps, env)?;
+            denoms.extend(action_denoms);
+        }
+
+        Ok(denoms)
     }
 
     pub fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        self.action.escrowed(deps, env)
+        let mut escrowed = HashSet::new();
+
+        for action in self.actions.iter() {
+            let action_escrowed = action.escrowed(deps, env)?;
+            escrowed.extend(action_escrowed);
+        }
+
+        Ok(escrowed)
     }
 
     pub fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
-        self.action.balances(deps, env, denoms)
+        let mut balances = Coins::default();
+
+        for action in self.actions.iter() {
+            let action_balances = action.balances(deps, env, denoms)?;
+
+            for balance in action_balances {
+                balances.add(balance)?;
+            }
+        }
+
+        Ok(balances)
     }
 }
 
@@ -163,9 +204,15 @@ pub struct Committed;
 
 impl Strategy<Json> {
     pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> StdResult<Strategy<Indexable>> {
+        let mut initialised_actions = vec![];
+
+        for action in self.actions {
+            initialised_actions.push(action.add_affiliates(affiliates)?);
+        }
+
         Ok(Strategy {
             owner: self.owner,
-            action: self.action.add_affiliates(affiliates)?,
+            actions: initialised_actions,
             state: Indexable,
         })
     }
@@ -204,7 +251,7 @@ impl Strategy<Indexable> {
 
         let instantiable_strategy = Strategy {
             owner: self.owner.clone(),
-            action: self.action.clone(),
+            actions: self.actions.clone(),
             state: Instantiable {
                 contract_address,
                 label,
@@ -229,7 +276,7 @@ impl Strategy<Indexable> {
     {
         let indexed_strategy = Strategy {
             owner: self.owner.clone(),
-            action: self.action.clone(),
+            actions: self.actions.clone(),
             state: Updatable { contract_address },
         };
 
@@ -248,7 +295,7 @@ impl Strategy<Instantiable> {
             salt: self.state.salt,
             msg: to_json_binary(&Strategy {
                 owner: self.owner,
-                action: self.action,
+                actions: self.actions,
                 state: Indexed {
                     contract_address: self.state.contract_address.clone(),
                 },
@@ -264,9 +311,9 @@ impl Strategy<Updatable> {
         Ok(Contract(self.state.contract_address.clone()).call(
             to_json_binary(&StrategyExecuteMsg::Update(Strategy {
                 owner: self.owner,
-                action: self.action,
+                actions: self.actions,
                 state: Indexed {
-                    contract_address: self.state.contract_address,
+                    contract_address: self.state.contract_address.clone(),
                 },
             }))?,
             info.funds,
@@ -275,149 +322,53 @@ impl Strategy<Updatable> {
 }
 
 impl Strategy<Indexed> {
-    pub fn init<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
-    where
-        F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
-    {
-        if self.size() > MAX_STRATEGY_SIZE {
-            return Err(StdError::generic_err(format!(
-                "Strategy size exceeds maximum limit of {MAX_STRATEGY_SIZE} actions"
-            )));
+    pub fn execution_list(&self) -> Vec<ActionNode> {
+        let mut current_index = 0;
+
+        let mut root_node = ActionNode {
+            action: self.actions[0].clone(),
+            index: current_index,
+            next: None,
+        };
+
+        let mut nodes = vec![];
+
+        for action in self.actions.clone().into_iter().skip(1) {
+            let action_nodes = action.to_executable_array(current_index + 1);
+            current_index += (action_nodes.len() + 1) as u16;
+            nodes.extend(action_nodes);
         }
 
-        let (messages, events, action) = self.action.init(deps.as_ref(), env)?;
-
-        save(
-            deps.storage,
-            Strategy {
-                owner: self.owner,
-                action,
-                state: Committed {},
-            },
-        )?;
-
-        Ok(Response::default()
-            .add_submessages(messages.into_iter().map(SubMsg::from).collect::<Vec<_>>())
-            .add_events(events))
+        root_node.next = Some(root_node.index + (nodes.len() + 1) as u16);
+        return vec![root_node].into_iter().chain(nodes).collect();
     }
 }
 
-impl Strategy<Committed> {
-    pub fn activate(self) -> Strategy<Active> {
-        Strategy {
-            owner: self.owner,
-            action: self.action,
-            state: Active,
+#[cw_serde]
+pub struct ActionNode {
+    pub action: Action,
+    pub index: u16,
+    pub next: Option<u16>,
+}
+
+impl ActionNode {
+    pub fn next_index(&self, deps: Deps, env: &Env) -> Option<u16> {
+        match &self.action {
+            Action::Conditional(conditional) => {
+                let is_satisfied = conditional
+                    .condition
+                    .is_satisfied(deps, env)
+                    .unwrap_or(false);
+
+                if is_satisfied {
+                    Some(self.index + 1)
+                } else {
+                    self.next
+                }
+            }
+            _ => self.next,
         }
     }
 }
 
-impl Strategy<Active> {
-    pub fn prepare_to_execute(self, deps: Deps, env: &Env) -> StdResult<Strategy<Executable>> {
-        let (messages, events, action) = self.action.execute(deps, env);
-
-        Ok(Strategy {
-            owner: self.owner,
-            action,
-            state: Executable { messages, events },
-        })
-    }
-
-    pub fn prepare_to_withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<Strategy<Executable>> {
-        let (messages, events, action) = self.action.withdraw(deps, env, desired)?;
-
-        Ok(Strategy {
-            owner: self.owner,
-            action,
-            state: Executable { messages, events },
-        })
-    }
-
-    pub fn prepare_to_cancel(self, deps: Deps, env: &Env) -> StdResult<Strategy<Executable>> {
-        let (messages, events, action) = self.action.cancel(deps, env)?;
-
-        Ok(Strategy {
-            owner: self.owner,
-            action,
-            state: Executable { messages, events },
-        })
-    }
-
-    pub fn prepare_to_commit(self, deps: Deps, env: &Env) -> StdResult<Strategy<Committable>> {
-        let (messages, events, action) = self.action.commit(deps, env)?;
-
-        Ok(Strategy {
-            owner: self.owner,
-            action,
-            state: Committable { messages, events },
-        })
-    }
-}
-
-impl Strategy<Committable> {
-    pub fn commit<F>(self, deps: &mut DepsMut, save: F) -> StdResult<Response>
-    where
-        F: FnOnce(&mut dyn Storage, Strategy<Committed>) -> StdResult<()>,
-    {
-        save(
-            deps.storage,
-            Strategy {
-                owner: self.owner,
-                action: self.action,
-                state: Committed,
-            },
-        )?;
-
-        Ok(Response::default()
-            .add_submessages(
-                self.state
-                    .messages
-                    .into_iter()
-                    .map(SubMsg::from)
-                    .collect::<Vec<_>>(),
-            )
-            .add_events(self.state.events))
-    }
-}
-
-impl Strategy<Executable> {
-    pub fn execute<F>(self, deps: &mut DepsMut, env: &Env, save: F) -> StdResult<Response>
-    where
-        F: FnOnce(&mut dyn Storage, Strategy<Active>) -> StdResult<()>,
-    {
-        if self.state.messages.is_empty() {
-            return Ok(Response::default().add_events(self.state.events));
-        }
-
-        save(
-            deps.storage,
-            Strategy {
-                owner: self.owner,
-                action: self.action,
-                state: Active,
-            },
-        )?;
-
-        let commit_message = SubMsg::reply_always(
-            Contract(env.contract.address.clone())
-                .call(to_json_binary(&StrategyExecuteMsg::Commit)?, vec![]),
-            LOG_ERRORS_REPLY_ID,
-        );
-
-        Ok(Response::default()
-            .add_submessages(
-                self.state
-                    .messages
-                    .into_iter()
-                    .map(SubMsg::from)
-                    .collect::<Vec<_>>(),
-            )
-            .add_submessage(commit_message)
-            .add_events(self.state.events))
-    }
-}
+impl Strategy<Committed> {}

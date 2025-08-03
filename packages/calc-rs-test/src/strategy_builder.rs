@@ -13,7 +13,7 @@ pub struct StrategyBuilder<'a> {
     owner: Addr,
     label: String,
     affiliates: Vec<Affiliate>,
-    action: Option<Action>,
+    actions: Vec<Action>,
     keeper: Addr,
 }
 
@@ -27,13 +27,13 @@ impl<'a> StrategyBuilder<'a> {
             owner,
             label: "Test Strategy".to_string(),
             affiliates: vec![],
-            action: None,
+            actions: vec![],
             keeper,
         }
     }
 
-    pub fn with_action(mut self, action: Action) -> Self {
-        self.action = Some(action);
+    pub fn with_actions(mut self, actions: Vec<Action>) -> Self {
+        self.actions = actions;
         self
     }
 
@@ -45,7 +45,7 @@ impl<'a> StrategyBuilder<'a> {
     pub fn instantiate(self, funds: &[Coin]) -> StrategyHandler<'a> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            action: self.action.unwrap(),
+            actions: self.actions,
             state: Json,
         };
 
@@ -65,7 +65,7 @@ impl<'a> StrategyBuilder<'a> {
     pub fn try_instantiate(self, funds: &[Coin]) -> AnyResult<StrategyHandler<'a>> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            action: self.action.unwrap(),
+            actions: self.actions,
             state: Json,
         };
 
@@ -88,7 +88,7 @@ impl<'a> StrategyBuilder<'a> {
     ) -> StrategyHandler<'a> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            action: self.action.unwrap(),
+            actions: self.actions,
             state: Json,
         };
 
@@ -112,7 +112,7 @@ impl<'a> StrategyBuilder<'a> {
     ) -> AnyResult<StrategyHandler<'a>> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            action: self.action.unwrap(),
+            actions: self.actions,
             state: Json,
         };
 
