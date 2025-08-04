@@ -3,7 +3,6 @@ export type StrategyStatus = "active" | "paused" | "archived";
 export type ArrayOf_StrategyHandle = StrategyHandle[];
 
 export interface StrategyHandle {
-  affiliates: Affiliate[];
   contract_address: Addr;
   created_at: number;
   id: number;
@@ -11,11 +10,6 @@ export interface StrategyHandle {
   owner: Addr;
   status: StrategyStatus;
   updated_at: number;
-}
-export interface Affiliate {
-  address: Addr;
-  bps: number;
-  label: string;
 }
 
 export interface ManagerInstantiateMsg {
@@ -41,27 +35,27 @@ export type ManagerQueryMsg =
     };
 export type ManagerExecuteMsg =
   | {
-      instantiate_strategy: {
+      instantiate: {
         affiliates: Affiliate[];
         label: string;
-        strategy: StrategyFor_Json;
+        strategy: StrategyFor_Indexable;
       };
     }
   | {
-      execute_strategy: {
+      execute: {
         contract_address: Addr;
       };
     }
   | {
-      update_strategy_status: {
+      update_status: {
         contract_address: Addr;
         status: StrategyStatus;
       };
     }
   | {
-      update_strategy: {
+      update: {
         contract_address: Addr;
-        update: StrategyFor_Json;
+        update: StrategyFor_Indexable;
       };
     };
 export type Node =
@@ -273,12 +267,18 @@ export type Cadence =
       };
     };
 export type Threshold = "all" | "any";
-export type Json = null;
+export type Indexable = null;
 
-export interface StrategyFor_Json {
+export interface Affiliate {
+  address: Addr;
+  bps: number;
+  label: string;
+}
+export interface StrategyFor_Indexable {
+  affiliates: Affiliate[];
   nodes: Node[];
   owner: Addr;
-  state: Json;
+  state: Indexable;
 }
 export interface Swap {
   adjustment: SwapAmountAdjustment;
@@ -428,6 +428,7 @@ export interface Statistics {
 }
 
 export interface StrategyInstantiateMsg {
+  affiliates: Affiliate[];
   nodes: Node[];
   owner: Addr;
   state: Indexed;
@@ -447,21 +448,15 @@ export type StrategyQueryMsg =
       balances: string[];
     };
 export type StrategyExecuteMsg =
-  | "execute"
+  | ("execute" | "cancel")
   | {
       init: Node[];
     }
   | {
-      withdraw: {
-        denoms: string[];
-        from_actions: boolean;
-      };
+      withdraw: Coin[];
     }
   | {
       update: Node[];
-    }
-  | {
-      update_status: StrategyStatus;
     }
   | {
       process: {
@@ -470,7 +465,7 @@ export type StrategyExecuteMsg =
       };
     };
 export type StrategyOperation =
-  | ("init" | "execute" | "cancel")
+  | ("execute" | "cancel")
   | {
       withdraw: string[];
     };

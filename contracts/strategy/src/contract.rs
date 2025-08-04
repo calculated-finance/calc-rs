@@ -111,7 +111,7 @@ pub fn execute(
             Response::new().add_message(execute_actions_msg)
         }
         StrategyExecuteMsg::Execute => {
-            if info.sender != MANAGER.load(deps.storage)? && info.sender != env.contract.address {
+            if info.sender != MANAGER.load(deps.storage)? {
                 return Err(ContractError::Unauthorized {});
             }
 
@@ -126,6 +126,10 @@ pub fn execute(
             Response::new().add_message(execute_actions_msg)
         }
         StrategyExecuteMsg::Update(nodes) => {
+            if info.sender != MANAGER.load(deps.storage)? {
+                return Err(ContractError::Unauthorized {});
+            }
+
             let cancel_actions_msg = Contract(env.contract.address.clone()).call(
                 to_json_binary(&StrategyExecuteMsg::Process {
                     operation: StrategyOperation::Cancel,
@@ -296,7 +300,6 @@ pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
         PROCESS_PAYLOAD_REPLY_ID => {
             let payload = from_json::<StrategyMsgPayload>(reply.payload.clone());
             if let Ok(payload) = payload {
-                println!("Processing reply payload: {:#?}", payload);
                 match reply.result {
                     SubMsgResult::Ok(_) => {
                         let events = payload.decorated_events("succeeded");
@@ -364,7 +367,6 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::state::CONFIG;
 //     use calc_rs::{
 //         actions::{
 //             action::Action,
@@ -386,7 +388,8 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
 
 //         let strategy = Strategy {
 //             owner: owner.clone(),
-//             actions: vec![Action::Swap(Swap {
+//             affiliates: vec![],
+//             nodes: vec![Action::Swap(Swap {
 //                 swap_amount: Coin::new(1000u128, "rune"),
 //                 minimum_receive_amount: Coin::new(100u128, "rune"),
 //                 maximum_slippage_bps: 100,

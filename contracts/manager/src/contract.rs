@@ -246,314 +246,311 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use calc_rs::strategy::{Json, Strategy};
-//     use cosmwasm_std::{
-//         testing::{message_info, mock_dependencies, mock_env},
-//         Addr,
-//     };
+#[cfg(test)]
+mod tests {
+    use calc_rs::strategy::{Indexable, Strategy};
+    use cosmwasm_std::{
+        testing::{message_info, mock_dependencies, mock_env},
+        Addr,
+    };
 
-//     use super::*;
+    use super::*;
 
-//     #[test]
-//     fn test_cannot_execute_inactive_strategy() {
-//         let mut deps = mock_dependencies();
-//         let env = mock_env();
-//         let info = message_info(&deps.api.addr_make("anyone"), &[]);
+    #[test]
+    fn test_cannot_execute_inactive_strategy() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = message_info(&deps.api.addr_make("anyone"), &[]);
 
-//         let strategy = StrategyHandle {
-//             id: 1,
-//             owner: info.sender.clone(),
-//             contract_address: Addr::unchecked("contract"),
-//             created_at: env.block.time.seconds(),
-//             updated_at: env.block.time.seconds(),
-//             label: "Test Strategy".to_string(),
-//             status: StrategyStatus::Archived,
-//             affiliates: vec![],
-//         };
+        let strategy = StrategyHandle {
+            id: 1,
+            owner: info.sender.clone(),
+            contract_address: Addr::unchecked("contract"),
+            created_at: env.block.time.seconds(),
+            updated_at: env.block.time.seconds(),
+            label: "Test Strategy".to_string(),
+            status: StrategyStatus::Archived,
+        };
 
-//         strategy_store()
-//             .save(
-//                 deps.as_mut().storage,
-//                 strategy.contract_address.clone(),
-//                 &strategy,
-//             )
-//             .unwrap();
+        strategy_store()
+            .save(
+                deps.as_mut().storage,
+                strategy.contract_address.clone(),
+                &strategy,
+            )
+            .unwrap();
 
-//         assert!(execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             info.clone(),
-//             ManagerExecuteMsg::ExecuteStrategy {
-//                 contract_address: strategy.contract_address.clone(),
-//             },
-//         )
-//         .is_err());
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ManagerExecuteMsg::Execute {
+                contract_address: strategy.contract_address.clone(),
+            },
+        )
+        .is_err());
 
-//         strategy_store()
-//             .save(
-//                 deps.as_mut().storage,
-//                 strategy.contract_address.clone(),
-//                 &StrategyHandle {
-//                     status: StrategyStatus::Active,
-//                     ..strategy.clone()
-//                 },
-//             )
-//             .unwrap();
+        strategy_store()
+            .save(
+                deps.as_mut().storage,
+                strategy.contract_address.clone(),
+                &StrategyHandle {
+                    status: StrategyStatus::Active,
+                    ..strategy.clone()
+                },
+            )
+            .unwrap();
 
-//         assert!(execute(
-//             deps.as_mut(),
-//             env,
-//             info,
-//             ManagerExecuteMsg::ExecuteStrategy {
-//                 contract_address: strategy.contract_address.clone(),
-//             },
-//         )
-//         .is_ok());
-//     }
+        assert!(execute(
+            deps.as_mut(),
+            env,
+            info,
+            ManagerExecuteMsg::Execute {
+                contract_address: strategy.contract_address.clone(),
+            },
+        )
+        .is_ok());
+    }
 
-//     #[test]
-//     fn test_only_owner_can_update_strategy() {
-//         let mut deps = mock_dependencies();
-//         let env = mock_env();
-//         let info = message_info(&deps.api.addr_make("owner"), &[]);
+    #[test]
+    fn test_only_owner_can_update_strategy() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-//         let strategy = StrategyHandle {
-//             id: 1,
-//             owner: info.sender.clone(),
-//             contract_address: Addr::unchecked("contract"),
-//             created_at: env.block.time.seconds(),
-//             updated_at: env.block.time.seconds(),
-//             label: "Test Strategy".to_string(),
-//             status: StrategyStatus::Archived,
-//             affiliates: vec![],
-//         };
+        let strategy = StrategyHandle {
+            id: 1,
+            owner: info.sender.clone(),
+            contract_address: Addr::unchecked("contract"),
+            created_at: env.block.time.seconds(),
+            updated_at: env.block.time.seconds(),
+            label: "Test Strategy".to_string(),
+            status: StrategyStatus::Archived,
+        };
 
-//         strategy_store()
-//             .save(
-//                 deps.as_mut().storage,
-//                 strategy.contract_address.clone(),
-//                 &strategy,
-//             )
-//             .unwrap();
+        strategy_store()
+            .save(
+                deps.as_mut().storage,
+                strategy.contract_address.clone(),
+                &strategy,
+            )
+            .unwrap();
 
-//         assert!(execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             info.clone(),
-//             ManagerExecuteMsg::UpdateStrategy {
-//                 contract_address: strategy.contract_address.clone(),
-//                 update: Strategy {
-//                     owner: info.sender.clone(),
-//                     actions: vec![],
-//                     state: Json
-//                 }
-//             },
-//         )
-//         .is_ok());
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ManagerExecuteMsg::Update {
+                contract_address: strategy.contract_address.clone(),
+                update: Strategy {
+                    owner: info.sender.clone(),
+                    affiliates: vec![],
+                    nodes: vec![],
+                    state: Indexable
+                }
+            },
+        )
+        .is_ok());
 
-//         let not_owner = deps.api.addr_make("not-owner");
+        let not_owner = deps.api.addr_make("not-owner");
 
-//         assert!(execute(
-//             deps.as_mut(),
-//             env,
-//             message_info(&not_owner, &[]),
-//             ManagerExecuteMsg::UpdateStrategy {
-//                 contract_address: strategy.contract_address.clone(),
-//                 update: Strategy {
-//                     owner: info.sender.clone(),
-//                     actions: vec![],
-//                     state: Json
-//                 }
-//             },
-//         )
-//         .is_err());
-//     }
+        assert!(execute(
+            deps.as_mut(),
+            env,
+            message_info(&not_owner, &[]),
+            ManagerExecuteMsg::Update {
+                contract_address: strategy.contract_address.clone(),
+                update: Strategy {
+                    owner: info.sender.clone(),
+                    affiliates: vec![],
+                    nodes: vec![],
+                    state: Indexable
+                }
+            },
+        )
+        .is_err());
+    }
 
-//     #[test]
-//     fn test_only_owner_can_update_strategy_status() {
-//         let mut deps = mock_dependencies();
-//         let env = mock_env();
-//         let info = message_info(&deps.api.addr_make("owner"), &[]);
+    #[test]
+    fn test_only_owner_can_update_strategy_status() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-//         let strategy = StrategyHandle {
-//             id: 1,
-//             owner: info.sender.clone(),
-//             contract_address: Addr::unchecked("contract"),
-//             created_at: env.block.time.seconds(),
-//             updated_at: env.block.time.seconds(),
-//             label: "Test Strategy".to_string(),
-//             status: StrategyStatus::Archived,
-//             affiliates: vec![],
-//         };
+        let strategy = StrategyHandle {
+            id: 1,
+            owner: info.sender.clone(),
+            contract_address: Addr::unchecked("contract"),
+            created_at: env.block.time.seconds(),
+            updated_at: env.block.time.seconds(),
+            label: "Test Strategy".to_string(),
+            status: StrategyStatus::Archived,
+        };
 
-//         strategy_store()
-//             .save(
-//                 deps.as_mut().storage,
-//                 strategy.contract_address.clone(),
-//                 &strategy,
-//             )
-//             .unwrap();
+        strategy_store()
+            .save(
+                deps.as_mut().storage,
+                strategy.contract_address.clone(),
+                &strategy,
+            )
+            .unwrap();
 
-//         assert!(execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             info.clone(),
-//             ManagerExecuteMsg::UpdateStrategyStatus {
-//                 contract_address: strategy.contract_address.clone(),
-//                 status: StrategyStatus::Active
-//             }
-//         )
-//         .is_ok());
+        assert!(execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ManagerExecuteMsg::UpdateStatus {
+                contract_address: strategy.contract_address.clone(),
+                status: StrategyStatus::Active
+            }
+        )
+        .is_ok());
 
-//         let not_owner = deps.api.addr_make("not-owner");
+        let not_owner = deps.api.addr_make("not-owner");
 
-//         assert!(execute(
-//             deps.as_mut(),
-//             env,
-//             message_info(&not_owner, &[]),
-//             ManagerExecuteMsg::UpdateStrategyStatus {
-//                 contract_address: strategy.contract_address.clone(),
-//                 status: StrategyStatus::Paused
-//             }
-//         )
-//         .is_err());
-//     }
+        assert!(execute(
+            deps.as_mut(),
+            env,
+            message_info(&not_owner, &[]),
+            ManagerExecuteMsg::UpdateStatus {
+                contract_address: strategy.contract_address.clone(),
+                status: StrategyStatus::Paused
+            }
+        )
+        .is_err());
+    }
 
-//     #[test]
-//     fn test_execute_strategy_updates_updated_at() {
-//         let mut deps = mock_dependencies();
-//         let env = mock_env();
-//         let info = message_info(&deps.api.addr_make("owner"), &[]);
+    #[test]
+    fn test_execute_strategy_updates_updated_at() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-//         let strategy = StrategyHandle {
-//             id: 1,
-//             owner: info.sender.clone(),
-//             contract_address: Addr::unchecked("contract"),
-//             created_at: env.block.time.seconds(),
-//             updated_at: env.block.time.seconds() - 1000,
-//             label: "Test Strategy".to_string(),
-//             status: StrategyStatus::Active,
-//             affiliates: vec![],
-//         };
+        let strategy = StrategyHandle {
+            id: 1,
+            owner: info.sender.clone(),
+            contract_address: Addr::unchecked("contract"),
+            created_at: env.block.time.seconds(),
+            updated_at: env.block.time.seconds() - 1000,
+            label: "Test Strategy".to_string(),
+            status: StrategyStatus::Active,
+        };
 
-//         strategy_store()
-//             .save(
-//                 deps.as_mut().storage,
-//                 strategy.contract_address.clone(),
-//                 &strategy,
-//             )
-//             .unwrap();
+        strategy_store()
+            .save(
+                deps.as_mut().storage,
+                strategy.contract_address.clone(),
+                &strategy,
+            )
+            .unwrap();
 
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             info.clone(),
-//             ManagerExecuteMsg::ExecuteStrategy {
-//                 contract_address: strategy.contract_address.clone(),
-//             },
-//         )
-//         .unwrap();
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ManagerExecuteMsg::Execute {
+                contract_address: strategy.contract_address.clone(),
+            },
+        )
+        .unwrap();
 
-//         let updated_strategy = strategy_store()
-//             .load(deps.as_mut().storage, strategy.contract_address.clone())
-//             .unwrap();
+        let updated_strategy = strategy_store()
+            .load(deps.as_mut().storage, strategy.contract_address.clone())
+            .unwrap();
 
-//         assert!(updated_strategy.updated_at == env.block.time.seconds());
-//         assert!(updated_strategy.updated_at > strategy.updated_at);
-//     }
+        assert!(updated_strategy.updated_at == env.block.time.seconds());
+        assert!(updated_strategy.updated_at > strategy.updated_at);
+    }
 
-//     #[test]
-//     fn test_update_strategy_updates_updated_at() {
-//         let mut deps = mock_dependencies();
-//         let env = mock_env();
-//         let info = message_info(&deps.api.addr_make("owner"), &[]);
+    #[test]
+    fn test_update_strategy_updates_updated_at() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-//         let strategy = StrategyHandle {
-//             id: 1,
-//             owner: info.sender.clone(),
-//             contract_address: Addr::unchecked("contract"),
-//             created_at: env.block.time.seconds(),
-//             updated_at: env.block.time.seconds() - 1000,
-//             label: "Test Strategy".to_string(),
-//             status: StrategyStatus::Active,
-//             affiliates: vec![],
-//         };
+        let strategy = StrategyHandle {
+            id: 1,
+            owner: info.sender.clone(),
+            contract_address: Addr::unchecked("contract"),
+            created_at: env.block.time.seconds(),
+            updated_at: env.block.time.seconds() - 1000,
+            label: "Test Strategy".to_string(),
+            status: StrategyStatus::Active,
+        };
 
-//         strategy_store()
-//             .save(
-//                 deps.as_mut().storage,
-//                 strategy.contract_address.clone(),
-//                 &strategy,
-//             )
-//             .unwrap();
+        strategy_store()
+            .save(
+                deps.as_mut().storage,
+                strategy.contract_address.clone(),
+                &strategy,
+            )
+            .unwrap();
 
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             info.clone(),
-//             ManagerExecuteMsg::UpdateStrategy {
-//                 contract_address: strategy.contract_address.clone(),
-//                 update: Strategy {
-//                     owner: info.sender.clone(),
-//                     actions: vec![],
-//                     state: Json,
-//                 },
-//             },
-//         )
-//         .unwrap();
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ManagerExecuteMsg::Update {
+                contract_address: strategy.contract_address.clone(),
+                update: Strategy {
+                    owner: info.sender.clone(),
+                    affiliates: vec![],
+                    nodes: vec![],
+                    state: Indexable,
+                },
+            },
+        )
+        .unwrap();
 
-//         let updated_strategy = strategy_store()
-//             .load(deps.as_mut().storage, strategy.contract_address.clone())
-//             .unwrap();
+        let updated_strategy = strategy_store()
+            .load(deps.as_mut().storage, strategy.contract_address.clone())
+            .unwrap();
 
-//         assert!(updated_strategy.updated_at == env.block.time.seconds());
-//         assert!(updated_strategy.updated_at > strategy.updated_at);
-//     }
+        assert!(updated_strategy.updated_at == env.block.time.seconds());
+        assert!(updated_strategy.updated_at > strategy.updated_at);
+    }
 
-//     #[test]
-//     fn test_update_status_updates_status_and_updated_at() {
-//         let mut deps = mock_dependencies();
-//         let env = mock_env();
-//         let info = message_info(&deps.api.addr_make("owner"), &[]);
+    #[test]
+    fn test_update_status_updates_status_and_updated_at() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-//         let strategy = StrategyHandle {
-//             id: 1,
-//             owner: info.sender.clone(),
-//             contract_address: Addr::unchecked("contract"),
-//             created_at: env.block.time.seconds(),
-//             updated_at: env.block.time.seconds() - 1000,
-//             label: "Test Strategy".to_string(),
-//             status: StrategyStatus::Active,
-//             affiliates: vec![],
-//         };
+        let strategy = StrategyHandle {
+            id: 1,
+            owner: info.sender.clone(),
+            contract_address: Addr::unchecked("contract"),
+            created_at: env.block.time.seconds(),
+            updated_at: env.block.time.seconds() - 1000,
+            label: "Test Strategy".to_string(),
+            status: StrategyStatus::Active,
+        };
 
-//         strategy_store()
-//             .save(
-//                 deps.as_mut().storage,
-//                 strategy.contract_address.clone(),
-//                 &strategy,
-//             )
-//             .unwrap();
+        strategy_store()
+            .save(
+                deps.as_mut().storage,
+                strategy.contract_address.clone(),
+                &strategy,
+            )
+            .unwrap();
 
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             info.clone(),
-//             ManagerExecuteMsg::UpdateStrategyStatus {
-//                 contract_address: strategy.contract_address.clone(),
-//                 status: StrategyStatus::Paused,
-//             },
-//         )
-//         .unwrap();
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ManagerExecuteMsg::UpdateStatus {
+                contract_address: strategy.contract_address.clone(),
+                status: StrategyStatus::Paused,
+            },
+        )
+        .unwrap();
 
-//         let updated_strategy = strategy_store()
-//             .load(deps.as_mut().storage, strategy.contract_address.clone())
-//             .unwrap();
+        let updated_strategy = strategy_store()
+            .load(deps.as_mut().storage, strategy.contract_address.clone())
+            .unwrap();
 
-//         assert!(updated_strategy.status == StrategyStatus::Paused);
-//         assert!(updated_strategy.updated_at == env.block.time.seconds());
-//         assert!(updated_strategy.updated_at > strategy.updated_at);
-//     }
-// }
+        assert!(updated_strategy.status == StrategyStatus::Paused);
+        assert!(updated_strategy.updated_at == env.block.time.seconds());
+        assert!(updated_strategy.updated_at > strategy.updated_at);
+    }
+}
