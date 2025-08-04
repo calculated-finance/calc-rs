@@ -8,9 +8,8 @@ use crate::{
         conditional::Conditional, distribution::Distribution, limit_order::LimitOrder,
         operation::Operation, swaps::swap::Swap,
     },
-    core::Threshold,
     manager::Affiliate,
-    strategy::{OpNode, OperationImpl, StrategyMsg},
+    strategy::StrategyMsg,
 };
 
 #[cw_serde]
@@ -22,89 +21,31 @@ pub enum Action {
 }
 
 impl Action {
-    pub fn to_operations(self, start_index: u16) -> Vec<OpNode> {
-        match self {
-            Action::Conditional(ref conditional) => {
-                let mut current_index = start_index;
-
-                let conditions_size = conditional.conditions.len();
-                let actions_size = conditional.actions.len();
-
-                let mut nodes = vec![];
-
-                for condition in conditional.conditions.clone().into_iter() {
-                    let node = OpNode {
-                        operation: OperationImpl::Condition(condition),
-                        index: current_index,
-                        next: if conditional.threshold == Threshold::All {
-                            Some(start_index + (conditions_size as u16) + (actions_size as u16))
-                        } else {
-                            Some(current_index + 1)
-                        },
-                    };
-
-                    current_index += 1;
-                    nodes.push(node);
-                }
-
-                for action in conditional.actions.clone().into_iter() {
-                    let action_nodes = action.to_operations(current_index + 1);
-
-                    current_index += (action_nodes.len() + 1) as u16;
-                    nodes.extend(action_nodes);
-                }
-
-                nodes
-            }
-            _ => vec![OpNode {
-                operation: OperationImpl::Action(self),
-                index: start_index,
-                next: Some(start_index + 1),
-            }],
-        }
-    }
-
     pub fn size(&self) -> usize {
         match self {
             Action::Swap(action) => action.routes.len() * 4 + 1,
             Action::Distribute(action) => action.destinations.len() + 1,
             Action::LimitOrder(_) => 4,
             Action::Conditional(conditional) => {
-                conditional.actions.iter().map(|a| a.size()).sum::<usize>() + 1
+                conditional
+                    .conditions
+                    .iter()
+                    .map(|c| c.size())
+                    .sum::<usize>()
+                    + conditional.actions.iter().map(|a| a.size()).sum::<usize>()
+                    + 1
             }
         }
-    }
-
-    pub fn add_affiliates(self, affiliates: &Vec<Affiliate>) -> StdResult<Action> {
-        Ok(match self {
-            Action::Distribute(distribution) => {
-                Action::Distribute(distribution.with_affiliates(affiliates)?)
-            }
-            Action::Swap(swap) => Action::Swap(swap.with_affiliates()),
-            Action::Conditional(conditional) => {
-                let mut initialised_actions = vec![];
-
-                for action in conditional.actions {
-                    initialised_actions.push(Self::add_affiliates(action, affiliates)?);
-                }
-
-                Action::Conditional(Conditional {
-                    actions: initialised_actions,
-                    ..conditional
-                })
-            }
-            _ => self,
-        })
     }
 }
 
 impl Operation<Action> for Action {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<Action> {
         match self {
-            Action::Swap(action) => action.init(deps, env),
-            Action::LimitOrder(action) => action.init(deps, env),
-            Action::Distribute(action) => action.init(deps, env),
-            Action::Conditional(action) => action.init(deps, env),
+            Action::Swap(action) => action.init(deps, env, affiliates),
+            Action::LimitOrder(action) => action.init(deps, env, affiliates),
+            Action::Distribute(action) => action.init(deps, env, affiliates),
+            Action::Conditional(action) => action.init(deps, env, affiliates),
         }
     }
 

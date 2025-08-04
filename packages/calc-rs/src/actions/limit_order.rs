@@ -11,6 +11,7 @@ use rujira_rs::fin::{
 use crate::{
     actions::{action::Action, operation::Operation},
     core::Contract,
+    manager::Affiliate,
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
@@ -460,7 +461,7 @@ impl LimitOrder {
 }
 
 impl Operation<Action> for LimitOrder {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Action> {
         if let Some(amount) = self.max_bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
                 return Err(StdError::generic_err(
@@ -475,7 +476,7 @@ impl Operation<Action> for LimitOrder {
             ));
         }
 
-        Ok((vec![], vec![], Action::LimitOrder(self)))
+        Ok(Action::LimitOrder(self))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {

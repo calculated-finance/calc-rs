@@ -64,6 +64,22 @@ export type ManagerExecuteMsg =
         update: StrategyFor_Json;
       };
     };
+export type Node =
+  | {
+      action: {
+        action: Action;
+        index: number;
+        next?: number | null;
+      };
+    }
+  | {
+      condition: {
+        condition: Condition;
+        index: number;
+        on_fail?: number | null;
+        on_success: number;
+      };
+    };
 export type Action =
   | {
       swap: Swap;
@@ -75,13 +91,7 @@ export type Action =
       distribute: Distribution;
     }
   | {
-      schedule: Schedule;
-    }
-  | {
       conditional: Conditional;
-    }
-  | {
-      many: Action[];
     };
 export type SwapAmountAdjustment =
   | "fixed"
@@ -162,63 +172,15 @@ export type Recipient =
  * This is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>. See also <https://github.com/CosmWasm/cosmwasm/blob/main/docs/MESSAGE_TYPES.md>.
  */
 export type Binary = string;
-export type Cadence =
-  | {
-      blocks: {
-        interval: number;
-        previous?: number | null;
-      };
-    }
-  | {
-      time: {
-        duration: Duration;
-        previous?: Timestamp | null;
-      };
-    }
-  | {
-      cron: {
-        expr: string;
-        previous?: Timestamp | null;
-      };
-    }
-  | {
-      limit_order: {
-        pair_address: Addr;
-        previous?: Decimal | null;
-        side: Side;
-        strategy: OrderPriceStrategy;
-      };
-    };
-/**
- * A point in time in nanosecond precision.
- *
- * This type can represent times from 1970-01-01T00:00:00Z to 2554-07-21T23:34:33Z.
- *
- * ## Examples
- *
- * ``` # use cosmwasm_std::Timestamp; let ts = Timestamp::from_nanos(1_000_000_202); assert_eq!(ts.nanos(), 1_000_000_202); assert_eq!(ts.seconds(), 1); assert_eq!(ts.subsec_nanos(), 202);
- *
- * let ts = ts.plus_seconds(2); assert_eq!(ts.nanos(), 3_000_000_202); assert_eq!(ts.seconds(), 3); assert_eq!(ts.subsec_nanos(), 202); ```
- */
-export type Timestamp = Uint64;
-/**
- * A thin wrapper around u64 that is using strings for JSON encoding/decoding, such that the full u64 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.
- *
- * # Examples
- *
- * Use `from` to create instances of this and `u64` to get the value out:
- *
- * ``` # use cosmwasm_std::Uint64; let a = Uint64::from(42u64); assert_eq!(a.u64(), 42);
- *
- * let b = Uint64::from(70u32); assert_eq!(b.u64(), 70); ```
- */
-export type Uint64 = string;
 export type Condition =
   | {
       timestamp_elapsed: Timestamp;
     }
   | {
       blocks_completed: number;
+    }
+  | {
+      schedule: Schedule;
     }
   | {
       can_swap: Swap;
@@ -258,15 +220,63 @@ export type Condition =
     }
   | {
       not: Condition;
+    };
+/**
+ * A point in time in nanosecond precision.
+ *
+ * This type can represent times from 1970-01-01T00:00:00Z to 2554-07-21T23:34:33Z.
+ *
+ * ## Examples
+ *
+ * ``` # use cosmwasm_std::Timestamp; let ts = Timestamp::from_nanos(1_000_000_202); assert_eq!(ts.nanos(), 1_000_000_202); assert_eq!(ts.seconds(), 1); assert_eq!(ts.subsec_nanos(), 202);
+ *
+ * let ts = ts.plus_seconds(2); assert_eq!(ts.nanos(), 3_000_000_202); assert_eq!(ts.seconds(), 3); assert_eq!(ts.subsec_nanos(), 202); ```
+ */
+export type Timestamp = Uint64;
+/**
+ * A thin wrapper around u64 that is using strings for JSON encoding/decoding, such that the full u64 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.
+ *
+ * # Examples
+ *
+ * Use `from` to create instances of this and `u64` to get the value out:
+ *
+ * ``` # use cosmwasm_std::Uint64; let a = Uint64::from(42u64); assert_eq!(a.u64(), 42);
+ *
+ * let b = Uint64::from(70u32); assert_eq!(b.u64(), 70); ```
+ */
+export type Uint64 = string;
+export type Cadence =
+  | {
+      blocks: {
+        interval: number;
+        previous?: number | null;
+      };
     }
   | {
-      composite: CompositeCondition;
+      time: {
+        duration: Duration;
+        previous?: Timestamp | null;
+      };
+    }
+  | {
+      cron: {
+        expr: string;
+        previous?: Timestamp | null;
+      };
+    }
+  | {
+      limit_order: {
+        pair_address: Addr;
+        previous?: Decimal | null;
+        side: Side;
+        strategy: OrderPriceStrategy;
+      };
     };
 export type Threshold = "all" | "any";
 export type Json = null;
 
 export interface StrategyFor_Json {
-  action: Action;
+  nodes: Node[];
   owner: Addr;
   state: Json;
 }
@@ -318,8 +328,12 @@ export interface Destination {
   recipient: Recipient;
   shares: Uint128;
 }
+export interface Conditional {
+  actions: Action[];
+  conditions: Condition[];
+  threshold: Threshold;
+}
 export interface Schedule {
-  action: Action;
   cadence: Cadence;
   contract_address: Addr;
   execution_rebate: Coin[];
@@ -331,14 +345,6 @@ export interface Schedule {
 export interface Duration {
   nanos: number;
   secs: number;
-}
-export interface Conditional {
-  action: Action;
-  condition: Condition;
-}
-export interface CompositeCondition {
-  conditions: Condition[];
-  threshold: Threshold;
 }
 
 export interface ManagerConfig {
@@ -393,6 +399,11 @@ export type ConditionFilter =
         start_after?: number | null;
       };
     };
+
+export interface CompositeCondition {
+  conditions: Condition[];
+  threshold: Threshold;
+}
 export type SchedulerExecuteMsg =
   | {
       create: CreateTriggerMsg;
@@ -417,7 +428,7 @@ export interface Statistics {
 }
 
 export interface StrategyInstantiateMsg {
-  action: Action;
+  nodes: Node[];
   owner: Addr;
   state: Indexed;
 }
@@ -436,34 +447,39 @@ export type StrategyQueryMsg =
       balances: string[];
     };
 export type StrategyExecuteMsg =
-  | ("execute" | "commit" | "clear")
+  | "execute"
   | {
-      withdraw: string[];
+      init: Node[];
     }
   | {
-      update: StrategyFor_Indexed;
+      withdraw: {
+        denoms: string[];
+        from_actions: boolean;
+      };
+    }
+  | {
+      update: Node[];
     }
   | {
       update_status: StrategyStatus;
+    }
+  | {
+      process: {
+        operation: StrategyOperation;
+        previous?: number | null;
+      };
     };
-
-export interface StrategyFor_Indexed {
-  action: Action;
-  owner: Addr;
-  state: Indexed;
-}
-
+export type StrategyOperation =
+  | ("init" | "execute" | "cancel")
+  | {
+      withdraw: string[];
+    };
 export type ArrayOf_Coin = Coin[];
-export type Committed = null;
 
 export interface StrategyConfig {
   denoms: string[];
   escrowed: string[];
   manager: Addr;
-  strategy: StrategyFor_Committed;
-}
-export interface StrategyFor_Committed {
-  action: Action;
+  nodes: Node[];
   owner: Addr;
-  state: Committed;
 }

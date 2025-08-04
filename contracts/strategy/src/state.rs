@@ -1,158 +1,163 @@
 use std::collections::HashSet;
 
 use calc_rs::{
+    actions::operation::Operation,
+    constants::MAX_STRATEGY_SIZE,
+    manager::Affiliate,
     statistics::Statistics,
-    strategy::{Indexed, OpNode, Strategy, StrategyConfig, StrategyExecuteMsg},
+    strategy::{Node, StrategyExecuteMsg, StrategyOperation},
 };
-use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Deps, Env, StdError, StdResult, Storage};
+use cosmwasm_std::{Addr, Deps, DepsMut, Env, Order, StdError, StdResult, Storage};
 use cw_storage_plus::{Item, Map};
 
+pub const MANAGER: Item<Addr> = Item::new("manager");
+pub const OWNER: Item<Addr> = Item::new("owner");
+pub const AFFILIATES: Item<Vec<Affiliate>> = Item::new("affiliates");
 pub const DENOMS: Item<HashSet<String>> = Item::new("denoms");
 pub const ESCROWED: Item<HashSet<String>> = Item::new("escrowed");
 pub const STATE: Item<StrategyExecuteMsg> = Item::new("state");
 pub const STATS: Item<Statistics> = Item::new("stats");
 
-pub const CONFIG: StrategyStore = StrategyStore {
-    store: Item::new("config"),
-};
-
-#[cw_serde]
-pub struct StoredStrategy {
-    pub manager: Addr,
-    pub strategy: Strategy<Indexed>,
+pub struct NodeStore {
+    store: Map<u16, Node>,
 }
 
-pub struct StrategyStore {
-    store: Item<StoredStrategy>,
-}
+impl NodeStore {
+    pub fn init(&self, deps: DepsMut, env: &Env, nodes: Vec<Node>) -> StdResult<()> {
+        let affiliates = AFFILIATES.load(deps.storage)?;
+        let mut strategy_size = 0;
 
-impl StrategyStore {
-    pub fn init(&self, storage: &mut dyn Storage, config: StrategyConfig) -> StdResult<()> {
-        DENOMS.save(storage, &config.denoms)?;
-        ESCROWED.save(storage, &config.escrowed)?;
-        STATS.save(storage, &Statistics::default())?;
-        ACTIONS.init(storage, config.strategy.clone())?;
+        let node_count = nodes.len();
+        let mut in_degrees = vec![0usize; node_count];
+        let mut adj_list = vec![Vec::new(); node_count];
 
-        self.store.save(
-            storage,
-            &StoredStrategy {
-                manager: config.manager,
-                strategy: config.strategy,
-            },
-        )
-    }
+        for (i, node) in nodes.into_iter().enumerate() {
+            let current_index = i;
 
-    pub fn update(&self, storage: &mut dyn Storage, config: StrategyConfig) -> StdResult<()> {
-        let existing_denoms = DENOMS.load(storage)?;
+            if node.index() != current_index as u16 {
+                return Err(StdError::generic_err(format!(
+                    "Node index mismatch: expected {}, got {}",
+                    current_index,
+                    node.index()
+                )));
+            }
 
-        DENOMS.save(
-            storage,
-            &config
-                .denoms
-                .union(&existing_denoms)
-                .cloned()
-                .collect::<HashSet<String>>(),
-        )?;
+            match node {
+                Node::Action { next, .. } => {
+                    if let Some(next) = next {
+                        let next_index = next.clone() as usize;
+                        if next_index < node_count {
+                            adj_list[current_index].push(next_index);
+                            in_degrees[next_index] += 1;
+                        }
+                    }
+                }
+                Node::Condition {
+                    on_success,
+                    on_fail,
+                    ..
+                } => {
+                    let on_success_index = on_success.clone() as usize;
+                    if on_success_index < node_count {
+                        adj_list[current_index].push(on_success_index);
+                        in_degrees[on_success_index] += 1;
+                    }
 
-        let existing_escrowed = ESCROWED.load(storage)?;
+                    if let Some(on_fail) = on_fail {
+                        let on_fail_index = on_fail.clone() as usize;
+                        if on_fail_index < node_count {
+                            adj_list[current_index].push(on_fail_index);
+                            in_degrees[on_fail_index] += 1;
+                        }
+                    }
+                }
+            }
 
-        ESCROWED.save(
-            storage,
-            &config
-                .escrowed
-                .union(&existing_escrowed)
-                .cloned()
-                .collect::<HashSet<String>>(),
-        )?;
+            strategy_size += node.size();
 
-        ACTIONS.init(storage, config.strategy.clone())?;
-
-        self.store.update(storage, |config| {
-            Ok::<StoredStrategy, StdError>(StoredStrategy {
-                manager: config.manager,
-                strategy: config.strategy,
-            })
-        })?;
-
-        Ok(())
-    }
-
-    // pub fn save(&self, storage: &mut dyn Storage, update: Strategy<Indexed>) -> StdResult<()> {
-    //     self.store.update(storage, |config| {
-    //         Ok::<StoredStrategy, StdError>(StoredStrategy {
-    //             manager: config.manager,
-    //             strategy: update,
-    //         })
-    //     })?;
-
-    //     Ok(())
-    // }
-
-    pub fn load(&self, storage: &dyn Storage) -> StdResult<StrategyConfig> {
-        let stored_strategy = self.store.load(storage)?;
-        Ok(StrategyConfig {
-            manager: stored_strategy.manager,
-            strategy: stored_strategy.strategy,
-            denoms: DENOMS.load(storage)?,
-            escrowed: ESCROWED.load(storage)?,
-        })
-    }
-}
-
-pub const ACTIONS: ActionStore = ActionStore {
-    store: Map::new("actions"),
-};
-
-pub struct ActionStore {
-    store: Map<u16, OpNode>,
-}
-
-impl ActionStore {
-    pub fn init(&self, storage: &mut dyn Storage, strategy: Strategy<Indexed>) -> StdResult<()> {
-        for action_node in strategy.get_operations() {
-            self.store.save(storage, action_node.index, &action_node)?;
+            let initialised_node = node.init(deps.as_ref(), env, &affiliates)?;
+            self.save(deps.storage, &initialised_node)?;
         }
+
+        if strategy_size > MAX_STRATEGY_SIZE {
+            return Err(StdError::generic_err(format!(
+                "Strategy size exceeds maximum limit of {}",
+                MAX_STRATEGY_SIZE
+            )));
+        }
+
+        let mut queue = Vec::new();
+
+        for (i, &degree) in in_degrees.iter().enumerate() {
+            if degree == 0 {
+                queue.push(i);
+            }
+        }
+
+        let mut processed_count = 0;
+
+        while let Some(current) = queue.pop() {
+            processed_count += 1;
+
+            for &neighbor in &adj_list[current] {
+                in_degrees[neighbor] -= 1;
+                if in_degrees[neighbor] == 0 {
+                    queue.push(neighbor);
+                }
+            }
+        }
+
+        if processed_count != node_count {
+            return Err(StdError::generic_err(
+                "Strategy contains a cycle that could cause infinite recursion",
+            ));
+        }
+
         Ok(())
     }
 
-    pub fn save(&self, storage: &mut dyn Storage, action_node: &OpNode) -> StdResult<()> {
-        self.store.save(storage, action_node.index, action_node)
+    pub fn save(&self, storage: &mut dyn Storage, node: &Node) -> StdResult<()> {
+        self.store.save(storage, node.index(), node)
+    }
+
+    pub fn load(&self, storage: &dyn Storage, index: u16) -> StdResult<Node> {
+        self.store.load(storage, index)
+    }
+
+    pub fn all(&self, storage: &dyn Storage) -> StdResult<Vec<Node>> {
+        Ok(self
+            .store
+            .prefix(())
+            .range(storage, None, None, Order::Ascending)
+            .flat_map(|r| r.map(|(_, action)| action))
+            .collect::<Vec<_>>())
     }
 
     pub fn get_next(
         &self,
         deps: Deps,
         env: &Env,
-        current: Option<OpNode>,
-    ) -> StdResult<Option<OpNode>> {
-        let index = current.map_or(Some(0), |node| node.next_index(deps, env));
+        operation: &StrategyOperation,
+        current: &Node,
+    ) -> StdResult<Option<Node>> {
+        if operation != &StrategyOperation::Execute {
+            return Ok(self
+                .load(deps.storage, current.index() + 1)
+                .map_or(None, |node| Some(node)));
+        }
 
-        if let Some(index) = index {
-            if let Some(action_node) = self.store.may_load(deps.storage, index)? {
-                return Ok(Some(action_node));
+        let next = current.next_index(deps, env);
+
+        if let Some(index) = next {
+            if let Some(node) = self.store.may_load(deps.storage, index)? {
+                return Ok(Some(node));
             }
         }
 
         Ok(None)
     }
-
-    pub fn load(&self, storage: &dyn Storage) -> StdResult<Vec<OpNode>> {
-        let mut index = 0;
-        let mut actions = vec![];
-
-        loop {
-            let action = self.store.may_load(storage, index)?;
-
-            if let Some(action) = action {
-                actions.push(action);
-            } else {
-                break;
-            }
-
-            index += 1;
-        }
-
-        Ok(actions)
-    }
 }
+
+pub const NODES: NodeStore = NodeStore {
+    store: Map::new("nodes"),
+};

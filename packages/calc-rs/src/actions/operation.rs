@@ -2,13 +2,13 @@ use std::collections::HashSet;
 
 use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
 
-use crate::strategy::StrategyMsg;
+use crate::{manager::Affiliate, strategy::StrategyMsg};
 
 pub trait Operation<T>: Send + Sync + Clone
 where
     T: Send + Sync + Clone,
 {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, T)>;
+    fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, T);
     fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
     fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;

@@ -734,7 +734,7 @@ mod execute_trigger_tests {
                 &Trigger {
                     id: Uint64::from(condition.id(owner.clone()).unwrap()),
                     contract_address: manager.clone(),
-                    msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                    msg: to_json_binary(&ManagerExecuteMsg::Execute {
                         contract_address: owner.clone(),
                     })
                     .unwrap(),
@@ -774,7 +774,7 @@ mod execute_trigger_tests {
                 SubMsg::reply_on_error(
                     WasmMsg::Execute {
                         contract_addr: manager.to_string(),
-                        msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                        msg: to_json_binary(&ManagerExecuteMsg::Execute {
                             contract_address: owner.clone(),
                         })
                         .unwrap(),
@@ -803,7 +803,7 @@ mod execute_trigger_tests {
 
         let create_trigger_msg = CreateTriggerMsg {
             condition: condition.clone(),
-            msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+            msg: to_json_binary(&ManagerExecuteMsg::Execute {
                 contract_address: owner.clone(),
             })
             .unwrap(),
@@ -831,7 +831,7 @@ mod execute_trigger_tests {
         assert!(response.messages.contains(&SubMsg::reply_on_error(
             WasmMsg::Execute {
                 contract_addr: manager.to_string(),
-                msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                msg: to_json_binary(&ManagerExecuteMsg::Execute {
                     contract_address: owner.clone(),
                 })
                 .unwrap(),
@@ -855,7 +855,7 @@ mod execute_trigger_tests {
         let create_trigger_msg = CreateTriggerMsg {
             condition: condition.clone(),
             contract_address: manager.clone(),
-            msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+            msg: to_json_binary(&ManagerExecuteMsg::Execute {
                 contract_address: owner.clone(),
             })
             .unwrap(),
@@ -882,7 +882,7 @@ mod execute_trigger_tests {
         assert!(response.messages.contains(&SubMsg::reply_on_error(
             WasmMsg::Execute {
                 contract_addr: manager.to_string(),
-                msg: to_json_binary(&ManagerExecuteMsg::ExecuteStrategy {
+                msg: to_json_binary(&ManagerExecuteMsg::Execute {
                     contract_address: owner.clone(),
                 })
                 .unwrap(),

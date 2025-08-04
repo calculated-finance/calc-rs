@@ -9,6 +9,7 @@ use crate::{
         operation::Operation,
         swaps::{fin::FinRoute, thor::ThorchainRoute},
     },
+    manager::Affiliate,
     strategy::StrategyMsg,
 };
 
@@ -272,7 +273,7 @@ impl Swap {
 }
 
 impl Operation<Action> for Swap {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn init(self, deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Action> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
@@ -301,7 +302,7 @@ impl Operation<Action> for Swap {
             )?;
         }
 
-        Ok((vec![], vec![], Action::Swap(self)))
+        Ok(Action::Swap(self))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {

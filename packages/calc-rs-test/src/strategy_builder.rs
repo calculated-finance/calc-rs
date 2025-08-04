@@ -1,7 +1,6 @@
 use calc_rs::{
-    actions::action::Action,
     manager::Affiliate,
-    strategy::{Json, Strategy},
+    strategy::{Indexable, Node, Strategy},
 };
 use cosmwasm_std::{Addr, Coin};
 use cw_multi_test::error::AnyResult;
@@ -13,7 +12,7 @@ pub struct StrategyBuilder<'a> {
     owner: Addr,
     label: String,
     affiliates: Vec<Affiliate>,
-    actions: Vec<Action>,
+    nodes: Vec<Node>,
     keeper: Addr,
 }
 
@@ -27,13 +26,13 @@ impl<'a> StrategyBuilder<'a> {
             owner,
             label: "Test Strategy".to_string(),
             affiliates: vec![],
-            actions: vec![],
+            nodes: vec![],
             keeper,
         }
     }
 
-    pub fn with_actions(mut self, actions: Vec<Action>) -> Self {
-        self.actions = actions;
+    pub fn with_nodes(mut self, nodes: Vec<Node>) -> Self {
+        self.nodes = nodes;
         self
     }
 
@@ -45,8 +44,9 @@ impl<'a> StrategyBuilder<'a> {
     pub fn instantiate(self, funds: &[Coin]) -> StrategyHandler<'a> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            actions: self.actions,
-            state: Json,
+            nodes: self.nodes,
+            affiliates: self.affiliates.clone(),
+            state: Indexable,
         };
 
         let strategy_addr = self
@@ -65,8 +65,9 @@ impl<'a> StrategyBuilder<'a> {
     pub fn try_instantiate(self, funds: &[Coin]) -> AnyResult<StrategyHandler<'a>> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            actions: self.actions,
-            state: Json,
+            nodes: self.nodes,
+            affiliates: self.affiliates.clone(),
+            state: Indexable,
         };
 
         let strategy_addr =
@@ -88,8 +89,9 @@ impl<'a> StrategyBuilder<'a> {
     ) -> StrategyHandler<'a> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            actions: self.actions,
-            state: Json,
+            nodes: self.nodes,
+            affiliates: self.affiliates.clone(),
+            state: Indexable,
         };
 
         let strategy_addr = self
@@ -112,8 +114,9 @@ impl<'a> StrategyBuilder<'a> {
     ) -> AnyResult<StrategyHandler<'a>> {
         let strategy = Strategy {
             owner: self.owner.clone(),
-            actions: self.actions,
-            state: Json,
+            nodes: self.nodes,
+            affiliates: self.affiliates.clone(),
+            state: Indexable,
         };
 
         let strategy_addr = self

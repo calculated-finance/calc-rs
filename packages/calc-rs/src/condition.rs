@@ -18,7 +18,8 @@ use crate::{
     actions::{
         limit_order::Direction, operation::Operation, schedule::Schedule, swaps::swap::Swap,
     },
-    manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
+    cadence::Cadence,
+    manager::{Affiliate, ManagerQueryMsg, StrategyHandle, StrategyStatus},
     strategy::StrategyMsg,
 };
 
@@ -59,7 +60,10 @@ impl Condition {
         match self {
             Condition::TimestampElapsed(_) => 1,
             Condition::BlocksCompleted(_) => 1,
-            Condition::Schedule(_) => 2,
+            Condition::Schedule(schedule) => match schedule.cadence {
+                Cadence::LimitOrder { .. } => 4,
+                _ => 1,
+            },
             Condition::CanSwap { .. } => 2,
             Condition::LimitOrderFilled { .. } => 2,
             Condition::BalanceAvailable { .. } => 1,
@@ -155,10 +159,10 @@ impl Condition {
 }
 
 impl Operation<Condition> for Condition {
-    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
+    fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<Condition> {
         match self {
-            Condition::Schedule(schedule) => schedule.init(deps, env),
-            _ => Ok((vec![], vec![], self)),
+            Condition::Schedule(schedule) => schedule.init(deps, env, affiliates),
+            _ => Ok(self),
         }
     }
 
@@ -446,7 +450,6 @@ mod conditions_tests {
                     created_at: 0,
                     updated_at: 0,
                     label: "label".to_string(),
-                    affiliates: vec![],
                 })
                 .unwrap(),
             ))

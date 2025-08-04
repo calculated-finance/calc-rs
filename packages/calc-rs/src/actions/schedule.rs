@@ -9,7 +9,7 @@ use crate::{
     cadence::Cadence,
     condition::Condition,
     core::Contract,
-    manager::ManagerExecuteMsg,
+    manager::{Affiliate, ManagerExecuteMsg},
     scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
@@ -72,11 +72,12 @@ impl Schedule {
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
                     condition: condition.clone(),
-                    msg: self.msg.clone().unwrap_or(to_json_binary(
-                        &ManagerExecuteMsg::ExecuteStrategy {
+                    msg: self
+                        .msg
+                        .clone()
+                        .unwrap_or(to_json_binary(&ManagerExecuteMsg::Execute {
                             contract_address: env.contract.address.clone(),
-                        },
-                    )?),
+                        })?),
                     contract_address: self.contract_address.clone(),
                     executors: self.executors.clone(),
                     jitter: self.jitter,
@@ -110,11 +111,12 @@ impl Schedule {
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
                     condition: condition.clone(),
-                    msg: self.msg.clone().unwrap_or(to_json_binary(
-                        &ManagerExecuteMsg::ExecuteStrategy {
+                    msg: self
+                        .msg
+                        .clone()
+                        .unwrap_or(to_json_binary(&ManagerExecuteMsg::Execute {
                             contract_address: env.contract.address.clone(),
-                        },
-                    )?),
+                        })?),
                     contract_address: self.contract_address.clone(),
                     executors: self.executors.clone(),
                     jitter: self.jitter,
@@ -146,14 +148,14 @@ impl Schedule {
 }
 
 impl Operation<Condition> for Schedule {
-    fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
+    fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Condition> {
         if let Cadence::Cron { expr, .. } = self.cadence.clone() {
             CronSchedule::from_str(&expr).map_err(|e| {
                 cosmwasm_std::StdError::generic_err(format!("Invalid cron string: {e}"))
             })?;
         }
 
-        Ok((vec![], vec![], Condition::Schedule(self)))
+        Ok(Condition::Schedule(self))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Condition) {

@@ -6,7 +6,7 @@ use calc_rs::{
         ConditionFilter, SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger,
     },
     statistics::Statistics,
-    strategy::{Json, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
+    strategy::{Indexable, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
 };
 use cosmwasm_std::{Addr, Coin, Decimal, StdError, Uint128};
 use cw_multi_test::{error::AnyResult, AppResponse, BasicAppBuilder, ContractWrapper, Executor};
@@ -226,11 +226,11 @@ impl CalcTestApp {
     pub fn create_strategy(
         &mut self,
         label: &str,
-        strategy: Strategy<Json>,
+        strategy: Strategy<Indexable>,
         affiliates: Vec<Affiliate>,
         funds: &[Coin],
     ) -> AnyResult<Addr> {
-        let msg = ManagerExecuteMsg::InstantiateStrategy {
+        let msg = ManagerExecuteMsg::Instantiate {
             label: label.to_string(),
             affiliates,
             strategy,
@@ -303,7 +303,7 @@ impl CalcTestApp {
         self.app.execute_contract(
             sender.clone(),
             self.manager_addr.clone(),
-            &ManagerExecuteMsg::ExecuteStrategy {
+            &ManagerExecuteMsg::Execute {
                 contract_address: strategy_addr.clone(),
             },
             &[],
@@ -386,7 +386,7 @@ impl CalcTestApp {
         self.app.execute_contract(
             sender.clone(),
             self.manager_addr.clone(),
-            &ManagerExecuteMsg::UpdateStrategyStatus {
+            &ManagerExecuteMsg::UpdateStatus {
                 contract_address: strategy_addr.clone(),
                 status,
             },
@@ -398,15 +398,12 @@ impl CalcTestApp {
         &mut self,
         sender: &Addr,
         strategy_addr: &Addr,
-        denoms: HashSet<String>,
+        amounts: Vec<Coin>,
     ) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
             strategy_addr.clone(),
-            &StrategyExecuteMsg::Withdraw {
-                denoms,
-                from_actions: true,
-            },
+            &StrategyExecuteMsg::Withdraw(amounts),
             &[],
         )
     }

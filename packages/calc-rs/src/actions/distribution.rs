@@ -196,7 +196,7 @@ impl Distribution {
 }
 
 impl Operation<Action> for Distribution {
-    fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn init(self, deps: Deps, _env: &Env, affiliates: &[Affiliate]) -> StdResult<Action> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
         }
@@ -237,7 +237,7 @@ impl Operation<Action> for Distribution {
             ));
         }
 
-        Ok((vec![], vec![], Action::Distribute(self)))
+        Ok(Action::Distribute(self.with_affiliates(affiliates)?))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {

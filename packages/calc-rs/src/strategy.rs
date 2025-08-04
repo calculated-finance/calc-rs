@@ -15,21 +15,21 @@ use crate::{
     condition::Condition,
     constants::PROCESS_PAYLOAD_REPLY_ID,
     core::Contract,
-    manager::{Affiliate, StrategyStatus},
+    manager::Affiliate,
     statistics::Statistics,
 };
 
 #[cw_serde]
 pub struct StrategyConfig {
     pub manager: Addr,
-    pub strategy: Strategy<Indexed>,
+    pub owner: Addr,
+    pub nodes: Vec<Node>,
     pub denoms: HashSet<String>,
     pub escrowed: HashSet<String>,
 }
 
 #[cw_serde]
 pub enum StrategyOperation {
-    Init,
     Execute,
     Withdraw(HashSet<String>),
     Cancel,
@@ -37,20 +37,14 @@ pub enum StrategyOperation {
 
 #[cw_serde]
 pub enum StrategyExecuteMsg {
+    Init(Vec<Node>),
     Execute,
-    Withdraw {
-        denoms: HashSet<String>,
-        from_actions: bool,
-    },
-    Update(Strategy<Indexed>),
-    UpdateStatus(StrategyStatus),
+    Withdraw(Vec<Coin>),
+    Update(Vec<Node>),
+    Cancel,
     Process {
         operation: StrategyOperation,
-        strategy: Strategy<Indexed>,
-    },
-    ProcessNext {
-        operation: StrategyOperation,
-        previous: Option<OpNode>,
+        previous: Option<u16>,
     },
 }
 
@@ -68,21 +62,22 @@ pub enum StrategyQueryMsg {
 #[cw_serde]
 pub struct Strategy<S> {
     pub owner: Addr,
-    pub actions: Vec<Action>,
+    pub affiliates: Vec<Affiliate>,
+    pub nodes: Vec<Node>,
     pub state: S,
 }
 
 impl<S> Strategy<S> {
     pub fn size(&self) -> usize {
-        self.actions.iter().map(|a| a.size()).sum::<usize>() + 1
+        self.nodes.iter().map(|n| n.size()).sum::<usize>() + 1
     }
 
     pub fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         let mut denoms = HashSet::new();
 
-        for action in self.actions.iter() {
-            let action_denoms = action.denoms(deps, env)?;
-            denoms.extend(action_denoms);
+        for node in self.nodes.iter() {
+            let node_denoms = node.denoms(deps, env)?;
+            denoms.extend(node_denoms);
         }
 
         Ok(denoms)
@@ -91,9 +86,9 @@ impl<S> Strategy<S> {
     pub fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         let mut escrowed = HashSet::new();
 
-        for action in self.actions.iter() {
-            let action_escrowed = action.escrowed(deps, env)?;
-            escrowed.extend(action_escrowed);
+        for node in self.nodes.iter() {
+            let node_escrowed = node.escrowed(deps, env)?;
+            escrowed.extend(node_escrowed);
         }
 
         Ok(escrowed)
@@ -102,10 +97,10 @@ impl<S> Strategy<S> {
     pub fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
         let mut balances = Coins::default();
 
-        for action in self.actions.iter() {
-            let action_balances = action.balances(deps, env, denoms)?;
+        for node in self.nodes.iter() {
+            let node_balances = node.balances(deps, env, denoms)?;
 
-            for balance in action_balances {
+            for balance in node_balances {
                 balances.add(balance)?;
             }
         }
@@ -161,9 +156,6 @@ impl From<StrategyMsg> for SubMsg {
 }
 
 #[cw_serde]
-pub struct Json;
-
-#[cw_serde]
 pub struct Indexable;
 
 pub struct Instantiable {
@@ -182,42 +174,8 @@ pub struct Indexed {
     pub contract_address: Addr,
 }
 
-#[cw_serde]
-pub struct Active;
-
-#[cw_serde]
-pub struct Executable {
-    messages: Vec<StrategyMsg>,
-    events: Vec<Event>,
-}
-
-#[cw_serde]
-pub struct Committable {
-    messages: Vec<StrategyMsg>,
-    events: Vec<Event>,
-}
-
-#[cw_serde]
-pub struct Committed;
-
-impl Strategy<Json> {
-    pub fn with_affiliates(self, affiliates: &Vec<Affiliate>) -> StdResult<Strategy<Indexable>> {
-        let mut initialised_actions = vec![];
-
-        for action in self.actions {
-            initialised_actions.push(action.add_affiliates(affiliates)?);
-        }
-
-        Ok(Strategy {
-            owner: self.owner,
-            actions: initialised_actions,
-            state: Indexable,
-        })
-    }
-}
-
 impl Strategy<Indexable> {
-    pub fn add_to_index<F>(
+    pub fn add_index<F>(
         self,
         deps: &mut DepsMut,
         env: &Env,
@@ -249,7 +207,8 @@ impl Strategy<Indexable> {
 
         let instantiable_strategy = Strategy {
             owner: self.owner.clone(),
-            actions: self.actions.clone(),
+            affiliates: self.affiliates.clone(),
+            nodes: self.nodes.clone(),
             state: Instantiable {
                 contract_address,
                 label,
@@ -273,8 +232,9 @@ impl Strategy<Indexable> {
         F: FnOnce(&mut dyn Storage) -> StdResult<()>,
     {
         let indexed_strategy = Strategy {
-            owner: self.owner.clone(),
-            actions: self.actions.clone(),
+            owner: self.owner,
+            affiliates: self.affiliates,
+            nodes: self.nodes,
             state: Updatable { contract_address },
         };
 
@@ -285,7 +245,11 @@ impl Strategy<Indexable> {
 }
 
 impl Strategy<Instantiable> {
-    pub fn instantiate_msg(self, info: MessageInfo) -> StdResult<CosmosMsg> {
+    pub fn instantiate_msg(
+        self,
+        info: MessageInfo,
+        affiliates: Vec<Affiliate>,
+    ) -> StdResult<CosmosMsg> {
         Ok(WasmMsg::Instantiate2 {
             admin: Some(self.owner.to_string()),
             code_id: self.state.code_id,
@@ -293,7 +257,8 @@ impl Strategy<Instantiable> {
             salt: self.state.salt,
             msg: to_json_binary(&Strategy {
                 owner: self.owner,
-                actions: self.actions,
+                affiliates,
+                nodes: self.nodes,
                 state: Indexed {
                     contract_address: self.state.contract_address.clone(),
                 },
@@ -307,67 +272,252 @@ impl Strategy<Instantiable> {
 impl Strategy<Updatable> {
     pub fn update_msg(self, info: MessageInfo) -> StdResult<CosmosMsg> {
         Ok(Contract(self.state.contract_address.clone()).call(
-            to_json_binary(&StrategyExecuteMsg::Update(Strategy {
-                owner: self.owner,
-                actions: self.actions,
-                state: Indexed {
-                    contract_address: self.state.contract_address.clone(),
-                },
-            }))?,
+            to_json_binary(&StrategyExecuteMsg::Update(self.nodes))?,
             info.funds,
         ))
     }
 }
 
-impl Strategy<Indexed> {
-    pub fn get_operations(&self) -> Vec<OpNode> {
-        let mut current_index = 0;
+#[cw_serde]
+pub enum Node {
+    Action {
+        action: Action,
+        index: u16,
+        next: Option<u16>,
+    },
+    Condition {
+        condition: Condition,
+        index: u16,
+        on_success: u16,
+        on_fail: Option<u16>,
+    },
+}
 
-        let mut root_node = OpNode {
-            operation: OperationImpl::Action(self.actions[0].clone()),
-            index: current_index,
-            next: None,
-        };
-
-        let mut nodes = vec![];
-
-        for action in self.actions.clone().into_iter().skip(1) {
-            let action_nodes = action.to_operations(current_index + 1);
-            current_index += (action_nodes.len() + 1) as u16;
-            nodes.extend(action_nodes);
+impl Node {
+    pub fn size(&self) -> usize {
+        match self {
+            Node::Action { action, .. } => action.size(),
+            Node::Condition { condition, .. } => condition.size(),
         }
-
-        root_node.next = Some(root_node.index + (nodes.len() + 1) as u16);
-        return vec![root_node].into_iter().chain(nodes).collect();
     }
-}
 
-#[cw_serde]
-pub enum OperationImpl {
-    Action(Action),
-    Condition(Condition),
-}
+    pub fn index(&self) -> u16 {
+        match self {
+            Node::Action { index, .. } => index.clone(),
+            Node::Condition { index, .. } => index.clone(),
+        }
+    }
 
-#[cw_serde]
-pub struct OpNode {
-    pub operation: OperationImpl,
-    pub index: u16,
-    pub next: Option<u16>,
-}
-
-impl OpNode {
     pub fn next_index(&self, deps: Deps, env: &Env) -> Option<u16> {
-        match &self.operation {
-            OperationImpl::Action(_) => self.next,
-            OperationImpl::Condition(condition) => {
+        match self {
+            Node::Action { next, .. } => next.clone(),
+            Node::Condition {
+                condition,
+                on_fail,
+                on_success,
+                ..
+            } => {
                 if condition.is_satisfied(deps, env).unwrap_or(false) {
-                    Some(self.index + 1)
+                    Some(on_success.clone())
                 } else {
-                    self.next
+                    on_fail.clone()
                 }
             }
         }
     }
 }
 
-impl Strategy<Committed> {}
+impl Operation<Node> for Node {
+    fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<Node> {
+        match self {
+            Node::Action {
+                action,
+                index,
+                next,
+            } => Ok(Node::Action {
+                action: action.init(deps, env, affiliates)?,
+                index,
+                next,
+            }),
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_fail,
+            } => Ok(Node::Condition {
+                condition: condition.init(deps, env, affiliates)?,
+                index,
+                on_success,
+                on_fail,
+            }),
+        }
+    }
+
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Node) {
+        match self {
+            Node::Action {
+                action,
+                index,
+                next,
+            } => {
+                let (messages, events, action) = action.execute(deps, env);
+                (
+                    messages,
+                    events,
+                    Node::Action {
+                        action,
+                        index,
+                        next,
+                    },
+                )
+            }
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_fail,
+            } => {
+                let (messages, events, condition) = condition.execute(deps, env);
+                (
+                    messages,
+                    events,
+                    Node::Condition {
+                        condition,
+                        index,
+                        on_success,
+                        on_fail,
+                    },
+                )
+            }
+        }
+    }
+
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        match self {
+            Node::Action { action, .. } => action.denoms(deps, env),
+            Node::Condition { condition, .. } => condition.denoms(deps, env),
+        }
+    }
+
+    fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        match self {
+            Node::Action { action, .. } => action.escrowed(deps, env),
+            Node::Condition { condition, .. } => condition.escrowed(deps, env),
+        }
+    }
+
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<Node> {
+        Ok(match self {
+            Node::Action {
+                action,
+                index,
+                next,
+            } => Node::Action {
+                action: action.commit(deps, env)?,
+                index,
+                next,
+            },
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_fail,
+            } => Node::Condition {
+                condition: condition.commit(deps, env)?,
+                index,
+                on_success,
+                on_fail,
+            },
+        })
+    }
+
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+        match self {
+            Node::Action { action, .. } => action.balances(deps, env, denoms),
+            Node::Condition { condition, .. } => condition.balances(deps, env, denoms),
+        }
+    }
+
+    fn withdraw(
+        self,
+        deps: Deps,
+        env: &Env,
+        desired: &HashSet<String>,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Node)> {
+        match self {
+            Node::Action {
+                action,
+                index,
+                next,
+            } => {
+                let (messages, events, action) = action.withdraw(deps, env, desired)?;
+                Ok((
+                    messages,
+                    events,
+                    Node::Action {
+                        action,
+                        index,
+                        next,
+                    },
+                ))
+            }
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_fail,
+            } => {
+                let (messages, events, condition) = condition.withdraw(deps, env, desired)?;
+                Ok((
+                    messages,
+                    events,
+                    Node::Condition {
+                        condition,
+                        index,
+                        on_success,
+                        on_fail,
+                    },
+                ))
+            }
+        }
+    }
+
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Node)> {
+        match self {
+            Node::Action {
+                action,
+                index,
+                next,
+            } => {
+                let (messages, events, action) = action.cancel(deps, env)?;
+                Ok((
+                    messages,
+                    events,
+                    Node::Action {
+                        action,
+                        index,
+                        next,
+                    },
+                ))
+            }
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_fail,
+            } => {
+                let (messages, events, condition) = condition.cancel(deps, env)?;
+                Ok((
+                    messages,
+                    events,
+                    Node::Condition {
+                        condition,
+                        index,
+                        on_success,
+                        on_fail,
+                    },
+                ))
+            }
+        }
+    }
+}

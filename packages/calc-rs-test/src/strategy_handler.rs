@@ -141,16 +141,16 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
-    pub fn withdraw(&mut self, denoms: HashSet<String>) -> &mut Self {
+    pub fn withdraw(&mut self, amounts: Vec<Coin>) -> &mut Self {
         self.harness
-            .withdraw(&self.owner, &self.strategy_addr, denoms)
+            .withdraw(&self.owner, &self.strategy_addr, amounts)
             .unwrap();
         self
     }
 
-    pub fn try_withdraw(&mut self, denoms: HashSet<String>) -> AnyResult<AppResponse> {
+    pub fn try_withdraw(&mut self, amounts: Vec<Coin>) -> AnyResult<AppResponse> {
         self.harness
-            .withdraw(&self.owner, &self.strategy_addr, denoms)
+            .withdraw(&self.owner, &self.strategy_addr, amounts)
     }
 
     pub fn config(self) -> StrategyConfig {
