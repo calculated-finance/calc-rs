@@ -11,10 +11,8 @@ use cosmwasm_std::{
 };
 
 use crate::{
-    actions::{
-        action::Action,
-        operation::{StatefulOperation, StatelessOperation},
-    },
+    actions::{action::Action, operation::Operation},
+    condition::Condition,
     constants::PROCESS_PAYLOAD_REPLY_ID,
     core::Contract,
     manager::{Affiliate, StrategyStatus},
@@ -52,7 +50,7 @@ pub enum StrategyExecuteMsg {
     },
     ProcessNext {
         operation: StrategyOperation,
-        previous: Option<ActionNode>,
+        previous: Option<OpNode>,
     },
 }
 
@@ -322,11 +320,11 @@ impl Strategy<Updatable> {
 }
 
 impl Strategy<Indexed> {
-    pub fn execution_list(&self) -> Vec<ActionNode> {
+    pub fn get_operations(&self) -> Vec<OpNode> {
         let mut current_index = 0;
 
-        let mut root_node = ActionNode {
-            action: self.actions[0].clone(),
+        let mut root_node = OpNode {
+            operation: OperationImpl::Action(self.actions[0].clone()),
             index: current_index,
             next: None,
         };
@@ -334,7 +332,7 @@ impl Strategy<Indexed> {
         let mut nodes = vec![];
 
         for action in self.actions.clone().into_iter().skip(1) {
-            let action_nodes = action.to_executable_array(current_index + 1);
+            let action_nodes = action.to_operations(current_index + 1);
             current_index += (action_nodes.len() + 1) as u16;
             nodes.extend(action_nodes);
         }
@@ -345,28 +343,29 @@ impl Strategy<Indexed> {
 }
 
 #[cw_serde]
-pub struct ActionNode {
-    pub action: Action,
+pub enum OperationImpl {
+    Action(Action),
+    Condition(Condition),
+}
+
+#[cw_serde]
+pub struct OpNode {
+    pub operation: OperationImpl,
     pub index: u16,
     pub next: Option<u16>,
 }
 
-impl ActionNode {
+impl OpNode {
     pub fn next_index(&self, deps: Deps, env: &Env) -> Option<u16> {
-        match &self.action {
-            Action::Conditional(conditional) => {
-                let is_satisfied = conditional
-                    .condition
-                    .is_satisfied(deps, env)
-                    .unwrap_or(false);
-
-                if is_satisfied {
+        match &self.operation {
+            OperationImpl::Action(_) => self.next,
+            OperationImpl::Condition(condition) => {
+                if condition.is_satisfied(deps, env).unwrap_or(false) {
                     Some(self.index + 1)
                 } else {
                     self.next
                 }
             }
-            _ => self.next,
         }
     }
 }

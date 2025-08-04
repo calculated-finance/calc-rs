@@ -1,11 +1,12 @@
 use std::{
+    collections::HashSet,
     hash::{DefaultHasher, Hasher},
     vec,
 };
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Decimal, Deps, Env, StdError, StdResult, Timestamp,
+    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Timestamp,
 };
 use rujira_rs::{
     fin::{OrderResponse, Price, QueryMsg, Side},
@@ -14,21 +15,18 @@ use rujira_rs::{
 };
 
 use crate::{
-    actions::{limit_order::Direction, swaps::swap::Swap},
-    core::Threshold,
+    actions::{
+        limit_order::Direction, operation::Operation, schedule::Schedule, swaps::swap::Swap,
+    },
     manager::{ManagerQueryMsg, StrategyHandle, StrategyStatus},
+    strategy::StrategyMsg,
 };
-
-#[cw_serde]
-pub struct CompositeCondition {
-    pub conditions: Vec<Condition>,
-    pub threshold: Threshold,
-}
 
 #[cw_serde]
 pub enum Condition {
     TimestampElapsed(Timestamp),
     BlocksCompleted(u64),
+    Schedule(Schedule),
     CanSwap(Swap),
     LimitOrderFilled {
         owner: Addr,
@@ -54,7 +52,6 @@ pub enum Condition {
         rate: Decimal,
     },
     Not(Box<Condition>),
-    Composite(CompositeCondition),
 }
 
 impl Condition {
@@ -62,6 +59,7 @@ impl Condition {
         match self {
             Condition::TimestampElapsed(_) => 1,
             Condition::BlocksCompleted(_) => 1,
+            Condition::Schedule(_) => 2,
             Condition::CanSwap { .. } => 2,
             Condition::LimitOrderFilled { .. } => 2,
             Condition::BalanceAvailable { .. } => 1,
@@ -69,10 +67,6 @@ impl Condition {
             Condition::StrategyStatus { .. } => 2,
             Condition::OraclePrice { .. } => 2,
             Condition::Not(condition) => condition.size(),
-            Condition::Composite(CompositeCondition {
-                conditions,
-                threshold: _,
-            }) => conditions.iter().map(|c| c.size()).sum::<usize>() + 1,
         }
     }
 
@@ -87,6 +81,9 @@ impl Condition {
         Ok(match self {
             Condition::TimestampElapsed(timestamp) => env.block.time > *timestamp,
             Condition::BlocksCompleted(height) => env.block.height > *height,
+            Condition::Schedule(schedule) => {
+                schedule.cadence.is_due(deps, env, &schedule.scheduler)?
+            }
             Condition::LimitOrderFilled {
                 owner,
                 pair_address,
@@ -153,24 +150,74 @@ impl Condition {
                 }
             }
             Condition::Not(condition) => !condition.is_satisfied(deps, env)?,
-            Condition::Composite(CompositeCondition {
-                conditions,
-                threshold,
-            }) => match threshold {
-                Threshold::All => conditions
-                    .iter()
-                    .map(|c| c.is_satisfied(deps, env))
-                    .collect::<StdResult<Vec<bool>>>()?
-                    .into_iter()
-                    .all(|b| b),
-                Threshold::Any => conditions
-                    .iter()
-                    .map(|c| c.is_satisfied(deps, env))
-                    .collect::<StdResult<Vec<bool>>>()?
-                    .into_iter()
-                    .any(|b| b),
-            },
         })
+    }
+}
+
+impl Operation<Condition> for Condition {
+    fn init(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
+        match self {
+            Condition::Schedule(schedule) => schedule.init(deps, env),
+            _ => Ok((vec![], vec![], self)),
+        }
+    }
+
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Condition) {
+        match self {
+            Condition::Schedule(schedule) => schedule.execute(deps, env),
+            _ => (vec![], vec![], self),
+        }
+    }
+
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
+        match self {
+            Condition::Schedule(schedule) => schedule.denoms(deps, env),
+            _ => Ok(HashSet::new()),
+        }
+    }
+
+    fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
+        Ok(HashSet::new())
+    }
+
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<Condition> {
+        match self {
+            Condition::Schedule(schedule) => schedule.commit(deps, env),
+            _ => Ok(self),
+        }
+    }
+
+    fn balances(
+        &self,
+        deps: Deps,
+        env: &Env,
+        denoms: &HashSet<String>,
+    ) -> StdResult<cosmwasm_std::Coins> {
+        match self {
+            Condition::Schedule(schedule) => schedule.balances(deps, env, denoms),
+            _ => Ok(Coins::default()),
+        }
+    }
+
+    fn withdraw(
+        self,
+        deps: Deps,
+        env: &Env,
+        desired: &HashSet<String>,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
+        if let Condition::Schedule(schedule) = self {
+            schedule.withdraw(deps, env, desired)
+        } else {
+            Ok((vec![], vec![], self))
+        }
+    }
+
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
+        if let Condition::Schedule(schedule) = self {
+            schedule.cancel(deps, env)
+        } else {
+            Ok((vec![], vec![], self))
+        }
     }
 }
 
@@ -439,31 +486,5 @@ mod conditions_tests {
                 .is_satisfied(deps.as_ref(), &env)
                 .unwrap()
         );
-    }
-
-    #[test]
-    fn composite_condition_check() {
-        let deps = mock_dependencies();
-        let env = mock_env();
-
-        assert!(!Condition::Composite(CompositeCondition {
-            conditions: vec![
-                Condition::BlocksCompleted(env.block.height - 1),
-                Condition::BlocksCompleted(env.block.height),
-            ],
-            threshold: Threshold::All,
-        })
-        .is_satisfied(deps.as_ref(), &env)
-        .unwrap());
-
-        assert!(Condition::Composite(CompositeCondition {
-            conditions: vec![
-                Condition::BlocksCompleted(env.block.height - 1),
-                Condition::BlocksCompleted(env.block.height),
-            ],
-            threshold: Threshold::Any,
-        })
-        .is_satisfied(deps.as_ref(), &env)
-        .unwrap());
     }
 }

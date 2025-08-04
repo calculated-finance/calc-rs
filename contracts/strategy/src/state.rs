@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use calc_rs::{
     statistics::Statistics,
-    strategy::{ActionNode, Indexed, Strategy, StrategyConfig, StrategyExecuteMsg},
+    strategy::{Indexed, OpNode, Strategy, StrategyConfig, StrategyExecuteMsg},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Deps, Env, StdError, StdResult, Storage};
@@ -105,18 +105,18 @@ pub const ACTIONS: ActionStore = ActionStore {
 };
 
 pub struct ActionStore {
-    store: Map<u16, ActionNode>,
+    store: Map<u16, OpNode>,
 }
 
 impl ActionStore {
     pub fn init(&self, storage: &mut dyn Storage, strategy: Strategy<Indexed>) -> StdResult<()> {
-        for action_node in strategy.execution_list() {
+        for action_node in strategy.get_operations() {
             self.store.save(storage, action_node.index, &action_node)?;
         }
         Ok(())
     }
 
-    pub fn save(&self, storage: &mut dyn Storage, action_node: &ActionNode) -> StdResult<()> {
+    pub fn save(&self, storage: &mut dyn Storage, action_node: &OpNode) -> StdResult<()> {
         self.store.save(storage, action_node.index, action_node)
     }
 
@@ -124,8 +124,8 @@ impl ActionStore {
         &self,
         deps: Deps,
         env: &Env,
-        current: Option<ActionNode>,
-    ) -> StdResult<Option<ActionNode>> {
+        current: Option<OpNode>,
+    ) -> StdResult<Option<OpNode>> {
         let index = current.map_or(Some(0), |node| node.next_index(deps, env));
 
         if let Some(index) = index {
@@ -137,7 +137,7 @@ impl ActionStore {
         Ok(None)
     }
 
-    pub fn load(&self, storage: &dyn Storage) -> StdResult<Vec<ActionNode>> {
+    pub fn load(&self, storage: &dyn Storage) -> StdResult<Vec<OpNode>> {
         let mut index = 0;
         let mut actions = vec![];
 

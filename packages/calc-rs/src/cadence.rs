@@ -6,7 +6,7 @@ use cosmwasm_std::{Addr, Decimal, Deps, Env, StdError, StdResult, Timestamp};
 use cron::Schedule as CronSchedule;
 use rujira_rs::fin::Side;
 
-use crate::{actions::limit_order::OrderPriceStrategy, conditions::Condition};
+use crate::{actions::limit_order::OrderPriceStrategy, condition::Condition};
 
 #[cw_serde]
 pub enum Cadence {

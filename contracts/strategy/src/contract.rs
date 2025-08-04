@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
 use calc_rs::{
-    actions::operation::{StatefulOperation, StatelessOperation},
+    actions::operation::{Operation, StatefulOperation},
     constants::{MAX_STRATEGY_SIZE, PROCESS_PAYLOAD_REPLY_ID},
     core::{Contract, ContractError, ContractResult},
     manager::StrategyStatus,
     strategy::{
-        ActionNode, Indexed, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyMsgPayload,
+        OpNode, Indexed, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyMsgPayload,
         StrategyOperation, StrategyQueryMsg,
     },
 };
@@ -287,12 +287,12 @@ pub fn execute(
             }
 
             if let Some(previous) = previous.clone() {
-                let updated_action = previous.action.commit(deps.as_ref(), &env)?;
+                let updated_action = previous.operation.commit(deps.as_ref(), &env)?;
 
                 ACTIONS.save(
                     deps.storage,
-                    &ActionNode {
-                        action: updated_action,
+                    &OpNode {
+                        operation: updated_action,
                         ..previous
                     },
                 )?;
@@ -304,16 +304,16 @@ pub fn execute(
                 if let Some(actual_action_node) = action_node.clone() {
                     let (messages, events, action) = match operation {
                         StrategyOperation::Init => {
-                            actual_action_node.action.init(deps.as_ref(), &env)?
+                            actual_action_node.operation.init(deps.as_ref(), &env)?
                         }
                         StrategyOperation::Execute => {
-                            actual_action_node.action.execute(deps.as_ref(), &env)
+                            actual_action_node.operation.execute(deps.as_ref(), &env)
                         }
                         StrategyOperation::Withdraw(ref desired) => actual_action_node
-                            .action
+                            .operation
                             .withdraw(deps.as_ref(), &env, desired)?,
                         StrategyOperation::Cancel => {
-                            actual_action_node.action.cancel(deps.as_ref(), &env)?
+                            actual_action_node.operation.cancel(deps.as_ref(), &env)?
                         }
                     };
 
@@ -326,8 +326,8 @@ pub fn execute(
                                 Contract(env.contract.address.clone()).call(
                                     to_json_binary(&StrategyExecuteMsg::ProcessNext {
                                         operation,
-                                        previous: Some(ActionNode {
-                                            action,
+                                        previous: Some(OpNode {
+                                            operation,
                                             ..actual_action_node
                                         }),
                                     })?,
@@ -395,7 +395,7 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
             let mut balances = Coins::default();
 
             for action in ACTIONS.load(deps.storage)? {
-                let action_balances = action.action.balances(deps, &env, &include)?;
+                let action_balances = action.operation.balances(deps, &env, &include)?;
 
                 for balance in action_balances {
                     balances.add(balance)?;

@@ -1,5 +1,5 @@
 use calc_rs::{
-    conditions::Condition,
+    condition::Condition,
     scheduler::{ConditionFilter, Trigger},
 };
 use cosmwasm_std::{Addr, Decimal, Order, StdResult, Storage, Uint64};

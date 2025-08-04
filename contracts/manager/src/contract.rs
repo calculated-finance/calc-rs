@@ -248,10 +248,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 #[cfg(test)]
 mod tests {
-    use calc_rs::{
-        actions::action::Action,
-        strategy::{Json, Strategy},
-    };
+    use calc_rs::strategy::{Json, Strategy};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr,

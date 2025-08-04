@@ -9,10 +9,7 @@ use rujira_rs::fin::{
 };
 
 use crate::{
-    actions::{
-        action::Action,
-        operation::{StatefulOperation, StatelessOperation},
-    },
+    actions::{action::Action, operation::Operation},
     core::Contract,
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
@@ -462,7 +459,7 @@ impl LimitOrder {
     }
 }
 
-impl StatelessOperation for LimitOrder {
+impl Operation<Action> for LimitOrder {
     fn init(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if let Some(amount) = self.max_bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
@@ -483,7 +480,7 @@ impl StatelessOperation for LimitOrder {
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((action, messages, events)) => (action, messages, events),
+            Ok((messages, events, action)) => (messages, events, action),
             Err(err) => (
                 vec![],
                 vec![LimitOrderEvent::SkipSettingOrder {
@@ -513,9 +510,7 @@ impl StatelessOperation for LimitOrder {
 
         Ok(HashSet::from([pair.denoms.ask(&self.side).to_string()]))
     }
-}
 
-impl StatefulOperation for LimitOrder {
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
         let pair = deps
             .querier

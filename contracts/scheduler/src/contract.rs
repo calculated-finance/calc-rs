@@ -1,7 +1,7 @@
 use std::vec;
 
 use calc_rs::{
-    conditions::Condition,
+    condition::Condition,
     constants::LOG_ERRORS_REPLY_ID,
     core::{Contract, ContractError, ContractResult},
     scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger},
@@ -217,7 +217,7 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 mod create_trigger_tests {
     use super::*;
     use calc_rs::{
-        conditions::Condition,
+        condition::Condition,
         scheduler::{ConditionFilter, CreateTriggerMsg, Trigger},
     };
     use cosmwasm_std::{
@@ -610,7 +610,7 @@ mod create_trigger_tests {
 #[cfg(test)]
 mod execute_trigger_tests {
     use super::*;
-    use calc_rs::conditions::Condition;
+    use calc_rs::condition::Condition;
     use calc_rs::manager::ManagerExecuteMsg;
     use calc_rs::scheduler::{ConditionFilter, CreateTriggerMsg};
     use cosmwasm_std::testing::message_info;
@@ -968,7 +968,7 @@ mod filtered_triggers_tests {
     use super::*;
 
     use calc_rs::{
-        conditions::Condition,
+        condition::Condition,
         scheduler::{ConditionFilter, Trigger},
     };
     use cosmwasm_std::{

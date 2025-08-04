@@ -6,7 +6,7 @@ mod integration_tests {
             limit_order::{Direction, Offset, StaleOrder},
             swaps::{fin::FinRoute, thor::ThorchainRoute},
         },
-        conditions::CompositeCondition,
+        condition::CompositeCondition,
         constants::BASE_FEE_BPS,
         core::Threshold,
         manager::Affiliate,
@@ -22,7 +22,7 @@ mod integration_tests {
             conditional::Conditional,
             swaps::swap::{Swap, SwapAmountAdjustment, SwapRoute},
         },
-        conditions::Condition,
+        condition::Condition,
         statistics::Statistics,
         strategy::{Strategy, StrategyConfig},
     };
@@ -112,7 +112,8 @@ mod integration_tests {
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
         Conditional {
             actions: vec![Action::Swap(default_swap_action(harness))],
-            condition: Condition::StrategyBalanceAvailable {
+            threshold: Threshold::All,
+            conditions: Condition::StrategyBalanceAvailable {
                 amount: Coin::new(1000u128, fin_pair.denoms.base()),
             },
         }
@@ -191,13 +192,15 @@ mod integration_tests {
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
         let conditional_action = Conditional {
-            condition: Condition::StrategyBalanceAvailable {
+            conditions: Condition::StrategyBalanceAvailable {
                 amount: Coin::new(1000u128, fin_pair.denoms.base()),
             },
+            threshold: Threshold::All,
             actions: vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyBalanceAvailable {
+                conditions: vec![Condition::StrategyBalanceAvailable {
                     amount: Coin::new(1000u128, fin_pair.denoms.base()),
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(default_swap_action(&harness))],
             })],
         };
@@ -207,32 +210,6 @@ mod integration_tests {
             .try_instantiate(&[])
             .is_ok());
     }
-
-    // #[test]
-    // fn test_instantiate_strategy_with_nested_schedule_actions_succeeds() {
-    //     let mut harness = CalcTestApp::setup();
-
-    //     let scheduler_addr = harness.scheduler_addr.clone();
-    //     let manager_addr = harness.manager_addr.clone();
-    //     let nested_schedule_action = default_schedule_action(&harness);
-
-    //     assert!(StrategyBuilder::new(&mut harness)
-    //         .with_action(Action::Schedule(Schedule {
-    //             scheduler: scheduler_addr,
-    //             contract_address: manager_addr,
-    //             msg: None,
-    //             cadence: Cadence::Blocks {
-    //                 interval: 10,
-    //                 previous: None
-    //             },
-    //             execution_rebate: vec![],
-    //             action: Box::new(Action::Schedule(nested_schedule_action)),
-    //             executors: vec![],
-    //             jitter: None,
-    //         }))
-    //         .try_instantiate(&[])
-    //         .is_ok());
-    // }
 
     #[test]
     fn test_instantiate_strategy_with_empty_many_action_fails() {
@@ -2323,9 +2300,10 @@ mod integration_tests {
             .collect::<Vec<_>>();
 
         let action = Action::Conditional(Conditional {
-            condition: Condition::StrategyBalanceAvailable {
+            conditions: vec![Condition::StrategyBalanceAvailable {
                 amount: Coin::new(1000u128, "x/ruji"),
-            },
+            }],
+            threshold: Threshold::All,
             actions: nested_actions,
         });
 
@@ -2341,15 +2319,13 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
 
         let action = Action::Conditional(Conditional {
-            condition: Condition::Composite(CompositeCondition {
-                conditions: vec![
-                    Condition::StrategyBalanceAvailable {
-                        amount: Coin::new(1000u128, "x/ruji"),
-                    };
-                    20
-                ],
-                threshold: Threshold::All,
-            }),
+            conditions: vec![
+                Condition::StrategyBalanceAvailable {
+                    amount: Coin::new(1000u128, "x/ruji"),
+                };
+                20
+            ],
+            threshold: Threshold::All,
             actions: vec![Action::Swap(default_swap_action(&harness))],
         });
 
@@ -2367,9 +2343,10 @@ mod integration_tests {
         let owner = harness.owner.clone();
 
         let action = Action::Conditional(Conditional {
-            condition: Condition::StrategyBalanceAvailable {
+            conditions: vec![Condition::StrategyBalanceAvailable {
                 amount: Coin::new(1000u128, "rune"),
-            },
+            }],
+            threshold: Threshold::All,
             actions: vec![Action::Swap(default_swap_action(&harness))],
         });
 
@@ -2413,9 +2390,10 @@ mod integration_tests {
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyBalanceAvailable {
+                conditions: vec![Condition::StrategyBalanceAvailable {
                     amount: swap_action.swap_amount.clone(),
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds);
@@ -2445,12 +2423,13 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyBalanceAvailable {
+                conditions: vec![Condition::StrategyBalanceAvailable {
                     amount: Coin::new(
                         swap_action.swap_amount.amount * Uint128::new(2),
                         fin_pair.denoms.base(),
                     ),
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2481,7 +2460,8 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::TimestampElapsed(block_time.plus_seconds(60)),
+                conditions: vec![Condition::TimestampElapsed(block_time.plus_seconds(60))],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2515,7 +2495,8 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::BlocksCompleted(block_height + 60),
+                conditions: vec![Condition::BlocksCompleted(block_height + 60)],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2539,10 +2520,11 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::CanSwap(Swap {
+                conditions: vec![Condition::CanSwap(Swap {
                     minimum_receive_amount: Coin::new(20_000_000u128, fin_pair.denoms.quote()),
                     ..swap_action.clone()
-                }),
+                })],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2550,10 +2532,11 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::CanSwap(Swap {
+                conditions: vec![Condition::CanSwap(Swap {
                     minimum_receive_amount: Coin::new(20u128, fin_pair.denoms.quote()),
                     ..swap_action.clone()
-                }),
+                })],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2585,10 +2568,11 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::BalanceAvailable {
+                conditions: vec![Condition::BalanceAvailable {
                     address: random,
                     amount: Coin::new(1u128, fin_pair.denoms.base()),
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2596,10 +2580,11 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::BalanceAvailable {
+                conditions: vec![Condition::BalanceAvailable {
                     address: owner,
                     amount: Coin::new(1u128, fin_pair.denoms.base()),
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2628,9 +2613,10 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyBalanceAvailable {
+                conditions: vec![Condition::StrategyBalanceAvailable {
                     amount: Coin::new(1u128, fin_pair.denoms.base()),
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&[])
@@ -2638,9 +2624,10 @@ mod integration_tests {
 
         StrategyBuilder::new(&mut harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyBalanceAvailable {
+                conditions: vec![Condition::StrategyBalanceAvailable {
                     amount: funds[0].clone(),
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2676,11 +2663,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyStatus {
+                conditions: vec![Condition::StrategyStatus {
                     manager_contract: manager.clone(),
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Archived,
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2688,11 +2676,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyStatus {
+                conditions: vec![Condition::StrategyStatus {
                     manager_contract: manager,
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Active,
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2728,11 +2717,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::StrategyStatus {
+                conditions: vec![Condition::StrategyStatus {
                     manager_contract: manager.clone(),
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Archived,
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2740,11 +2730,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::Not(Box::new(Condition::StrategyStatus {
+                conditions: vec![Condition::Not(Box::new(Condition::StrategyStatus {
                     manager_contract: manager,
                     contract_address: strategy.strategy_addr.clone(),
                     status: StrategyStatus::Archived,
-                })),
+                }))],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2752,7 +2743,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_execute_condition_action_respects_composite_condition_threshold() {
+    fn test_execute_condition_action_respects_threshold() {
         let mut harness = CalcTestApp::setup();
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
 
@@ -2780,19 +2771,17 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::Composite(CompositeCondition {
-                    conditions: vec![
-                        Condition::StrategyStatus {
-                            manager_contract: manager.clone(),
-                            contract_address: strategy.strategy_addr.clone(),
-                            status: StrategyStatus::Archived,
-                        },
-                        Condition::StrategyBalanceAvailable {
-                            amount: funds[0].clone(),
-                        },
-                    ],
-                    threshold: Threshold::All,
-                }),
+                conditions: vec![
+                    Condition::StrategyStatus {
+                        manager_contract: manager.clone(),
+                        contract_address: strategy.strategy_addr.clone(),
+                        status: StrategyStatus::Archived,
+                    },
+                    Condition::StrategyBalanceAvailable {
+                        amount: funds[0].clone(),
+                    },
+                ],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2800,19 +2789,17 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::Composite(CompositeCondition {
-                    conditions: vec![
-                        Condition::StrategyStatus {
-                            manager_contract: manager.clone(),
-                            contract_address: strategy.strategy_addr.clone(),
-                            status: StrategyStatus::Archived,
-                        },
-                        Condition::StrategyBalanceAvailable {
-                            amount: funds[0].clone(),
-                        },
-                    ],
-                    threshold: Threshold::Any,
-                }),
+                conditions: vec![
+                    Condition::StrategyStatus {
+                        manager_contract: manager.clone(),
+                        contract_address: strategy.strategy_addr.clone(),
+                        status: StrategyStatus::Archived,
+                    },
+                    Condition::StrategyBalanceAvailable {
+                        amount: funds[0].clone(),
+                    },
+                ],
+                threshold: Threshold::Any,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2849,11 +2836,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::OraclePrice {
+                conditions: vec![Condition::OraclePrice {
                     asset: "BTC-BTC".to_string(),
                     rate: Decimal::from_str("100000").unwrap(),
                     direction: Direction::Below,
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2861,11 +2849,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::OraclePrice {
+                conditions: vec![Condition::OraclePrice {
                     asset: "BTC-BTC".to_string(),
                     rate: Decimal::from_str("101000").unwrap(),
                     direction: Direction::Below,
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2873,11 +2862,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::OraclePrice {
+                conditions: vec![Condition::OraclePrice {
                     asset: "BTC-BTC".to_string(),
                     rate: Decimal::from_str("101000").unwrap(),
                     direction: Direction::Above,
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)
@@ -2885,11 +2875,12 @@ mod integration_tests {
 
         StrategyBuilder::new(strategy.harness)
             .with_actions(vec![Action::Conditional(Conditional {
-                condition: Condition::OraclePrice {
+                conditions: vec![Condition::OraclePrice {
                     asset: "BTC-BTC".to_string(),
                     rate: Decimal::from_str("100000").unwrap(),
                     direction: Direction::Above,
-                },
+                }],
+                threshold: Threshold::All,
                 actions: vec![Action::Swap(swap_action.clone())],
             })])
             .instantiate(&funds)

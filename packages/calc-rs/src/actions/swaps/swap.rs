@@ -1,12 +1,12 @@
 use std::{collections::HashSet, mem::discriminant};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult};
+use cosmwasm_std::{Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult};
 
 use crate::{
     actions::{
         action::Action,
-        operation::StatelessOperation,
+        operation::Operation,
         swaps::{fin::FinRoute, thor::ThorchainRoute},
     },
     strategy::StrategyMsg,
@@ -271,7 +271,7 @@ impl Swap {
     }
 }
 
-impl StatelessOperation for Swap {
+impl Operation<Action> for Swap {
     fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
@@ -306,7 +306,7 @@ impl StatelessOperation for Swap {
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((action, messages, events)) => (action, messages, events),
+            Ok((messages, events, action)) => (messages, events, action),
             Err(err) => (
                 vec![],
                 vec![SwapEvent::SkipSwap {
@@ -327,5 +327,26 @@ impl StatelessOperation for Swap {
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
+    }
+
+    fn commit(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
+        Ok(Action::Swap(self))
+    }
+
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
+        Ok(Coins::default())
+    }
+
+    fn withdraw(
+        self,
+        _deps: Deps,
+        _env: &Env,
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Swap(self)))
+    }
+
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Swap(self)))
     }
 }

@@ -1,6 +1,6 @@
 pub mod actions;
 pub mod cadence;
-pub mod conditions;
+pub mod condition;
 pub mod constants;
 pub mod core;
 pub mod events;

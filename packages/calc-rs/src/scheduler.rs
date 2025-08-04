@@ -6,7 +6,7 @@ use std::{
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Decimal, StdResult, Timestamp, Uint64};
 
-use crate::conditions::Condition;
+use crate::condition::Condition;
 
 #[cw_serde]
 pub struct Trigger {

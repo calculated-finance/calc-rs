@@ -7,7 +7,7 @@ use cosmwasm_std::{
 };
 
 use crate::actions::action::Action;
-use crate::actions::operation::StatelessOperation;
+use crate::actions::operation::Operation;
 use crate::constants::MAX_TOTAL_AFFILIATE_BPS;
 use crate::manager::Affiliate;
 use crate::statistics::Statistics;
@@ -195,7 +195,7 @@ impl Distribution {
     }
 }
 
-impl StatelessOperation for Distribution {
+impl Operation<Action> for Distribution {
     fn init(self, deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
@@ -242,7 +242,7 @@ impl StatelessOperation for Distribution {
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((action, messages, events)) => (action, messages, events),
+            Ok((messages, events, action)) => (messages, events, action),
             Err(err) => (
                 vec![],
                 vec![DistributionEvent::SkipDistribution {
@@ -260,5 +260,26 @@ impl StatelessOperation for Distribution {
 
     fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(self.denoms.iter().cloned().collect())
+    }
+
+    fn commit(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
+        Ok(Action::Distribute(self))
+    }
+
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
+        Ok(Coins::default())
+    }
+
+    fn withdraw(
+        self,
+        _deps: Deps,
+        _env: &Env,
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Distribute(self)))
+    }
+
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+        Ok((vec![], vec![], Action::Distribute(self)))
     }
 }
