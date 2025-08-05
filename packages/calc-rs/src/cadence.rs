@@ -58,7 +58,7 @@ impl Cadence {
                 if let Some(previous) = previous {
                     match strategy {
                         PriceStrategy::Fixed(price) => Condition::FinLimitOrderFilled {
-                            owner: scheduler.clone(),
+                            owner: Some(scheduler.clone()),
                             pair_address: pair_address.clone(),
                             side: side.clone(),
                             price: price.clone(),
@@ -66,7 +66,7 @@ impl Cadence {
                         .is_satisfied(deps, env)?,
                         PriceStrategy::Offset { .. } => {
                             let previous_order_filled = Condition::FinLimitOrderFilled {
-                                owner: scheduler.clone(),
+                                owner: Some(scheduler.clone()),
                                 pair_address: pair_address.clone(),
                                 side: side.clone(),
                                 price: previous.clone(),
@@ -128,7 +128,7 @@ impl Cadence {
                 };
 
                 Condition::FinLimitOrderFilled {
-                    owner: scheduler.clone(),
+                    owner: Some(scheduler.clone()),
                     pair_address: pair_address.clone(),
                     side: side.clone(),
                     price,
@@ -652,7 +652,7 @@ mod tests {
             .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
             .unwrap(),
             Condition::FinLimitOrderFilled {
-                owner: Addr::unchecked("scheduler"),
+                owner: Some(Addr::unchecked("scheduler")),
                 pair_address: pair_address.clone(),
                 side: side.clone(),
                 price: Decimal::from_str("100.0").unwrap()
@@ -691,7 +691,7 @@ mod tests {
             .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
             .unwrap(),
             Condition::FinLimitOrderFilled {
-                owner: Addr::unchecked("scheduler"),
+                owner: Some(Addr::unchecked("scheduler")),
                 pair_address: pair_address.clone(),
                 side: side.clone(),
                 price: Decimal::from_str("1.55").unwrap()

@@ -374,7 +374,7 @@ mod create_trigger_tests {
         let pair_address = Addr::unchecked("pair-0");
 
         let condition = Condition::FinLimitOrderFilled {
-            owner: Addr::unchecked("owner"),
+            owner: Some(Addr::unchecked("owner")),
             pair_address,
             side: Side::Base,
             price: Decimal::percent(100),
@@ -438,7 +438,7 @@ mod create_trigger_tests {
         let pair_address = Addr::unchecked("pair-0");
 
         let condition = Condition::FinLimitOrderFilled {
-            owner: Addr::unchecked("owner"),
+            owner: Some(Addr::unchecked("owner")),
             pair_address: pair_address.clone(),
             side: Side::Base,
             price: Decimal::percent(100),
@@ -474,7 +474,7 @@ mod create_trigger_tests {
         let price = Decimal::percent(100);
 
         let condition = Condition::FinLimitOrderFilled {
-            owner: Addr::unchecked("owner"),
+            owner: Some(Addr::unchecked("owner")),
             pair_address: pair_address.clone(),
             side: side.clone(),
             price: price.clone(),
@@ -540,7 +540,7 @@ mod create_trigger_tests {
         let pair_address = Addr::unchecked("pair-0");
 
         let condition = Condition::FinLimitOrderFilled {
-            owner: Addr::unchecked("owner"),
+            owner: Some(Addr::unchecked("owner")),
             pair_address: pair_address.clone(),
             side: Side::Quote,
             price: Decimal::percent(100),
@@ -687,7 +687,7 @@ mod execute_trigger_tests {
         let price = Decimal::percent(100);
 
         let condition = Condition::FinLimitOrderFilled {
-            owner: Addr::unchecked("owner"),
+            owner: Some(Addr::unchecked("owner")),
             pair_address: Addr::unchecked("pair-0"),
             side: side.clone(),
             price: price.clone(),
@@ -1205,7 +1205,7 @@ mod filtered_triggers_tests {
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
                             price: Decimal::from_str(&i.to_string()).unwrap(),
@@ -1245,7 +1245,7 @@ mod filtered_triggers_tests {
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
                             price: Decimal::from_str(&j.to_string()).unwrap(),
@@ -1273,7 +1273,7 @@ mod filtered_triggers_tests {
                         msg: Binary::default(),
                         contract_address: Addr::unchecked("manager"),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
                             price: Decimal::from_str(&i.to_string()).unwrap(),
@@ -1316,7 +1316,7 @@ mod filtered_triggers_tests {
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
                             price: Decimal::from_str(&j.to_string()).unwrap(),
@@ -1344,7 +1344,7 @@ mod filtered_triggers_tests {
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
                             price: Decimal::from_str(&i.to_string()).unwrap(),
@@ -1387,7 +1387,7 @@ mod filtered_triggers_tests {
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
                             price: Decimal::from_str(&j.to_string()).unwrap(),
@@ -1415,7 +1415,7 @@ mod filtered_triggers_tests {
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
                             price: Decimal::from_str(&i.to_string()).unwrap(),
@@ -1458,7 +1458,7 @@ mod filtered_triggers_tests {
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
                         condition: Condition::FinLimitOrderFilled {
-                            owner: Addr::unchecked("owner"),
+                            owner: Some(Addr::unchecked("owner")),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
                             price: Decimal::from_str(&j.to_string()).unwrap(),

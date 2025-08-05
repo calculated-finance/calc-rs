@@ -6,7 +6,9 @@ mod integration_tests {
             limit_orders::fin_limit_order::{Direction, Offset, StaleOrder},
             swaps::{fin::FinRoute, thor::ThorchainRoute},
         },
-        manager::Affiliate,
+        cadence::Cadence,
+        conditions::{condition::Condition, schedule::Schedule},
+        manager::{Affiliate, StrategyStatus},
         strategy::Node,
     };
 
@@ -19,7 +21,7 @@ mod integration_tests {
         },
         strategy::StrategyConfig,
     };
-    use cosmwasm_std::{Addr, Binary, Coin, Decimal, Uint128};
+    use cosmwasm_std::{Addr, Binary, Coin, Decimal, Timestamp, Uint128};
     use rujira_rs::fin::{Price, Side};
 
     use calc_rs::actions::limit_orders::fin_limit_order::{FinLimitOrder, PriceStrategy};
@@ -131,7 +133,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_instantiate_strategy_with_all_action_types_succeeds() {
+    fn test_instantiate_strategy_with_all_node_types_succeeds() {
         let mut harness = CalcTestApp::setup();
 
         let swap_action = default_swap_action(&harness);
@@ -144,22 +146,108 @@ mod integration_tests {
                 index: 0,
                 next: Some(1),
             },
+            Node::Condition {
+                condition: Condition::TimestampElapsed(Timestamp::from_seconds(1)),
+                index: 1,
+                on_success: 2,
+                on_fail: Some(3),
+            },
+            Node::Condition {
+                condition: Condition::BlocksCompleted(1),
+                index: 2,
+                on_success: 3,
+                on_fail: Some(4),
+            },
+            Node::Condition {
+                condition: Condition::Schedule(Schedule {
+                    scheduler: harness.scheduler_addr.clone(),
+                    contract_address: harness.manager_addr.clone(),
+                    msg: Some(Binary::default()),
+                    cadence: Cadence::Blocks {
+                        interval: 1,
+                        previous: None,
+                    },
+                    execution_rebate: vec![],
+                    executors: vec![],
+                    jitter: None,
+                }),
+                index: 3,
+                on_success: 4,
+                on_fail: Some(5),
+            },
+            Node::Condition {
+                condition: Condition::CanSwap(Swap {
+                    swap_amount: Coin::new(1000u128, "rune"),
+                    minimum_receive_amount: Coin::new(1u128, "rune"),
+                    maximum_slippage_bps: 100,
+                    adjustment: SwapAmountAdjustment::Fixed,
+                    routes: vec![SwapRoute::Fin(FinRoute {
+                        pair_address: harness.fin_addr.clone(),
+                    })],
+                }),
+                index: 4,
+                on_success: 5,
+                on_fail: Some(6),
+            },
+            Node::Condition {
+                condition: Condition::FinLimitOrderFilled {
+                    owner: None,
+                    pair_address: harness.fin_addr.clone(),
+                    side: Side::Base,
+                    price: Decimal::percent(100),
+                },
+                index: 5,
+                on_success: 6,
+                on_fail: Some(7),
+            },
+            Node::Condition {
+                condition: Condition::BalanceAvailable {
+                    address: None,
+                    amount: Coin::new(1000u128, "rune"),
+                },
+                index: 6,
+                on_success: 7,
+                on_fail: Some(8),
+            },
+            Node::Condition {
+                condition: Condition::StrategyStatus {
+                    manager_contract: harness.manager_addr.clone(),
+                    contract_address: Addr::unchecked("strategy"),
+                    status: StrategyStatus::Active,
+                },
+                index: 8,
+                on_success: 9,
+                on_fail: Some(10),
+            },
+            Node::Condition {
+                condition: Condition::OraclePrice {
+                    asset: "rune".to_string(),
+                    direction: Direction::Above,
+                    price: Decimal::percent(100),
+                },
+                index: 9,
+                on_success: 10,
+                on_fail: Some(10),
+            },
             Node::Action {
                 action: Action::LimitOrder(limit_order_action),
-                index: 1,
-                next: Some(2),
+                index: 10,
+                next: Some(11),
             },
             Node::Action {
                 action: Action::Distribute(distribution_action),
-                index: 2,
+                index: 11,
                 next: None,
             },
         ];
 
-        assert!(StrategyBuilder::new(&mut harness)
+        let res = StrategyBuilder::new(&mut harness)
             .with_nodes(nodes)
-            .try_instantiate(&[])
-            .is_ok());
+            .try_instantiate(&[]);
+
+        println!("res: {:?}", res);
+
+        assert!(res.is_ok());
     }
 
     #[test]
@@ -169,8 +257,6 @@ mod integration_tests {
         let res = StrategyBuilder::new(&mut harness)
             .with_nodes(vec![])
             .try_instantiate(&[]);
-
-        println!("Result: {:?}", res);
 
         assert!(res.is_ok());
     }

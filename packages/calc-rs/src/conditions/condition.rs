@@ -29,16 +29,13 @@ pub enum Condition {
     Schedule(Schedule),
     CanSwap(Swap),
     FinLimitOrderFilled {
-        owner: Addr,
+        owner: Option<Addr>,
         pair_address: Addr,
         side: Side,
         price: Decimal,
     },
     BalanceAvailable {
-        address: Addr,
-        amount: Coin,
-    },
-    StrategyBalanceAvailable {
+        address: Option<Addr>,
         amount: Coin,
     },
     StrategyStatus {
@@ -49,9 +46,8 @@ pub enum Condition {
     OraclePrice {
         asset: String,
         direction: Direction,
-        rate: Decimal,
+        price: Decimal,
     },
-    Not(Box<Condition>),
 }
 
 impl Condition {
@@ -66,15 +62,28 @@ impl Condition {
             Condition::CanSwap { .. } => 2,
             Condition::FinLimitOrderFilled { .. } => 2,
             Condition::BalanceAvailable { .. } => 1,
-            Condition::StrategyBalanceAvailable { .. } => 1,
             Condition::StrategyStatus { .. } => 2,
             Condition::OraclePrice { .. } => 2,
-            Condition::Not(condition) => condition.size(),
         }
     }
 
     pub fn id(&self, owner: Addr) -> StdResult<u64> {
-        let salt_data = to_json_binary(&(owner, self.clone()))?;
+        let condition_data = match self {
+            Condition::TimestampElapsed(timestamp) => timestamp.to_string(),
+            Condition::BlocksCompleted(height) => height.to_string(),
+            Condition::FinLimitOrderFilled {
+                owner,
+                pair_address,
+                side,
+                price,
+            } => format!("{:?}{}{}{}", owner, pair_address, side, price),
+            _ => Err(StdError::generic_err(format!(
+                "ID generation for condition {:?} not supported",
+                self
+            )))?,
+        };
+
+        let salt_data = to_json_binary(&(owner, condition_data))?;
         let mut hash = DefaultHasher::new();
         hash.write(salt_data.as_slice());
         Ok(hash.finish())
@@ -96,7 +105,10 @@ impl Condition {
                 let order = deps.querier.query_wasm_smart::<OrderResponse>(
                     pair_address,
                     &QueryMsg::Order((
-                        owner.to_string(),
+                        owner
+                            .clone()
+                            .unwrap_or(env.contract.address.clone())
+                            .to_string(),
                         side.clone(),
                         Price::Fixed(price.clone()),
                     )),
@@ -106,13 +118,10 @@ impl Condition {
             }
             Condition::CanSwap(swap) => swap.best_route(deps, env)?.is_some(),
             Condition::BalanceAvailable { address, amount } => {
-                let balance = deps.querier.query_balance(address, amount.denom.clone())?;
-                balance.amount >= amount.amount
-            }
-            Condition::StrategyBalanceAvailable { amount } => {
-                let balance = deps
-                    .querier
-                    .query_balance(&env.contract.address, amount.denom.clone())?;
+                let balance = deps.querier.query_balance(
+                    address.clone().unwrap_or(env.contract.address.clone()),
+                    amount.denom.clone(),
+                )?;
                 balance.amount >= amount.amount
             }
             Condition::StrategyStatus {
@@ -131,7 +140,7 @@ impl Condition {
             Condition::OraclePrice {
                 asset,
                 direction,
-                rate,
+                price,
             } => {
                 let layer_1_asset = Layer1Asset::from_native(asset.clone()).map_err(|e| {
                     StdError::generic_err(format!(
@@ -148,11 +157,10 @@ impl Condition {
                     .asset_tor_price;
 
                 match direction {
-                    Direction::Above => oracle_price > *rate,
-                    Direction::Below => oracle_price < *rate,
+                    Direction::Above => oracle_price > *price,
+                    Direction::Below => oracle_price < *price,
                 }
             }
-            Condition::Not(condition) => !condition.is_satisfied(deps, env)?,
         })
     }
 }
@@ -242,14 +250,14 @@ mod conditions_tests {
         let env = mock_env();
 
         assert!(Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
+            address: None,
             amount: Coin::new(0u128, "rune"),
         }
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
 
         assert!(!Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
+            address: None,
             amount: Coin::new(1u128, "rune"),
         }
         .is_satisfied(deps.as_ref(), &env)
@@ -261,21 +269,21 @@ mod conditions_tests {
         );
 
         assert!(Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
+            address: None,
             amount: Coin::new(99u128, "rune"),
         }
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
 
         assert!(Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
+            address: None,
             amount: Coin::new(100u128, "rune"),
         }
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
 
         assert!(!Condition::BalanceAvailable {
-            address: env.contract.address.clone(),
+            address: None,
             amount: Coin::new(101u128, "rune"),
         }
         .is_satisfied(deps.as_ref(), &env)
@@ -356,7 +364,7 @@ mod conditions_tests {
         });
 
         assert!(!Condition::FinLimitOrderFilled {
-            owner: Addr::unchecked("owner"),
+            owner: None,
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Decimal::from_str("1.0").unwrap(),
@@ -381,7 +389,7 @@ mod conditions_tests {
         });
 
         assert!(Condition::FinLimitOrderFilled {
-            owner: Addr::unchecked("owner"),
+            owner: None,
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             price: Decimal::from_str("1.0").unwrap(),
@@ -427,22 +435,5 @@ mod conditions_tests {
         }
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
-    }
-
-    #[test]
-    fn not_satisfied_check() {
-        let deps = mock_dependencies();
-        let env = mock_env();
-
-        assert!(
-            !Condition::Not(Box::new(Condition::BlocksCompleted(env.block.height - 1)))
-                .is_satisfied(deps.as_ref(), &env)
-                .unwrap()
-        );
-        assert!(
-            Condition::Not(Box::new(Condition::BlocksCompleted(env.block.height)))
-                .is_satisfied(deps.as_ref(), &env)
-                .unwrap()
-        );
     }
 }
