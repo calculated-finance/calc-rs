@@ -1,9 +1,9 @@
 use std::{cmp::min, collections::HashSet};
 
 use calc_rs::{
-    actions::operation::Operation,
     constants::PROCESS_PAYLOAD_REPLY_ID,
     core::{Contract, ContractError, ContractResult},
+    operation::{Operation, StatefulOperation},
     statistics::Statistics,
     strategy::{
         StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyMsgPayload,
@@ -228,7 +228,9 @@ pub fn execute(
 
             let mut next_node = if let Some(previous) = previous {
                 let previous_node = NODES.load(deps.storage, previous)?;
-                let next_node = NODES.get_next(deps.as_ref(), &env, &operation, &previous_node)?;
+                let next_node = NODES
+                    .get_next(deps.as_ref(), &env, &operation, &previous_node)
+                    .ok();
 
                 let updated_node = previous_node.commit(deps.as_ref(), &env)?;
                 NODES.save(deps.storage, &updated_node)?;
@@ -267,7 +269,7 @@ pub fn execute(
                             .add_events(events);
                     }
 
-                    next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node)?;
+                    next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
                 } else {
                     break Response::new();
                 }

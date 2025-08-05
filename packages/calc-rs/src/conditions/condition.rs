@@ -6,7 +6,7 @@ use std::{
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Timestamp,
+    to_json_binary, Addr, Coin, Decimal, Deps, Env, Event, StdError, StdResult, Timestamp,
 };
 use rujira_rs::{
     fin::{OrderResponse, Price, QueryMsg, Side},
@@ -15,11 +15,11 @@ use rujira_rs::{
 };
 
 use crate::{
-    actions::{
-        limit_order::Direction, operation::Operation, schedule::Schedule, swaps::swap::Swap,
-    },
+    actions::{limit_orders::fin_limit_order::Direction, swaps::swap::Swap},
     cadence::Cadence,
+    conditions::schedule::Schedule,
     manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
+    operation::Operation,
     strategy::StrategyMsg,
 };
 
@@ -29,7 +29,7 @@ pub enum Condition {
     BlocksCompleted(u64),
     Schedule(Schedule),
     CanSwap(Swap),
-    LimitOrderFilled {
+    FinLimitOrderFilled {
         owner: Addr,
         pair_address: Addr,
         side: Side,
@@ -65,7 +65,7 @@ impl Condition {
                 _ => 1,
             },
             Condition::CanSwap { .. } => 2,
-            Condition::LimitOrderFilled { .. } => 2,
+            Condition::FinLimitOrderFilled { .. } => 2,
             Condition::BalanceAvailable { .. } => 1,
             Condition::StrategyBalanceAvailable { .. } => 1,
             Condition::StrategyStatus { .. } => 2,
@@ -88,7 +88,7 @@ impl Condition {
             Condition::Schedule(schedule) => {
                 schedule.cadence.is_due(deps, env, &schedule.scheduler)?
             }
-            Condition::LimitOrderFilled {
+            Condition::FinLimitOrderFilled {
                 owner,
                 pair_address,
                 side,
@@ -177,50 +177,6 @@ impl Operation<Condition> for Condition {
         match self {
             Condition::Schedule(schedule) => schedule.denoms(deps, env),
             _ => Ok(HashSet::new()),
-        }
-    }
-
-    fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::new())
-    }
-
-    fn commit(self, deps: Deps, env: &Env) -> StdResult<Condition> {
-        match self {
-            Condition::Schedule(schedule) => schedule.commit(deps, env),
-            _ => Ok(self),
-        }
-    }
-
-    fn balances(
-        &self,
-        deps: Deps,
-        env: &Env,
-        denoms: &HashSet<String>,
-    ) -> StdResult<cosmwasm_std::Coins> {
-        match self {
-            Condition::Schedule(schedule) => schedule.balances(deps, env, denoms),
-            _ => Ok(Coins::default()),
-        }
-    }
-
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
-        if let Condition::Schedule(schedule) = self {
-            schedule.withdraw(deps, env, desired)
-        } else {
-            Ok((vec![], vec![], self))
-        }
-    }
-
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
-        if let Condition::Schedule(schedule) = self {
-            schedule.cancel(deps, env)
-        } else {
-            Ok((vec![], vec![], self))
         }
     }
 }
@@ -400,7 +356,7 @@ mod conditions_tests {
             ))
         });
 
-        assert!(!Condition::LimitOrderFilled {
+        assert!(!Condition::FinLimitOrderFilled {
             owner: Addr::unchecked("owner"),
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
@@ -425,7 +381,7 @@ mod conditions_tests {
             ))
         });
 
-        assert!(Condition::LimitOrderFilled {
+        assert!(Condition::FinLimitOrderFilled {
             owner: Addr::unchecked("owner"),
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,

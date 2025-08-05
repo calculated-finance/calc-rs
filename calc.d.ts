@@ -1,8 +1,8 @@
 export type Addr = string;
-export type StrategyStatus = "active" | "paused" | "archived";
-export type ArrayOf_StrategyHandle = StrategyHandle[];
+export type StrategyStatus = "active" | "paused";
+export type ArrayOf_Strategy = Strategy[];
 
-export interface StrategyHandle {
+export interface Strategy {
   contract_address: Addr;
   created_at: number;
   id: number;
@@ -38,7 +38,8 @@ export type ManagerExecuteMsg =
       instantiate: {
         affiliates: Affiliate[];
         label: string;
-        strategy: StrategyFor_Indexable;
+        nodes: Node[];
+        owner: Addr;
       };
     }
   | {
@@ -55,7 +56,8 @@ export type ManagerExecuteMsg =
   | {
       update: {
         contract_address: Addr;
-        update: StrategyFor_Indexable;
+        label?: string | null;
+        nodes: Node[];
       };
     };
 export type Node =
@@ -83,9 +85,6 @@ export type Action =
     }
   | {
       distribute: Distribution;
-    }
-  | {
-      conditional: Conditional;
     };
 export type SwapAmountAdjustment =
   | "fixed"
@@ -266,19 +265,11 @@ export type Cadence =
         strategy: OrderPriceStrategy;
       };
     };
-export type Threshold = "all" | "any";
-export type Indexable = null;
 
 export interface Affiliate {
   address: Addr;
   bps: number;
   label: string;
-}
-export interface StrategyFor_Indexable {
-  affiliates: Affiliate[];
-  nodes: Node[];
-  owner: Addr;
-  state: Indexable;
 }
 export interface Swap {
   adjustment: SwapAmountAdjustment;
@@ -327,11 +318,6 @@ export interface Destination {
   label?: string | null;
   recipient: Recipient;
   shares: Uint128;
-}
-export interface Conditional {
-  actions: Action[];
-  conditions: Condition[];
-  threshold: Threshold;
 }
 export interface Schedule {
   cadence: Cadence;
@@ -399,6 +385,7 @@ export type ConditionFilter =
         start_after?: number | null;
       };
     };
+export type Threshold = "all" | "any";
 
 export interface CompositeCondition {
   conditions: Condition[];
@@ -429,14 +416,11 @@ export interface Statistics {
 
 export interface StrategyInstantiateMsg {
   affiliates: Affiliate[];
+  contract_address: Addr;
   nodes: Node[];
   owner: Addr;
-  state: Indexed;
 }
 
-export interface Indexed {
-  contract_address: Addr;
-}
 export type StrategyQueryMsg =
   | {
       config: {};
@@ -473,7 +457,6 @@ export type ArrayOf_Coin = Coin[];
 
 export interface StrategyConfig {
   denoms: string[];
-  escrowed: string[];
   manager: Addr;
   nodes: Node[];
   owner: Addr;

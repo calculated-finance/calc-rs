@@ -3,11 +3,10 @@ mod integration_tests {
     use calc_rs::{
         actions::{
             distribution::{Destination, Distribution, Recipient},
-            limit_order::{Direction, Offset, StaleOrder},
+            limit_orders::fin_limit_order::{Direction, Offset, StaleOrder},
             swaps::{fin::FinRoute, thor::ThorchainRoute},
         },
         constants::BASE_FEE_BPS,
-        core::Threshold,
         manager::Affiliate,
         scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
@@ -18,17 +17,16 @@ mod integration_tests {
     use calc_rs::{
         actions::{
             action::Action,
-            conditional::Conditional,
             swaps::swap::{Swap, SwapAmountAdjustment, SwapRoute},
         },
-        condition::Condition,
+        conditions::condition::Condition,
         statistics::Statistics,
         strategy::StrategyConfig,
     };
     use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Decimal, Uint128};
     use rujira_rs::fin::{Price, Side};
 
-    use calc_rs::actions::limit_order::{LimitOrder, OrderPriceStrategy};
+    use calc_rs::actions::limit_orders::fin_limit_order::{FinLimitOrder, PriceStrategy};
 
     use crate::harness::CalcTestApp;
     use crate::strategy_builder::StrategyBuilder;
@@ -78,26 +76,15 @@ mod integration_tests {
         }
     }
 
-    fn default_limit_order_action(harness: &CalcTestApp) -> LimitOrder {
+    fn default_limit_order_action(harness: &CalcTestApp) -> FinLimitOrder {
         let fin_pair = harness.query_fin_config(&harness.fin_addr);
-        LimitOrder {
+        FinLimitOrder {
             pair_address: harness.fin_addr.clone(),
             bid_denom: fin_pair.denoms.base().to_string(),
             max_bid_amount: None,
             side: Side::Base,
-            strategy: OrderPriceStrategy::Fixed(Decimal::percent(100)),
+            strategy: PriceStrategy::Fixed(Decimal::percent(100)),
             current_order: None,
-        }
-    }
-
-    fn default_conditional_action(harness: &CalcTestApp) -> Conditional {
-        let fin_pair = harness.query_fin_config(&harness.fin_addr);
-        Conditional {
-            actions: vec![Action::Swap(default_swap_action(harness))],
-            threshold: Threshold::All,
-            conditions: vec![Condition::StrategyBalanceAvailable {
-                amount: Coin::new(1000u128, fin_pair.denoms.base()),
-            }],
         }
     }
 
@@ -153,7 +140,6 @@ mod integration_tests {
 
         let swap_action = default_swap_action(&harness);
         let limit_order_action = default_limit_order_action(&harness);
-        let conditional_action = default_conditional_action(&harness);
         let distribution_action = default_distribution_action(&harness);
 
         let nodes = vec![
@@ -168,48 +154,14 @@ mod integration_tests {
                 next: Some(2),
             },
             Node::Action {
-                action: Action::Conditional(conditional_action),
-                index: 2,
-                next: Some(3),
-            },
-            Node::Action {
                 action: Action::Distribute(distribution_action),
-                index: 3,
+                index: 2,
                 next: None,
             },
         ];
 
         assert!(StrategyBuilder::new(&mut harness)
             .with_nodes(nodes)
-            .try_instantiate(&[])
-            .is_ok());
-    }
-
-    #[test]
-    fn test_instantiate_strategy_with_nested_conditional_actions_succeeds() {
-        let mut harness = CalcTestApp::setup();
-        let fin_pair = harness.query_fin_config(&harness.fin_addr);
-
-        let conditional_action = Conditional {
-            conditions: vec![Condition::StrategyBalanceAvailable {
-                amount: Coin::new(1000u128, fin_pair.denoms.base()),
-            }],
-            threshold: Threshold::All,
-            actions: vec![Action::Conditional(Conditional {
-                conditions: vec![Condition::StrategyBalanceAvailable {
-                    amount: Coin::new(1000u128, fin_pair.denoms.base()),
-                }],
-                threshold: Threshold::All,
-                actions: vec![Action::Swap(default_swap_action(&harness))],
-            })],
-        };
-
-        assert!(StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![Node::Action {
-                action: Action::Conditional(conditional_action),
-                index: 0,
-                next: None,
-            }])
             .try_instantiate(&[])
             .is_ok());
     }
@@ -1377,7 +1329,7 @@ mod integration_tests {
     fn test_instantiate_limit_order_action_with_bid_amount_too_small_fails() {
         let mut harness = CalcTestApp::setup();
 
-        let order_action = LimitOrder {
+        let order_action = FinLimitOrder {
             max_bid_amount: Some(Uint128::new(999)),
             ..default_limit_order_action(&harness)
         };
@@ -1397,7 +1349,7 @@ mod integration_tests {
     fn test_instantiate_limit_order_action_with_preset_current_price_fails() {
         let mut harness = CalcTestApp::setup();
 
-        let order_action = LimitOrder {
+        let order_action = FinLimitOrder {
             current_order: Some(StaleOrder {
                 price: Decimal::one(),
             }),
@@ -1445,8 +1397,8 @@ mod integration_tests {
     fn test_instantiate_limit_order_action_includes_remaining_amount_in_balances() {
         let mut harness = CalcTestApp::setup();
 
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Fixed(Decimal::percent(50)),
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(Decimal::percent(50)),
             ..default_limit_order_action(&harness)
         };
 
@@ -1525,8 +1477,8 @@ mod integration_tests {
     fn test_execute_limit_order_action_with_fixed_price_strategy_claims_filled_amount() {
         let mut harness = CalcTestApp::setup();
 
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Fixed(Decimal::percent(50)),
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(Decimal::percent(50)),
             ..default_limit_order_action(&harness)
         };
 
@@ -1614,8 +1566,8 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let pair = harness.query_fin_config(&harness.fin_addr);
 
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Offset {
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Offset {
                 direction: Direction::Below,
                 offset: Offset::Percent(10),
                 tolerance: Some(Offset::Exact(Decimal::percent(1))),
@@ -1689,8 +1641,8 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
         let pair = harness.query_fin_config(&harness.fin_addr);
 
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Offset {
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Offset {
                 direction: Direction::Below,
                 offset: Offset::Percent(10),
                 tolerance: Some(Offset::Exact(Decimal::percent(90))),
@@ -1761,8 +1713,8 @@ mod integration_tests {
         let pair = harness.query_fin_config(&harness.fin_addr);
 
         let price = Decimal::percent(50);
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Fixed(price),
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(price),
             ..default_limit_order_action(&harness)
         };
         let starting_balance = Coin::new(1000000u128, order_action.bid_denom.clone());
@@ -1811,8 +1763,8 @@ mod integration_tests {
         let pair = harness.query_fin_config(&harness.fin_addr);
 
         let price = Decimal::percent(50);
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Fixed(price),
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(price),
             ..default_limit_order_action(&harness)
         };
         let starting_balance = Coin::new(1000000u128, order_action.bid_denom.clone());
@@ -1859,8 +1811,8 @@ mod integration_tests {
         let pair = harness.query_fin_config(&harness.fin_addr);
 
         let price = Decimal::percent(50);
-        let order_action = LimitOrder {
-            strategy: OrderPriceStrategy::Fixed(price),
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(price),
             ..default_limit_order_action(&harness)
         };
         let starting_balance = Coin::new(1000000u128, order_action.bid_denom.clone());

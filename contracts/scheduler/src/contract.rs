@@ -1,7 +1,7 @@
 use std::vec;
 
 use calc_rs::{
-    condition::Condition,
+    conditions::condition::Condition,
     constants::LOG_ERRORS_REPLY_ID,
     core::{Contract, ContractError, ContractResult},
     scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger},
@@ -59,7 +59,7 @@ pub fn execute(
 
             let mut execution_rebate = Coins::try_from(info.funds)?;
 
-            if let Condition::LimitOrderFilled {
+            if let Condition::FinLimitOrderFilled {
                 pair_address,
                 side,
                 price,
@@ -121,7 +121,7 @@ pub fn execute(
                         continue;
                     }
 
-                    if let Condition::LimitOrderFilled {
+                    if let Condition::FinLimitOrderFilled {
                         pair_address,
                         side,
                         price,
@@ -217,7 +217,7 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 mod create_trigger_tests {
     use super::*;
     use calc_rs::{
-        condition::Condition,
+        conditions::condition::Condition,
         scheduler::{ConditionFilter, CreateTriggerMsg, Trigger},
     };
     use cosmwasm_std::{
@@ -376,7 +376,7 @@ mod create_trigger_tests {
 
         let pair_address = Addr::unchecked("pair-0");
 
-        let condition = Condition::LimitOrderFilled {
+        let condition = Condition::FinLimitOrderFilled {
             owner: Addr::unchecked("owner"),
             pair_address,
             side: Side::Base,
@@ -440,7 +440,7 @@ mod create_trigger_tests {
 
         let pair_address = Addr::unchecked("pair-0");
 
-        let condition = Condition::LimitOrderFilled {
+        let condition = Condition::FinLimitOrderFilled {
             owner: Addr::unchecked("owner"),
             pair_address: pair_address.clone(),
             side: Side::Base,
@@ -476,7 +476,7 @@ mod create_trigger_tests {
         let side = Side::Base;
         let price = Decimal::percent(100);
 
-        let condition = Condition::LimitOrderFilled {
+        let condition = Condition::FinLimitOrderFilled {
             owner: Addr::unchecked("owner"),
             pair_address: pair_address.clone(),
             side: side.clone(),
@@ -542,7 +542,7 @@ mod create_trigger_tests {
 
         let pair_address = Addr::unchecked("pair-0");
 
-        let condition = Condition::LimitOrderFilled {
+        let condition = Condition::FinLimitOrderFilled {
             owner: Addr::unchecked("owner"),
             pair_address: pair_address.clone(),
             side: Side::Quote,
@@ -610,7 +610,7 @@ mod create_trigger_tests {
 #[cfg(test)]
 mod execute_trigger_tests {
     use super::*;
-    use calc_rs::condition::Condition;
+    use calc_rs::conditions::condition::Condition;
     use calc_rs::manager::ManagerExecuteMsg;
     use calc_rs::scheduler::{ConditionFilter, CreateTriggerMsg};
     use cosmwasm_std::testing::message_info;
@@ -689,7 +689,7 @@ mod execute_trigger_tests {
         let side = Side::Base;
         let price = Decimal::percent(100);
 
-        let condition = Condition::LimitOrderFilled {
+        let condition = Condition::FinLimitOrderFilled {
             owner: Addr::unchecked("owner"),
             pair_address: Addr::unchecked("pair-0"),
             side: side.clone(),
@@ -968,7 +968,7 @@ mod filtered_triggers_tests {
     use super::*;
 
     use calc_rs::{
-        condition::Condition,
+        conditions::condition::Condition,
         scheduler::{ConditionFilter, Trigger},
     };
     use cosmwasm_std::{
@@ -1207,7 +1207,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(i as u64),
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
@@ -1247,7 +1247,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(j as u64),
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
@@ -1275,7 +1275,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(i as u64),
                         msg: Binary::default(),
                         contract_address: Addr::unchecked("manager"),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
@@ -1318,7 +1318,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(j as u64),
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
@@ -1346,7 +1346,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(i as u64),
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
@@ -1389,7 +1389,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(j as u64),
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,
@@ -1417,7 +1417,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(i as u64),
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
                             side: Side::Base,
@@ -1460,7 +1460,7 @@ mod filtered_triggers_tests {
                         id: Uint64::from(j as u64),
                         contract_address: Addr::unchecked("manager"),
                         msg: Binary::default(),
-                        condition: Condition::LimitOrderFilled {
+                        condition: Condition::FinLimitOrderFilled {
                             owner: Addr::unchecked("owner"),
                             pair_address: Addr::unchecked("pair-0"),
                             side: Side::Base,

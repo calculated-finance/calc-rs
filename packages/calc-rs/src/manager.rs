@@ -14,7 +14,6 @@ pub struct ManagerConfig {
 pub enum StrategyStatus {
     Active,
     Paused,
-    Archived,
 }
 
 impl<'a> Prefixer<'a> for StrategyStatus {

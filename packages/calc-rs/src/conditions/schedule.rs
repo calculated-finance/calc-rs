@@ -5,11 +5,11 @@ use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Coins, Deps, Env, Event, 
 use cron::Schedule as CronSchedule;
 
 use crate::{
-    actions::operation::Operation,
     cadence::Cadence,
-    condition::Condition,
+    conditions::condition::Condition,
     core::Contract,
     manager::{Affiliate, ManagerExecuteMsg},
+    operation::Operation,
     scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
@@ -178,34 +178,5 @@ impl Operation<Condition> for Schedule {
             .iter()
             .map(|coin| coin.denom.clone())
             .collect())
-    }
-
-    fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::new())
-    }
-
-    fn commit(self, _deps: Deps, _env: &Env) -> StdResult<Condition> {
-        Ok(Condition::Schedule(self))
-    }
-
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
-        Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
-        Ok((vec![], vec![], Condition::Schedule(self)))
-    }
-
-    fn cancel(
-        self,
-        _deps: Deps,
-        _env: &Env,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
-        Ok((vec![], vec![], Condition::Schedule(self)))
     }
 }

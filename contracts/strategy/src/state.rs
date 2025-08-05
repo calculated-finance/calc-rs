@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use calc_rs::{
-    actions::operation::Operation,
     constants::MAX_STRATEGY_SIZE,
     manager::Affiliate,
+    operation::Operation,
     statistics::Statistics,
     strategy::{Node, StrategyOperation},
 };
@@ -137,22 +137,18 @@ impl NodeStore {
         env: &Env,
         operation: &StrategyOperation,
         current: &Node,
-    ) -> StdResult<Option<Node>> {
+    ) -> StdResult<Node> {
         if operation != &StrategyOperation::Execute {
-            return Ok(self
-                .load(deps.storage, current.index() + 1)
-                .map_or(None, |node| Some(node)));
+            return self.load(deps.storage, current.index() + 1);
         }
 
-        let next = current.next_index(deps, env);
-
-        if let Some(index) = next {
-            if let Some(node) = self.store.may_load(deps.storage, index)? {
-                return Ok(Some(node));
-            }
+        if let Some(next) = current.next_index(deps, env) {
+            return self.load(deps.storage, next);
         }
 
-        Ok(None)
+        Err(StdError::generic_err(
+            "No next node found for the current node",
+        ))
     }
 }
 

@@ -1,15 +1,15 @@
 use std::{collections::HashSet, mem::discriminant};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult};
+use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult};
 
 use crate::{
     actions::{
         action::Action,
-        operation::Operation,
         swaps::{fin::FinRoute, thor::ThorchainRoute},
     },
     manager::Affiliate,
+    operation::Operation,
     strategy::StrategyMsg,
 };
 
@@ -324,30 +324,5 @@ impl Operation<Action> for Swap {
             self.swap_amount.denom.clone(),
             self.minimum_receive_amount.denom.clone(),
         ]))
-    }
-
-    fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::from([self.minimum_receive_amount.denom.clone()]))
-    }
-
-    fn commit(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
-        Ok(Action::Swap(self))
-    }
-
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
-        Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::Swap(self)))
-    }
-
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::Swap(self)))
     }
 }

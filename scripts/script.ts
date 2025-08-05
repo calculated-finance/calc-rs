@@ -754,7 +754,6 @@ export const PAIR_ADDRESS =
 // updateStrategy(STRATEGY_ADDRESS, {
 //   manager: "sthor1xg6qsvyktr0zyyck3d67mgae0zun4lhwwn3v9pqkl5pk8mvkxsnscenkc0",
 //   owner: "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka",
-//   escrowed: ["rune", "eth-usdt"],
 //   action: {
 //     exhibit: {
 //       actions: [

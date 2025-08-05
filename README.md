@@ -2,7 +2,7 @@
 
 A decentralized framework for creating, managing, and automating on-chain trading strategies built on CosmWasm.
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-BSL%201.1-orange.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
 [![CosmWasm](https://img.shields.io/badge/CosmWasm-2.2+-green.svg)](https://cosmwasm.com)
 
@@ -80,64 +80,149 @@ calc-rs/
 
 ## How It Works
 
-The protocol enables users to define trading strategies as a tree of `Action`s. This declarative approach separates the user's desired actions (the _what_) from the contract's execution logic (the _how_).
+The protocol enables users to define trading strategies as directed acyclic graphs (DAGs) of interconnected nodes. This declarative approach separates the user's desired actions (the _what_) from the contract's execution logic (the _how_), providing a flexible framework for creating on chain trading strategies.
 
 ### 1. Defining a Strategy
 
-A strategy is defined using a recursive `Action` enum, which can represent:
+A strategy is defined as a DAG (Directed Acyclic Graph) of interconnected nodes:
 
-- **`Swap`:** Execute token swaps across different DEXs
-- **`Distribute`:** Distribute funds to multiple destinations
-- **`LimitOrder`:** Place and manage limit orders on decentralized exchanges
-- **`Schedule`:** Execute actions on a recurring basis (time-based, block-based, price-based, or cron-like)
-- **`Conditional`:** Execute actions only when specific conditions are met
-- **`Many`:** Execute multiple actions in sequence
+#### Node Types
+
+**Action Nodes** execute concrete operations:
+
+- **`Swap`:** Execute a token swap across multiple DEX protocols with slippage protection
+- **`Distribute`:** Send funds to multiple recipients with share-based allocations
+- **`LimitOrder`:** Place and manage static or dynamic limit orders
+
+**Condition Nodes** provide branching logic:
+
+- **Time-based:** `TimestampElapsed`, `BlocksCompleted`, `Schedule` for temporal execution
+- **Market-based:** `CanSwap`, `LimitOrderFilled`, `OraclePrice` for market conditions
+- **Balance-based:** `BalanceAvailable`, `StrategyBalanceAvailable` for fund checks
+- **Logical:** `Not` for logical negation of other conditions
+
+#### Graph Structure
+
+Each node contains an index and references to subsequent nodes. Action nodes have a `next` field, while condition nodes have `on_success` and `on_failure` edges, enabling branching logic:
+
+```
+Node 0: Condition(PriceCheck)
+    ├─ on_success: Node 2 (Swap)
+    └─ on_failure: Node 1 (Distribute)
+
+Node 1: Action(Distribute) → next: None
+Node 2: Action(Swap) → next: Node 3 (LimitOrder)
+Node 3: Action(LimitOrder) → next: None
+```
 
 ### 2. Instantiating a Strategy
 
-Strategies are instantiated on-chain via the `manager` contract. The `manager` acts as a factory, creating a new, isolated `strategy` contract for each unique strategy definition.
+Strategies are instantiated on-chain via the `manager` contract, which acts as a factory:
+
+1. **Validation:** The manager validates the strategy graph structure and prevents cycles
+2. **Deployment:** Creates a new isolated `strategy` contract using deterministic addresses
+3. **Initialization:** The strategy contract validates the graph and initializes all nodes
+4. **Auto-execution:** Immediately begins the first execution cycle
 
 ### 3. Executing a Strategy
 
-Strategies can be executed in two ways:
+#### Sequential Graph Traversal
 
-- **Manually:** Anyone can call the `ExecuteStrategy` message on the `manager` contract to trigger a strategy's execution
-- **Automatically:** The `scheduler` contract automates execution. Users create `Triggers` that link a `Condition` to a strategy. Keepers are incentivised to monitor the `scheduler` and execute these triggers when their conditions are met
+The strategy contract executes nodes sequentially following the graph edges:
 
-### 4. State Management
+1. **Linear Execution:** Action nodes execute and proceed to their `next` node
+2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failure` edges
+3. **Fresh Balances:** Each operation queries fresh balances for accurate execution
+4. **Message Generation:** When external calls are needed, execution pauses and resumes after completion
+5. **Termination:** Execution completes when a terminal node is reached (i.e. an action with no `next` pointer, or a condition with `None` for its relevant `on_success` or `on_failure` pointer)
 
-The `strategy` contract is stateful and uses a two-phase commit process to manage state transitions. This ensures that the execution of all actions is atomic and that the strategy is always in a consistent state, even when interacting with external protocols.
+#### Execution Triggers
+
+Strategies can be executed in multiple ways:
+
+- **Manual:** Anyone can call `Execute` on the `manager` contract to trigger execution
+- **Automated:** The `scheduler` contract enables automated execution via `Triggers`
+- **Conditional:** Keepers monitor conditions and execute triggers when satisfied
+- **Self-triggering:** Strategies can schedule their own re-execution via time-based conditions
+
+### 4. State Management and Updates
+
+The strategy contract implements sophisticated state management:
+
+#### Operation Lifecycle
+
+Each operation follows a standardized lifecycle through the Operation trait:
+
+- **`init`:** Initialize the operation with validation and setup
+- **`execute`:** Generate blockchain messages and update state
+- **`commit`:** Finalize state changes after successful execution
+- **`cancel`:** Clean up state and unwind positions
+
+#### Hot-swapping Strategies
+
+The contract supports dynamic strategy updates through a three-phase process:
+
+1. **Cancel Phase:** Existing strategy executes in Cancel mode to clean up state
+2. **Replace Phase:** New strategy graph is initialized and validated
+3. **Execute Phase:** New strategy immediately begins execution
+
+This enables safe updates without losing funds or corrupting state.
+
+#### Fund Isolation
+
+Each strategy contract manages its own isolated funds:
+
+- **Denomination Tracking:** Automatically tracks all tokens used by the strategy
+- **Balance Queries:** Real-time balance reporting across all holdings
 
 ## Core Features
 
-- **Declarative Strategies:** Define strategies by composing modular `Action` blocks, separating logic from execution
-- **Automated Execution:** Decentralized automation through the `scheduler` contract with executor incentives
-- **Isolated State:** Each strategy runs in its own contract with isolated state and funds
+- **DAG-Based Execution:** Strategies are represented as directed acyclic graphs with action and condition nodes
+- **Sequential Processing:** Ensures fresh balance queries between operations for accurate execution
+- **Conditional Branching:** Condition nodes enable complex control flow based on runtime evaluation
+- **Operation Polymorphism:** Unified operation interface supporting swaps, limit orders, distributions, and more
+- **Cycle Prevention:** Built-in validation ensures strategies cannot create infinite execution loops
+- **Automated Execution:** Decentralized automation through the `scheduler` contract with keeper incentives
+- **Fund Isolation:** Each strategy runs in its own contract with isolated state and funds
+- **Hot-swapping:** Dynamic strategy updates with safe state transitions
 - **Centralized Management:** The `manager` contract provides a central registry for strategy discovery and management
-- **Flexible Conditions:** Support for time-based, event-based, and market condition-based triggers & conditions
 - **Affiliate Support:** Built-in support for affiliate fees and revenue sharing
 - **Multi-DEX Integration:** Support for swaps across multiple decentralized exchanges
 
-## Action Types
+## Node Types and Operations
 
-### Basic Actions
+### Action Nodes
 
-- **Swap:** Execute token swaps with configurable routes and slippage protection
-- **LimitOrder:** Place limit orders on DEXs that support them
-- **Distribute:** Send tokens to multiple addresses with percentage-based allocation
+Action nodes represent concrete operations that modify state or generate blockchain messages:
 
-### Composite Actions
+- **Swap:** Execute token swaps across multiple DEX protocols with configurable routes and slippage protection
+- **LimitOrder:** Place and manage static or dynamic limit orders on supported DEXs
+- **Distribute:** Send tokens to multiple addresses with percentage-based allocation and affiliate fee integration
 
-- **Schedule:** Recurring execution based on:
-  - Time intervals (every N seconds/minutes/hours)
-  - Block intervals (every N blocks)
-  - Cron expressions for complex scheduling
-- **Conditional:** Execute actions when conditions are satisfied:
-  - Time-based conditions
-  - Balance thresholds
-  - Market conditions
-  - External price feeds
-- **Many:** Combine multiple actions into a single execution sequence
+### Condition Nodes
+
+Condition nodes provide branching logic and control flow based on runtime evaluation:
+
+#### Time-based Conditions
+
+- **TimestampElapsed:** Check if a specific timestamp has passed
+- **BlocksCompleted:** Check if a certain number of blocks have elapsed
+- **Schedule:** Complex scheduling with cron-like expressions for recurring execution
+
+#### Market-based Conditions
+
+- **CanSwap:** Verify if a swap is possible with current liquidity
+- **LimitOrderFilled:** Check if a limit order has been filled
+- **OraclePrice:** Compare current price against oracle data
+
+#### Balance-based Conditions
+
+- **BalanceAvailable:** Check if sufficient balance is available for operations
+- **StrategyBalanceAvailable:** Check balances across all strategy holdings
+
+#### Logical Conditions
+
+- **Not:** Logical negation of other conditions for complex logic
 
 ## Development
 
@@ -206,35 +291,41 @@ cargo test -p strategy
 
 ### State Machine
 
-Each strategy contract follows a state machine pattern:
+Each strategy contract implements a sophisticated execution model:
 
-1. **Committed:** Strategy is ready for execution
-2. **Active:** Strategy is currently executing actions
-3. **Executable:** Strategy has completed execution and is ready to be saved
+1. **Graph Validation:** Strategy graphs are validated during initialization using topological sorting to prevent cycles
+2. **Sequential Traversal:** Nodes execute sequentially following graph edges with conditional branching
+3. **Fresh Balance Queries:** Each operation queries current balances for accurate execution
+4. **Message Pausing:** When external calls are needed, execution pauses and resumes after completion
+5. **State Persistence:** Node state updates are saved individually for optimal storage and recovery
 
-This ensures atomic execution and consistent state management.
+The execution engine ensures atomic operations and consistent state management across all strategy types.
 
 ## API Reference
 
 ### Manager Contract
 
-- **InstantiateStrategy:** Create a new strategy contract
-- **ExecuteStrategy:** Manually execute a strategy
-- **UpdateStrategy:** Update an existing strategy (owner only)
-- **Query:** Retrieve strategy information and status
+- **Instantiate:** Create a new strategy contract with DAG validation
+- **Execute:** Manually trigger strategy execution
+- **Update:** Update an existing strategy with new DAG structure (owner only)
+- **UpdateStatus:** Change strategy status (Active/Paused/Archived)
+- **Query:** Retrieve strategy information, statistics, and registry data
 
 ### Scheduler Contract
 
-- **Create:** Register a new trigger
-- **Execute:** Execute triggers when conditions are met
-- **Query:** Retrieve trigger information and status
+- **Create:** Register a new trigger linking conditions to contract execution
+- **Execute:** Execute triggers when their conditions are satisfied
+- **Query:** Retrieve trigger information and check execution eligibility
 
 ### Strategy Contract
 
-- **Execute:** Run the strategy's action tree
-- **Update:** Modify the strategy configuration
-- **Withdraw:** Retrieve funds from the strategy
-- **Query:** Get strategy state and execution history
+- **Init:** Initialize strategy graph with validation and node setup (auto-called)
+- **Execute:** Run the strategy's DAG traversal and node execution
+- **Update:** Replace strategy with new DAG via three-phase hot-swap process
+- **Withdraw:** Retrieve funds from the strategy with affiliate fee processing
+- **Cancel:** Cancel all active operations and clean up state
+- **Process:** Internal message for graph traversal and node execution
+- **Query:** Get strategy configuration, statistics, and balance information
 
 ## Contributing
 
@@ -249,7 +340,13 @@ This ensures atomic execution and consistent state management.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Business Source License 1.1 (BSL). See the [LICENSE](LICENSE) file for details.
+
+Summary:
+
+- Non-commercial use only until August 5, 2028
+- On August 5, 2028, the license automatically converts to Apache License, Version 2.0
+- For more information, see https://mariadb.com/bsl11
 
 ## Acknowledgments
 

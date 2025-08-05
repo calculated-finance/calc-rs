@@ -6,7 +6,9 @@ use cosmwasm_std::{Addr, Decimal, Deps, Env, StdError, StdResult, Timestamp};
 use cron::Schedule as CronSchedule;
 use rujira_rs::fin::Side;
 
-use crate::{actions::limit_order::OrderPriceStrategy, condition::Condition};
+use crate::{
+    actions::limit_orders::fin_limit_order::PriceStrategy, conditions::condition::Condition,
+};
 
 #[cw_serde]
 pub enum Cadence {
@@ -26,7 +28,7 @@ pub enum Cadence {
         pair_address: Addr,
         side: Side,
         previous: Option<Decimal>,
-        strategy: OrderPriceStrategy,
+        strategy: PriceStrategy,
     },
 }
 
@@ -55,15 +57,15 @@ impl Cadence {
             } => {
                 if let Some(previous) = previous {
                     match strategy {
-                        OrderPriceStrategy::Fixed(price) => Condition::LimitOrderFilled {
+                        PriceStrategy::Fixed(price) => Condition::FinLimitOrderFilled {
                             owner: scheduler.clone(),
                             pair_address: pair_address.clone(),
                             side: side.clone(),
                             price: price.clone(),
                         }
                         .is_satisfied(deps, env)?,
-                        OrderPriceStrategy::Offset { .. } => {
-                            let previous_order_filled = Condition::LimitOrderFilled {
+                        PriceStrategy::Offset { .. } => {
+                            let previous_order_filled = Condition::FinLimitOrderFilled {
                                 owner: scheduler.clone(),
                                 pair_address: pair_address.clone(),
                                 side: side.clone(),
@@ -125,7 +127,7 @@ impl Cadence {
                     strategy.get_new_price(deps, pair_address, side)?
                 };
 
-                Condition::LimitOrderFilled {
+                Condition::FinLimitOrderFilled {
                     owner: scheduler.clone(),
                     pair_address: pair_address.clone(),
                     side: side.clone(),
@@ -227,7 +229,7 @@ impl Cadence {
 #[cfg(test)]
 mod tests {
     use crate::{
-        actions::limit_order::{Direction, Offset},
+        actions::limit_orders::fin_limit_order::{Direction, Offset},
         cadence::Cadence,
     };
 
@@ -432,7 +434,7 @@ mod tests {
 
         let pair_address = Addr::unchecked("pair");
         let side = Side::Base;
-        let fixed_strategy = OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap());
+        let fixed_strategy = PriceStrategy::Fixed(Decimal::from_str("100.0").unwrap());
 
         assert_eq!(
             Cadence::LimitOrder {
@@ -451,7 +453,7 @@ mod tests {
             }
         );
 
-        let offset_strategy = OrderPriceStrategy::Offset {
+        let offset_strategy = PriceStrategy::Offset {
             direction: Direction::Above,
             offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
             tolerance: Some(Offset::Percent(50)),
@@ -638,7 +640,7 @@ mod tests {
 
         let pair_address = Addr::unchecked("pair");
         let side = Side::Base;
-        let fixed_strategy = OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap());
+        let fixed_strategy = PriceStrategy::Fixed(Decimal::from_str("100.0").unwrap());
 
         assert_eq!(
             Cadence::LimitOrder {
@@ -649,7 +651,7 @@ mod tests {
             }
             .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
             .unwrap(),
-            Condition::LimitOrderFilled {
+            Condition::FinLimitOrderFilled {
                 owner: Addr::unchecked("scheduler"),
                 pair_address: pair_address.clone(),
                 side: side.clone(),
@@ -657,7 +659,7 @@ mod tests {
             }
         );
 
-        let offset_strategy = OrderPriceStrategy::Offset {
+        let offset_strategy = PriceStrategy::Offset {
             direction: Direction::Above,
             offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
             tolerance: Some(Offset::Percent(50)),
@@ -688,7 +690,7 @@ mod tests {
             }
             .into_condition(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
             .unwrap(),
-            Condition::LimitOrderFilled {
+            Condition::FinLimitOrderFilled {
                 owner: Addr::unchecked("scheduler"),
                 pair_address: pair_address.clone(),
                 side: side.clone(),
@@ -802,7 +804,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: None,
-            strategy: OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
+            strategy: PriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
@@ -827,7 +829,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: Some(Decimal::from_str("100.0").unwrap()),
-            strategy: OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
+            strategy: PriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
@@ -852,7 +854,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: Some(Decimal::from_str("100.0").unwrap()),
-            strategy: OrderPriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
+            strategy: PriceStrategy::Fixed(Decimal::from_str("100.0").unwrap())
         }
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
@@ -861,7 +863,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: None,
-            strategy: OrderPriceStrategy::Offset {
+            strategy: PriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -890,7 +892,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: Some(Decimal::from_str("1.55").unwrap()),
-            strategy: OrderPriceStrategy::Offset {
+            strategy: PriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -934,7 +936,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: Some(Decimal::from_str("1.65").unwrap()),
-            strategy: OrderPriceStrategy::Offset {
+            strategy: PriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -978,7 +980,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: Some(Decimal::from_str("1.65").unwrap()),
-            strategy: OrderPriceStrategy::Offset {
+            strategy: PriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -1022,7 +1024,7 @@ mod tests {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: Some(Decimal::from_str("1.65").unwrap()),
-            strategy: OrderPriceStrategy::Offset {
+            strategy: PriceStrategy::Offset {
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(1)),

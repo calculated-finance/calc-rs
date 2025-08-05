@@ -6,10 +6,11 @@ use cosmwasm_std::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation},
-    condition::Condition,
+    actions::action::Action,
+    conditions::condition::Condition,
     constants::PROCESS_PAYLOAD_REPLY_ID,
     manager::Affiliate,
+    operation::{Operation, StatefulOperation},
     statistics::Statistics,
 };
 
@@ -226,14 +227,9 @@ impl Operation<Node> for Node {
             Node::Condition { condition, .. } => condition.denoms(deps, env),
         }
     }
+}
 
-    fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        match self {
-            Node::Action { action, .. } => action.escrowed(deps, env),
-            Node::Condition { condition, .. } => condition.escrowed(deps, env),
-        }
-    }
-
+impl StatefulOperation<Node> for Node {
     fn commit(self, deps: Deps, env: &Env) -> StdResult<Node> {
         Ok(match self {
             Node::Action {
@@ -245,24 +241,14 @@ impl Operation<Node> for Node {
                 index,
                 next,
             },
-            Node::Condition {
-                condition,
-                index,
-                on_success,
-                on_fail,
-            } => Node::Condition {
-                condition: condition.commit(deps, env)?,
-                index,
-                on_success,
-                on_fail,
-            },
+            _ => self,
         })
     }
 
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
         match self {
             Node::Action { action, .. } => action.balances(deps, env, denoms),
-            Node::Condition { condition, .. } => condition.balances(deps, env, denoms),
+            _ => Ok(Coins::default()),
         }
     }
 
@@ -289,24 +275,7 @@ impl Operation<Node> for Node {
                     },
                 ))
             }
-            Node::Condition {
-                condition,
-                index,
-                on_success,
-                on_fail,
-            } => {
-                let (messages, events, condition) = condition.withdraw(deps, env, desired)?;
-                Ok((
-                    messages,
-                    events,
-                    Node::Condition {
-                        condition,
-                        index,
-                        on_success,
-                        on_fail,
-                    },
-                ))
-            }
+            _ => Ok((vec![], vec![], self)),
         }
     }
 
@@ -328,24 +297,7 @@ impl Operation<Node> for Node {
                     },
                 ))
             }
-            Node::Condition {
-                condition,
-                index,
-                on_success,
-                on_fail,
-            } => {
-                let (messages, events, condition) = condition.cancel(deps, env)?;
-                Ok((
-                    messages,
-                    events,
-                    Node::Condition {
-                        condition,
-                        index,
-                        on_success,
-                        on_fail,
-                    },
-                ))
-            }
+            _ => Ok((vec![], vec![], self)),
         }
     }
 }

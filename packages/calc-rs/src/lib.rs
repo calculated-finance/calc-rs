@@ -1,10 +1,11 @@
 pub mod actions;
 pub mod cadence;
-pub mod condition;
+pub mod conditions;
 pub mod constants;
 pub mod core;
 pub mod events;
 pub mod manager;
+pub mod operation;
 pub mod scheduler;
 pub mod statistics;
 pub mod strategy;

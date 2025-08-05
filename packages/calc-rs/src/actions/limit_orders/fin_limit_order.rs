@@ -9,9 +9,10 @@ use rujira_rs::fin::{
 };
 
 use crate::{
-    actions::{action::Action, operation::Operation},
+    actions::action::Action,
     core::Contract,
     manager::Affiliate,
+    operation::{Operation, StatefulOperation},
     statistics::Statistics,
     strategy::{StrategyMsg, StrategyMsgPayload},
 };
@@ -68,7 +69,7 @@ pub enum Offset {
 }
 
 #[cw_serde]
-pub enum OrderPriceStrategy {
+pub enum PriceStrategy {
     Fixed(Decimal),
     Offset {
         direction: Direction,
@@ -77,11 +78,11 @@ pub enum OrderPriceStrategy {
     },
 }
 
-impl OrderPriceStrategy {
+impl PriceStrategy {
     pub fn should_reset(&self, current_price: Decimal, new_price: Decimal) -> bool {
         match self {
-            OrderPriceStrategy::Fixed(_) => current_price != new_price,
-            OrderPriceStrategy::Offset { tolerance, .. } => {
+            PriceStrategy::Fixed(_) => current_price != new_price,
+            PriceStrategy::Offset { tolerance, .. } => {
                 if let Some(tolerance) = tolerance {
                     let price_delta = current_price.abs_diff(new_price);
                     match tolerance {
@@ -104,8 +105,8 @@ impl OrderPriceStrategy {
         side: &Side,
     ) -> StdResult<Decimal> {
         Ok(match self.clone() {
-            OrderPriceStrategy::Fixed(price) => price,
-            OrderPriceStrategy::Offset {
+            PriceStrategy::Fixed(price) => price,
+            PriceStrategy::Offset {
                 direction, offset, ..
             } => {
                 let book = deps.querier.query_wasm_smart::<BookResponse>(
@@ -168,7 +169,7 @@ pub struct StaleOrder {
 }
 
 impl StaleOrder {
-    pub fn refresh(self, deps: Deps, env: &Env, config: &LimitOrder) -> StdResult<SetOrder> {
+    pub fn refresh(self, deps: Deps, env: &Env, config: &FinLimitOrder) -> StdResult<SetOrder> {
         let order = deps.querier.query_wasm_smart::<OrderResponse>(
             config.pair_address.clone(),
             &QueryMsg::Order((
@@ -202,14 +203,14 @@ pub struct WithdrawingOrder {
 }
 
 #[cw_serde]
-pub struct LimitOrderState<S> {
-    pub config: LimitOrder,
+pub struct FinLimitOrderState<S> {
+    pub config: FinLimitOrder,
     pub state: S,
 }
 
-impl LimitOrderState<UnsetOrder> {
-    pub fn new(config: LimitOrder) -> Self {
-        LimitOrderState {
+impl FinLimitOrderState<UnsetOrder> {
+    pub fn new(config: FinLimitOrder) -> Self {
+        FinLimitOrderState {
             config,
             state: UnsetOrder {
                 remaining: Uint128::zero(),
@@ -218,7 +219,7 @@ impl LimitOrderState<UnsetOrder> {
         }
     }
 
-    pub fn set(self, deps: Deps, env: &Env) -> StdResult<LimitOrderState<SettingOrder>> {
+    pub fn set(self, deps: Deps, env: &Env) -> StdResult<FinLimitOrderState<SettingOrder>> {
         let price = self.config.strategy.get_new_price(
             deps,
             &self.config.pair_address,
@@ -242,7 +243,7 @@ impl LimitOrderState<UnsetOrder> {
         let funding = min(balance.amount + self.state.withdrawing, final_offer);
 
         if funding.is_zero() && !should_reset {
-            return Ok(LimitOrderState {
+            return Ok(FinLimitOrderState {
                 config: self.config,
                 state: SettingOrder {
                     price,
@@ -281,7 +282,7 @@ impl LimitOrderState<UnsetOrder> {
             },
         );
 
-        Ok(LimitOrderState {
+        Ok(FinLimitOrderState {
             config: self.config,
             state: SettingOrder {
                 price,
@@ -293,12 +294,12 @@ impl LimitOrderState<UnsetOrder> {
     }
 }
 
-impl LimitOrderState<SettingOrder> {
-    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, LimitOrderState<SetOrder>) {
+impl FinLimitOrderState<SettingOrder> {
+    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, FinLimitOrderState<SetOrder>) {
         (
             self.state.messages,
             self.state.events,
-            LimitOrderState {
+            FinLimitOrderState {
                 config: self.config,
                 state: SetOrder {
                     price: self.state.price,
@@ -311,8 +312,8 @@ impl LimitOrderState<SettingOrder> {
     }
 }
 
-impl LimitOrderState<SetOrder> {
-    pub fn withdraw(self) -> StdResult<LimitOrderState<WithdrawingOrder>> {
+impl FinLimitOrderState<SetOrder> {
+    pub fn withdraw(self) -> StdResult<FinLimitOrderState<WithdrawingOrder>> {
         let withdraw_order_message = StrategyMsg::with_payload(
             Contract(self.config.pair_address.clone()).call(
                 to_json_binary(&ExecuteMsg::Order((
@@ -344,7 +345,7 @@ impl LimitOrderState<SetOrder> {
             },
         );
 
-        Ok(LimitOrderState {
+        Ok(FinLimitOrderState {
             config: self.config,
             state: WithdrawingOrder {
                 withdrawing: self.state.remaining,
@@ -355,7 +356,10 @@ impl LimitOrderState<SetOrder> {
         })
     }
 
-    pub fn saturating_withdraw(self, deps: Deps) -> StdResult<LimitOrderState<WithdrawingOrder>> {
+    pub fn saturating_withdraw(
+        self,
+        deps: Deps,
+    ) -> StdResult<FinLimitOrderState<WithdrawingOrder>> {
         let new_price = self.config.strategy.get_new_price(
             deps,
             &self.config.pair_address,
@@ -372,7 +376,7 @@ impl LimitOrderState<SetOrder> {
             return self.withdraw();
         }
 
-        Ok(LimitOrderState {
+        Ok(FinLimitOrderState {
             config: self.config,
             state: WithdrawingOrder {
                 withdrawing: Uint128::zero(),
@@ -387,12 +391,12 @@ impl LimitOrderState<SetOrder> {
     }
 }
 
-impl LimitOrderState<WithdrawingOrder> {
-    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, LimitOrderState<UnsetOrder>) {
+impl FinLimitOrderState<WithdrawingOrder> {
+    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, FinLimitOrderState<UnsetOrder>) {
         (
             self.state.messages,
             self.state.events,
-            LimitOrderState {
+            FinLimitOrderState {
                 config: self.config,
                 state: UnsetOrder {
                     remaining: self.state.remaining,
@@ -404,16 +408,16 @@ impl LimitOrderState<WithdrawingOrder> {
 }
 
 #[cw_serde]
-pub struct LimitOrder {
+pub struct FinLimitOrder {
     pub pair_address: Addr,
     pub bid_denom: String,
     pub max_bid_amount: Option<Uint128>,
     pub side: Side,
-    pub strategy: OrderPriceStrategy,
+    pub strategy: PriceStrategy,
     pub current_order: Option<StaleOrder>,
 }
 
-impl LimitOrder {
+impl FinLimitOrder {
     pub fn get_pair(&self, deps: Deps) -> StdResult<ConfigResponse> {
         deps.querier
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
@@ -428,7 +432,7 @@ impl LimitOrder {
         let mut events: Vec<Event> = vec![];
 
         let order = if let Some(existing_order) = self.current_order.clone() {
-            let existing_order_state = LimitOrderState {
+            let existing_order_state = FinLimitOrderState {
                 config: self.clone(),
                 state: existing_order.refresh(deps, env, &self)?,
             };
@@ -441,7 +445,7 @@ impl LimitOrder {
 
             withdrawn_order_state
         } else {
-            LimitOrderState::new(self)
+            FinLimitOrderState::new(self)
         };
 
         let (set_messages, set_events, set_order_state) = order.set(deps, env)?.execute();
@@ -452,7 +456,7 @@ impl LimitOrder {
         Ok((
             messages,
             events,
-            Action::LimitOrder(LimitOrder {
+            Action::LimitOrder(FinLimitOrder {
                 current_order: Some(set_order_state.state.cached()),
                 ..set_order_state.config
             }),
@@ -460,7 +464,7 @@ impl LimitOrder {
     }
 }
 
-impl Operation<Action> for LimitOrder {
+impl Operation<Action> for FinLimitOrder {
     fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Action> {
         if let Some(amount) = self.max_bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
@@ -503,15 +507,9 @@ impl Operation<Action> for LimitOrder {
             pair.denoms.quote().to_string(),
         ]))
     }
+}
 
-    fn escrowed(&self, deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        let pair = deps
-            .querier
-            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
-
-        Ok(HashSet::from([pair.denoms.ask(&self.side).to_string()]))
-    }
-
+impl StatefulOperation<Action> for FinLimitOrder {
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
         let pair = deps
             .querier
@@ -545,7 +543,7 @@ impl Operation<Action> for LimitOrder {
         }
 
         if let Some(existing_order) = self.current_order.clone() {
-            let order_state = LimitOrderState {
+            let order_state = FinLimitOrderState {
                 config: self.clone(),
                 state: existing_order.refresh(deps, env, &self)?,
             };
@@ -568,7 +566,7 @@ impl Operation<Action> for LimitOrder {
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
         if let Some(existing_order) = self.current_order.clone() {
-            let order_state = LimitOrderState {
+            let order_state = FinLimitOrderState {
                 config: self.clone(),
                 state: existing_order.refresh(deps, env, &self)?,
             };
@@ -593,7 +591,7 @@ impl Operation<Action> for LimitOrder {
         if let Some(existing_order) = self.current_order.clone() {
             match existing_order.refresh(deps, env, &self) {
                 Ok(_) => Ok(Action::LimitOrder(self)),
-                Err(_) => Ok(Action::LimitOrder(LimitOrder {
+                Err(_) => Ok(Action::LimitOrder(FinLimitOrder {
                     // Wipe the cached order if it does not exist
                     current_order: None,
                     ..self

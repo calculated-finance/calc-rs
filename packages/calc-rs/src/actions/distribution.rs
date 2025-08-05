@@ -7,9 +7,9 @@ use cosmwasm_std::{
 };
 
 use crate::actions::action::Action;
-use crate::actions::operation::Operation;
 use crate::constants::MAX_TOTAL_AFFILIATE_BPS;
 use crate::manager::Affiliate;
+use crate::operation::Operation;
 use crate::statistics::Statistics;
 use crate::strategy::{StrategyMsg, StrategyMsgPayload};
 use crate::thorchain::MsgDeposit;
@@ -256,30 +256,5 @@ impl Operation<Action> for Distribution {
 
     fn denoms(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
         Ok(self.denoms.iter().cloned().collect())
-    }
-
-    fn escrowed(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(self.denoms.iter().cloned().collect())
-    }
-
-    fn commit(self, _deps: Deps, _env: &Env) -> StdResult<Action> {
-        Ok(Action::Distribute(self))
-    }
-
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
-        Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::Distribute(self)))
-    }
-
-    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
-        Ok((vec![], vec![], Action::Distribute(self)))
     }
 }

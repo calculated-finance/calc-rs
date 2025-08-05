@@ -2,7 +2,7 @@
 
 ## High-Level Behaviour
 
-The `scheduler` contract is a decentralized automation engine that enables execution of arbitrary smart contract messages when predefined conditions are met. It acts as a public utility, allowing anyone to register a `Trigger` that links a `Condition` to a contract execution message. Keepers are incentivized to execute triggers by receiving execution rebates, creating a decentralized and reliable automation system.
+The `scheduler` contract is a decentralized automation engine that enables execution of arbitrary smart contract messages when predefined conditions are met. It acts as a public utility, allowing anyone to register a `Trigger` that links a `Condition` to a contract execution message. Keepers are incentivised to execute triggers by receiving execution rebates, creating a decentralized automation system.
 
 The contract maintains an indexed collection of `Triggers`, each containing:
 
@@ -10,7 +10,7 @@ The contract maintains an indexed collection of `Triggers`, each containing:
 - A message payload to execute on the target contract
 - An optional execution rebate to incentivize keepers
 - Optional executor restrictions for access control
-- Optional jitter for execution timing randomization
+- Optional jitter for execution timing randomization (only useful when combined with executor restrictions)
 
 ## Key Features
 
@@ -18,7 +18,7 @@ The contract maintains an indexed collection of `Triggers`, each containing:
 - **Keeper Incentivization:** Execution rebates reward keepers for monitoring and executing triggers
 - **Limit Order Integration:** Special handling for DEX limit orders with automatic order placement and withdrawal
 - **Efficient Querying:** Multi-indexed storage enables efficient filtering by condition type, timestamp, block height, and DEX pairs
-- **Duplicate Prevention:** Automatic replacement of existing triggers with the same ID
+- **Duplicate Prevention:** Deterministic trigger IDs based on message content prevent duplicate triggers
 - **Error Handling:** Robust error handling with reply mechanisms for failed executions
 
 - **Authorization:** Can be called by any address

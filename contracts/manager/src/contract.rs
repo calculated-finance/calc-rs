@@ -34,9 +34,10 @@ pub fn instantiate(
     Ok(Response::default())
 }
 
+pub struct MigrateMsg {}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
-    CONFIG.save(deps.storage, &msg)?;
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
     Ok(Response::default())
 }
 
@@ -227,7 +228,7 @@ pub fn execute(
             let strategy_msg = Contract(contract_address).call(
                 to_json_binary(&match status {
                     StrategyStatus::Active => StrategyExecuteMsg::Execute,
-                    StrategyStatus::Paused | StrategyStatus::Archived => StrategyExecuteMsg::Cancel,
+                    StrategyStatus::Paused => StrategyExecuteMsg::Cancel,
                 })?,
                 info.funds,
             );
@@ -309,7 +310,7 @@ mod tests {
             created_at: env.block.time.seconds(),
             updated_at: env.block.time.seconds(),
             label: "Test Strategy".to_string(),
-            status: StrategyStatus::Archived,
+            status: StrategyStatus::Paused,
         };
 
         STRATEGIES
@@ -365,7 +366,7 @@ mod tests {
             created_at: env.block.time.seconds(),
             updated_at: env.block.time.seconds(),
             label: "Test Strategy".to_string(),
-            status: StrategyStatus::Archived,
+            status: StrategyStatus::Paused,
         };
 
         STRATEGIES
@@ -416,7 +417,7 @@ mod tests {
             created_at: env.block.time.seconds(),
             updated_at: env.block.time.seconds(),
             label: "Test Strategy".to_string(),
-            status: StrategyStatus::Archived,
+            status: StrategyStatus::Paused,
         };
 
         STRATEGIES

@@ -1,5 +1,5 @@
 use calc_rs::{
-    condition::Condition,
+    conditions::condition::Condition,
     scheduler::{ConditionFilter, Trigger},
 };
 use cosmwasm_std::{Addr, Decimal, Order, StdResult, Storage, Uint64};
@@ -124,7 +124,7 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
             ),
             limit_order_pair: MultiIndex::new(
                 |_, t| match t.condition.clone() {
-                    Condition::LimitOrderFilled { pair_address, .. } => pair_address,
+                    Condition::FinLimitOrderFilled { pair_address, .. } => pair_address,
                     _ => Addr::unchecked(""),
                 },
                 "triggers_v1",
@@ -132,7 +132,7 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
             ),
             limit_order_pair_price: MultiIndex::new(
                 |_, t| match t.condition.clone() {
-                    Condition::LimitOrderFilled {
+                    Condition::FinLimitOrderFilled {
                         pair_address,
                         price,
                         ..

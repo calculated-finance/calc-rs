@@ -2,90 +2,142 @@
 
 ## High-Level Behaviour
 
-The `strategy` contract is the on-chain runtime environment for executing declarative trading strategies. It manages the complete lifecycle of a strategy, from initialization through execution, updates, and withdrawal.
+The `strategy` contract is the on-chain runtime environment for executing declarative trading strategies using a directed acyclic graph (DAG) execution model. It manages the complete lifecycle of a strategy, from initialization through execution, updates, and withdrawal.
 
-Each strategy contract is an isolated execution environment that owns and manages its own funds, executes its defined actions autonomously, and maintains statistics about its operations. The contract separates strategy definition (the _what_) from execution logic (the _how_), enabling strategies to be expressed declaratively.
+Each strategy contract is an isolated execution environment that owns and manages its own funds, executes its defined operations autonomously, and maintains statistics about its operations. The contract implements a graph-based execution engine where strategies are represented as a collection of interconnected nodes that execute sequentially with conditional branching.
 
 ## Key Features
 
-- **Atomic Execution:** Two-phase commit pattern ensures strategy state consistency
-- **State Machine Management:** Transitions through Committed → Active → Executable states
-- **Reentrancy Protection:** Guards against recursive calls and state corruption
-- **Stateful Operations:** Handles stateful operations like limit orders and scheduled actions
-- **Fund Isolation:** Each strategy manages its own isolated funds
-- **Statistics Tracking:** Comprehensive tracking of debits, credits, and distributions
-- **Dynamic Updates:** Hot-swapping of strategy logic with proper state unwinding
-- **Flexible Withdrawals:** Selective fund withdrawal with escrowed balance protection
+- **DAG-Based Execution:** Strategies are represented as directed acyclic graphs with action and condition nodes
+- **Sequential Processing:** Ensures fresh balance queries between operations for accurate execution
+- **Conditional Branching:** Condition nodes enable complex control flow based on runtime evaluation
+- **Operation Polymorphism:** Unified operation interface supporting swaps, limit orders, distributions, and more
+- **Cycle Prevention:** Built-in validation ensures strategies cannot create infinite execution loops
+- **Fund Isolation:** Each strategy manages its own isolated funds with denomination tracking
+- **Dynamic Updates:** Hot-swapping of strategy logic with proper cleanup of existing state
 
 ## Strategy Domain Model
 
-The strategy execution model is built around several key components:
+The strategy execution model is built around a graph of interconnected nodes:
 
-### Action Types
+### Node Types
+
+#### Action Nodes
+
+Action nodes represent concrete operations that modify state or generate blockchain messages:
 
 - **`Swap`:** Execute token swaps across multiple DEX protocols
-- **`Distribute`:** Send funds to multiple recipients with share based allocations
+- **`Distribute`:** Send funds to multiple recipients with share-based allocations
 - **`LimitOrder`:** Place and manage static or dynamic limit orders
-- **`Schedule`:** Execute actions on recurring schedules (time/block/cron/price-based)
-- **`Conditional`:** Execute actions only when specific conditions are met
-- **`Many`:** Execute multiple actions in sequence
 
-### Condition Types
+#### Condition Nodes
+
+Condition nodes provide branching logic and control flow:
 
 - **Time-based:** `TimestampElapsed`, `BlocksCompleted`
 - **Market-based:** `CanSwap`, `LimitOrderFilled`, `OraclePrice`
 - **Balance-based:** `BalanceAvailable`, `StrategyBalanceAvailable`
-- **Strategy-based:** `StrategyStatus`
-- **Logical:** `Not`, `Composite` (AND/OR combinations)
+- **Schedule-based:** `Schedule` for recurring execution patterns
+- **Logical:** `Not`
 
-## Contract State Machine
-
-The strategy contract implements a state machine to handle stateful operations:
-
-### State Transitions
-
-1. **Committed:** Strategy is at rest, ready for execution
-2. **Active:** Strategy is preparing for execution, generating messages
-3. **Executable:** Strategy has generated messages and is executing them
-4. **Committable:** Execution complete, ready to commit state changes
-
-### Execution Flow
+### Graph Structure
 
 ```
-Committed → prepare_to_execute() → Active → execute() → Executable
-    ↑                                                        ↓
-    ← commit() ← Committable ← sub-messages complete ←————————
+Node 0: Condition(PriceCheck)
+    ├─ on_success: Node 2 (Swap)
+    └─ on_failure: Node 1 (Distribute)
+
+Node 1: Action(Distribute)
+    └─ next: None
+
+Node 2: Action(Swap)
+    └─ next: Node 3 (LimitOrder)
+
+Node 3: Action(LimitOrder)
+    └─ next: None
 ```
 
-This pattern ensures that:
+Each node contains:
 
-- All strategy actions execute atomically
-- State is never left in an inconsistent state
-- Complex stateful operations (like limit orders) are properly managed
-- Recursive execution is prevented
+- **Index:** Unique position in the strategy graph
+- **Operation:** The actual business logic to execute
+- **Edges:** References to subsequent nodes (next, on_success, on_failure)
+
+## Execution Model
+
+### Graph Traversal
+
+The strategy contract executes nodes sequentially following the graph edges:
+
+1. **Linear Execution:** Action nodes execute and proceed to their `next` node
+2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failure` edges
+3. **Message Generation:** When a node generates blockchain messages, execution pauses for external calls
+4. **Continuation:** After external messages complete, execution resumes from the next node
+5. **Termination:** Execution completes when reaching a node with no outgoing edges
+
+### State Management
+
+Each node operation follows the Operation trait pattern:
+
+```rust
+pub trait Operation<T>: Send + Sync + Clone {
+    fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, T);
+    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<T>;
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
+    fn withdraw(self, deps: Deps, env: &Env, desired: &HashSet<String>) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, T)>;
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, T)>;
+}
+```
+
+### Cycle Prevention
+
+The contract validates strategy graphs during initialization using topological sorting:
+
+1. **Graph Analysis:** Builds adjacency list and calculates in-degrees for all nodes
+2. **Kahn's Algorithm:** Performs topological sort to detect cycles
+3. **Validation:** Rejects strategies that contain cycles to prevent infinite execution
+4. **Error Reporting:** Provides clear error messages for invalid graph structures
 
 ## Instantiate Message
 
 ```rust
-pub struct Strategy<Indexed> {
+pub struct StrategyInstantiateMsg {
+    pub contract_address: Addr,
     pub owner: Addr,
-    pub action: Action,
-    pub state: Indexed { contract_address: Addr },
+    pub nodes: Vec<Node>,
+    pub affiliates: Vec<Affiliate>,
 }
 ```
 
 Initializes a new strategy contract instance.
 
 - **Authorization:** Can be called by any address (typically the manager contract)
-- **Parameters:** A fully configured strategy with indexed state
+- **Parameters:** Complete strategy graph with owner and affiliate configuration
 - **Logic:**
-  1. Validates contract address matches the strategy's expected address
-  2. Analyzes the action tree to determine required and escrowed denominations
-  3. Initializes the strategy through validation and setup
-  4. Saves the strategy configuration in committed state
-  5. Immediately triggers first execution cycle
+  1. Validates contract address matches deployment address
+  2. Stores manager, owner, and affiliate information
+  3. Initializes strategy through graph validation and node setup
+  4. Automatically triggers first execution cycle
 
 ## Execute Messages
+
+### `Init(Vec<Node>)`
+
+Initializes the strategy graph with validation and setup.
+
+```rust
+StrategyExecuteMsg::Init(nodes)
+```
+
+- **Authorization:** Self-call only (triggered automatically after instantiation)
+- **Logic:**
+  1. Analyzes all nodes to determine required denominations
+  2. Validates graph structure and prevents cycles
+  3. Initializes each node through the Operation trait
+  4. Saves graph to storage with proper indexing
+  5. Triggers initial execution cycle
 
 ### `Execute`
 
@@ -95,93 +147,79 @@ Triggers the main strategy execution cycle.
 StrategyExecuteMsg::Execute
 ```
 
-- **Authorization:** Manager contract or self-call only
+- **Authorization:** Manager contract only
 - **Logic:**
-  1. Loads committed strategy from storage
-  2. Transitions to active state via `activate()`
-  3. Calls `prepare_to_execute()` to analyze action tree and generate messages
-  4. Saves active strategy state for state machine tracking
-  5. Dispatches generated messages with commit callback
-  6. Automatically schedules `Commit` message after sub-message completion
+  1. Creates internal message to start processing from node 0
+  2. Begins graph traversal with Execute operation mode
 
-### `Update(Strategy<Indexed>)`
+### `Update(Vec<Node>)`
 
-Updates the strategy with a new action definition.
+Updates the strategy with a new graph definition.
 
 ```rust
-StrategyExecuteMsg::Update(new_strategy)
+StrategyExecuteMsg::Update(new_nodes)
 ```
 
 - **Authorization:** Manager contract only
 - **Logic:**
-  1. **Phase 1 - Unwind:** Calls `prepare_to_cancel()` to generate cleanup messages for stateful actions
-  2. **Phase 2 - Conditional:** If cleanup needed, executes cleanup and recursively calls update
-  3. **Phase 3 - Replace:** If no cleanup needed, initializes new strategy and replaces current
-  4. **Phase 4 - Execute:** Immediately executes the new strategy
+  1. **Phase 1 - Cancel:** Executes existing strategy in Cancel mode to clean up state
+  2. **Phase 2 - Replace:** Initializes new strategy graph
+  3. **Phase 3 - Execute:** Immediately begins execution of new strategy
 
 This ensures safe hot-swapping of strategy logic without losing funds or corrupting state.
 
-### `Withdraw(HashSet<String>)`
+### `Withdraw(Vec<Coin>)`
 
-Withdraws funds from the strategy contract.
+Withdraws specified amounts from the strategy contract.
 
 ```rust
-StrategyExecuteMsg::Withdraw(desired_denoms)
+StrategyExecuteMsg::Withdraw(amounts)
 ```
 
-- **Authorization:** Strategy owner or self-call
-- **Parameters:** Set of denominations to withdraw (empty = all non-escrowed)
+- **Authorization:** Strategy owner only
+- **Parameters:** Specific coin amounts to withdraw
 - **Logic:**
-  1. Validates requested denoms are not escrowed (protected from withdrawal)
-  2. Calls `prepare_to_withdraw()` to release funds from stateful actions
-  3. If release needed, executes release and recursively calls withdraw
-  4. If no release needed, queries contract balances and sends to owner
-  5. Protects funds escrowed for CALC and affiliate fee disbursements
+  1. Validates requested amounts against available balances
+  2. Processes affiliate fee distributions
+  3. Sends remaining funds to strategy owner
 
-### `UpdateStatus(StrategyStatus)`
+### `Cancel`
 
-Changes the strategy's operational status.
+Cancels all active strategy operations and cleans up state.
 
 ```rust
-pub enum StrategyStatus {
-    Active,    // Strategy executes normally
-    Paused,    // Strategy execution suspended
-    Archived,  // Same as paused (used for filtering)
-}
+StrategyExecuteMsg::Cancel
 ```
 
 - **Authorization:** Manager contract only
 - **Logic:**
-  - **Active:** Prepares and executes strategy normally
-  - **Paused/Archived:** Calls `prepare_to_cancel()` to unwind active state
-  - Status is primarily used for manager-level filtering and control
+  1. Executes strategy graph in Cancel mode
+  2. Generates cleanup messages for stateful operations
+  3. Unwinds any pending or active positions
 
-### `Commit`
+### `Process { operation, previous }`
 
-Finalizes strategy execution and commits state changes.
+Internal message for graph traversal and node execution.
 
 ```rust
-StrategyExecuteMsg::Commit
+StrategyExecuteMsg::Process {
+    operation: StrategyOperation,
+    previous: Option<u16>,
+}
 ```
 
-- **Authorization:** Self-call only (automatic after sub-message completion)
+- **Authorization:** Self-call only
+- **Parameters:**
+  - `operation`: Execute, Withdraw, or Cancel mode
+  - `previous`: Index of previously processed node (for continuation)
 - **Logic:**
-  1. Loads active strategy from temporary storage
-  2. Calls `prepare_to_commit()` to finalize state updates
-  3. Updates internal action state (e.g., advancing schedule timing)
-  4. Transitions back to committed state and saves to permanent storage
-  5. Clears temporary active strategy state
+  1. **State Transition:** Commits previous node state if applicable
+  2. **Node Loading:** Determines next node to process based on graph edges
+  3. **Execution Loop:** Processes nodes sequentially until external messages are needed
+  4. **Message Generation:** When external calls are required, pauses execution and schedules continuation
+  5. **Completion:** Continues until reaching graph termination
 
-### `Clear`
-
-Utility function to reset reentrancy protection.
-
-```rust
-StrategyExecuteMsg::Clear
-```
-
-- **Authorization:** Self-call or strategy owner
-- **Logic:** Removes the execution state guard to allow new message processing
+The Process message implements the core graph traversal logic, handling both sequential execution and conditional branching.
 
 ## Query Messages
 
@@ -191,29 +229,16 @@ Returns the complete strategy configuration.
 
 ```rust
 pub struct StrategyConfig {
-    pub manager: Addr,           // Manager contract address
-    pub strategy: Strategy<Committed>, // Current strategy definition
-    pub denoms: HashSet<String>, // All denominations used by strategy
-    pub escrowed: HashSet<String>, // Denominations locked for operations
+    pub manager: Addr,              // Manager contract address
+    pub owner: Addr,                // Strategy owner address
+    pub nodes: Vec<Node>,           // Complete strategy graph
+    pub denoms: HashSet<String>,    // All denominations used by strategy
 }
 ```
 
 ### `Statistics`
 
 Returns execution statistics and performance metrics.
-
-```rust
-pub struct Statistics {
-    pub debited: Vec<Coin>,                    // Total outgoing transactions
-    pub credited: Vec<(Recipient, Vec<Coin>)>, // Total distributions by recipient
-}
-```
-
-Tracks:
-
-- **Debited:** All outgoing transactions (swaps, limit orders, etc.)
-- **Credited:** All distributions to external addresses
-- **Performance:** Success/failure rates for different action types
 
 ### `Balances(HashSet<String>)`
 
@@ -223,59 +248,88 @@ Returns strategy balances across all holdings.
 - **Returns:** `Vec<Coin>` with complete balance information
 - **Sources:**
   - Direct contract balances
-  - Balances held in external protocols (i.e. pending limit orders)
+  - Balances held in external protocols (i.e. limit orders)
 
 ## State Management
 
 ### Storage Layout
 
-- **`CONFIG`:** Primary strategy configuration and committed state
-- **`ACTIVE_STRATEGY`:** Temporary state during execution cycles
+- **`MANAGER`:** Address of the managing contract
+- **`OWNER`:** Strategy owner address
+- **`AFFILIATES`:** Fee distribution configuration
 - **`DENOMS`:** Set of all denominations used by the strategy
-- **`ESCROWED`:** Set of denominations protected from withdrawal
 - **`STATS`:** Cumulative execution statistics
-- **`STATE`:** Reentrancy protection guard
+- **`NODES`:** Map of node index to Node data
 
-### Reentrancy Protection
+### Node Storage
 
-The contract implements sophisticated reentrancy protection:
+Nodes are stored in a Map keyed by their index:
 
-1. **State Guard:** Prevents multiple concurrent executions
-2. **Message Validation:** Rejects recursive calls to same message type
-3. **Clear Mechanism:** Automatic cleanup of guard state
-4. **Self-Call Detection:** Allows legitimate self-calls while blocking recursion
+```rust
+pub struct NodeStore {
+    store: Map<u16, Node>,
+}
+```
 
-### Error Handling and Recovery
+Key operations:
 
-- **Reply Mechanism:** All sub-messages use reply handlers for error tracking
-- **State Recovery:** Failed executions don't corrupt strategy state
-- **Partial Execution:** Individual action failures don't prevent other actions
-- **Debugging Support:** Comprehensive error attributes for troubleshooting
+- **`init`:** Validates and stores complete graph
+- **`load`:** Retrieves individual nodes by index
+- **`save`:** Updates node state after execution
+- **`get_next`:** Determines next node based on current node and operation mode
+
+### Graph Validation
+
+The NodeStore implements comprehensive validation:
+
+1. **Index Consistency:** Ensures node indices match their array positions
+2. **Reference Validation:** Verifies all edge references point to valid nodes
+3. **Cycle Detection:** Uses topological sorting to prevent infinite loops
+4. **Size Limits:** Enforces maximum strategy size constraints
 
 ## Integration Patterns
 
 ### Manager Integration
 
-The strategy contract integrates closely with the manager contract:
+The strategy contract integrates with the manager contract:
 
 - Manager instantiates strategies with proper configuration
-- Manager controls strategy lifecycle (active/paused/archived)
+- Manager controls strategy lifecycle (execute/update/cancel)
 - Manager can update strategy definitions
-- Manager masters strategy status & label
+- Strategy reports back execution status and statistics
 
-### Scheduler Integration
+### Operation Integration
 
-Strategies work with the scheduler for automation:
+All operations implement the unified Operation trait:
 
-- Scheduled actions create triggers in scheduler contract
-- Scheduler executes strategies when conditions are met
-- Rebate mechanisms incentivize keeper participation
+- Consistent interface for initialization, execution, and cleanup
+- Polymorphic handling of different operation types
+- Standardized balance and denomination reporting
+- Unified state management across operation types
 
 ## Security Considerations
 
 - **Fund Isolation:** Each strategy contract holds its own funds separately
-- **Authorization:** Strict access control for sensitive operations
-- **State Consistency:** Two-phase commit prevents state corruption
-- **Reentrancy Protection:** Multiple layers of protection against recursive attacks
-- **Validation:** Comprehensive input validation and size limits
-- **Recovery:** Graceful handling of external protocol failures
+- **Authorization:** Strict access control with separate owner/manager roles
+- **Cycle Prevention:** Graph validation prevents infinite execution loops
+- **Index Validation:** Comprehensive validation prevents out-of-bounds access
+- **State Consistency:** Operation trait ensures consistent state transitions
+- **Size Limits:** Prevents gas exhaustion through strategy size constraints
+
+## Error Handling
+
+The contract provides comprehensive error handling:
+
+- **Validation Errors:** Clear messages for invalid graph structures
+- **Execution Errors:** Graceful handling of operation failures
+- **State Recovery:** Failed operations don't corrupt graph state
+- **Debug Support:** Rich error attributes for troubleshooting
+
+## Performance Considerations
+
+The DAG execution model provides several performance benefits:
+
+- **Sequential Processing:** Fresh balance queries ensure accurate execution
+- **Conditional Skipping:** Unmet conditions skip unnecessary operations
+- **Batch Processing:** Multiple nodes can execute in a single process message when no external calls are needed
+- **State Persistence:** Node state updates are saved individually for optimal storage
