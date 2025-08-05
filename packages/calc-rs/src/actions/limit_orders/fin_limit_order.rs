@@ -2,7 +2,7 @@ use std::{cmp::min, collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, Decimal, Deps, Env, Event, StdError, StdResult, Uint128,
+    to_json_binary, Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128,
 };
 use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side,
@@ -13,48 +13,7 @@ use crate::{
     core::Contract,
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
-    statistics::Statistics,
-    strategy::{StrategyMsg, StrategyMsgPayload},
 };
-
-struct LimitOrderEventData {
-    pair_address: Addr,
-    side: Side,
-    price: Price,
-    amount: Uint128,
-}
-
-impl LimitOrderEventData {
-    pub fn to_event(&self, event_type: &str) -> Event {
-        Event::new(event_type)
-            .add_attribute("pair", self.pair_address.to_string())
-            .add_attribute("side", self.side.to_string())
-            .add_attribute("price", self.price.to_string())
-            .add_attribute("amount", self.amount.to_string())
-    }
-}
-
-enum LimitOrderEvent {
-    SkipSettingOrder { reason: String },
-    SetOrder(LimitOrderEventData),
-    SkipWithdrawingOrder { reason: String },
-    WithdrawOrder(LimitOrderEventData),
-}
-
-impl From<LimitOrderEvent> for Event {
-    fn from(val: LimitOrderEvent) -> Self {
-        match val {
-            LimitOrderEvent::SkipSettingOrder { reason } => {
-                Event::new("skip_setting_order").add_attribute("reason", reason)
-            }
-            LimitOrderEvent::SetOrder(data) => data.to_event("set_order"),
-            LimitOrderEvent::SkipWithdrawingOrder { reason } => {
-                Event::new("skip_withdrawing_order").add_attribute("reason", reason)
-            }
-            LimitOrderEvent::WithdrawOrder(data) => data.to_event("withdraw_order"),
-        }
-    }
-}
 
 #[cw_serde]
 pub enum Direction {
@@ -151,8 +110,7 @@ pub struct UnsetOrder {
 pub struct SettingOrder {
     pub price: Decimal,
     pub offer: Uint128,
-    pub messages: Vec<StrategyMsg>,
-    pub events: Vec<Event>,
+    pub messages: Vec<CosmosMsg>,
 }
 
 #[cw_serde]
@@ -198,8 +156,7 @@ impl SetOrder {
 pub struct WithdrawingOrder {
     pub withdrawing: Uint128,
     pub remaining: Uint128,
-    pub messages: Vec<StrategyMsg>,
-    pub events: Vec<Event>,
+    pub messages: Vec<CosmosMsg>,
 }
 
 #[cw_serde]
@@ -249,37 +206,20 @@ impl FinLimitOrderState<UnsetOrder> {
                     price,
                     offer: Uint128::zero(),
                     messages: vec![],
-                    events: vec![LimitOrderEvent::SkipSettingOrder {
-                        reason: "No additional funding available and no price reset needed"
-                            .to_string(),
-                    }
-                    .into()],
                 },
             });
         }
 
-        let set_order_msg = StrategyMsg::with_payload(
-            Contract(self.config.pair_address.clone()).call(
-                to_json_binary(&ExecuteMsg::Order((
-                    vec![(
-                        self.config.side.clone(),
-                        Price::Fixed(price),
-                        Some(final_offer),
-                    )],
-                    None,
-                )))?,
-                vec![Coin::new(funding, self.config.bid_denom.clone())],
-            ),
-            StrategyMsgPayload {
-                statistics: Statistics::default(),
-                events: vec![LimitOrderEvent::SetOrder(LimitOrderEventData {
-                    pair_address: self.config.pair_address.clone(),
-                    side: self.config.side.clone(),
-                    price: Price::Fixed(price),
-                    amount: final_offer,
-                })
-                .into()],
-            },
+        let set_order_msg = Contract(self.config.pair_address.clone()).call(
+            to_json_binary(&ExecuteMsg::Order((
+                vec![(
+                    self.config.side.clone(),
+                    Price::Fixed(price),
+                    Some(final_offer),
+                )],
+                None,
+            )))?,
+            vec![Coin::new(funding, self.config.bid_denom.clone())],
         );
 
         Ok(FinLimitOrderState {
@@ -288,17 +228,15 @@ impl FinLimitOrderState<UnsetOrder> {
                 price,
                 offer: final_offer,
                 messages: vec![set_order_msg],
-                events: vec![],
             },
         })
     }
 }
 
 impl FinLimitOrderState<SettingOrder> {
-    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, FinLimitOrderState<SetOrder>) {
+    pub fn execute(self) -> (Vec<CosmosMsg>, FinLimitOrderState<SetOrder>) {
         (
             self.state.messages,
-            self.state.events,
             FinLimitOrderState {
                 config: self.config,
                 state: SetOrder {
@@ -314,35 +252,16 @@ impl FinLimitOrderState<SettingOrder> {
 
 impl FinLimitOrderState<SetOrder> {
     pub fn withdraw(self) -> StdResult<FinLimitOrderState<WithdrawingOrder>> {
-        let withdraw_order_message = StrategyMsg::with_payload(
-            Contract(self.config.pair_address.clone()).call(
-                to_json_binary(&ExecuteMsg::Order((
-                    vec![(
-                        self.config.side.clone(),
-                        Price::Fixed(self.state.price),
-                        Some(Uint128::zero()),
-                    )],
-                    None,
-                )))?,
-                vec![],
-            ),
-            StrategyMsgPayload {
-                statistics: Statistics {
-                    debited: vec![Coin::new(
-                        // Weird if this is smaller than 0, but we handle it safely regardless.
-                        self.state.offer.saturating_sub(self.state.remaining),
-                        self.config.bid_denom.clone(),
-                    )],
-                    ..Statistics::default()
-                },
-                events: vec![LimitOrderEvent::WithdrawOrder(LimitOrderEventData {
-                    pair_address: self.config.pair_address.clone(),
-                    side: self.config.side.clone(),
-                    price: Price::Fixed(self.state.price),
-                    amount: self.state.remaining,
-                })
-                .into()],
-            },
+        let withdraw_order_message = Contract(self.config.pair_address.clone()).call(
+            to_json_binary(&ExecuteMsg::Order((
+                vec![(
+                    self.config.side.clone(),
+                    Price::Fixed(self.state.price),
+                    Some(Uint128::zero()),
+                )],
+                None,
+            )))?,
+            vec![],
         );
 
         Ok(FinLimitOrderState {
@@ -351,7 +270,6 @@ impl FinLimitOrderState<SetOrder> {
                 withdrawing: self.state.remaining,
                 remaining: Uint128::zero(),
                 messages: vec![withdraw_order_message],
-                events: vec![],
             },
         })
     }
@@ -382,20 +300,15 @@ impl FinLimitOrderState<SetOrder> {
                 withdrawing: Uint128::zero(),
                 remaining: self.state.remaining,
                 messages: vec![],
-                events: vec![LimitOrderEvent::SkipWithdrawingOrder {
-                    reason: "No change in target price and no filled amount to claim".to_string(),
-                }
-                .into()],
             },
         })
     }
 }
 
 impl FinLimitOrderState<WithdrawingOrder> {
-    pub fn execute(self) -> (Vec<StrategyMsg>, Vec<Event>, FinLimitOrderState<UnsetOrder>) {
+    pub fn execute(self) -> (Vec<CosmosMsg>, FinLimitOrderState<UnsetOrder>) {
         (
             self.state.messages,
-            self.state.events,
             FinLimitOrderState {
                 config: self.config,
                 state: UnsetOrder {
@@ -423,13 +336,8 @@ impl FinLimitOrder {
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
     }
 
-    fn execute_unsafe(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
         let mut messages = vec![];
-        let mut events: Vec<Event> = vec![];
 
         let order = if let Some(existing_order) = self.current_order.clone() {
             let existing_order_state = FinLimitOrderState {
@@ -437,25 +345,22 @@ impl FinLimitOrder {
                 state: existing_order.refresh(deps, env, &self)?,
             };
 
-            let (withdraw_messages, withdraw_events, withdrawn_order_state) =
+            let (withdraw_messages, withdrawn_order_state) =
                 existing_order_state.saturating_withdraw(deps)?.execute();
 
             messages.extend(withdraw_messages);
-            events.extend(withdraw_events);
 
             withdrawn_order_state
         } else {
             FinLimitOrderState::new(self)
         };
 
-        let (set_messages, set_events, set_order_state) = order.set(deps, env)?.execute();
+        let (set_messages, set_order_state) = order.set(deps, env)?.execute();
 
         messages.extend(set_messages);
-        events.extend(set_events);
 
         Ok((
             messages,
-            events,
             Action::LimitOrder(FinLimitOrder {
                 current_order: Some(set_order_state.state.cached()),
                 ..set_order_state.config
@@ -483,17 +388,10 @@ impl Operation<Action> for FinLimitOrder {
         Ok(Action::LimitOrder(self))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, events, action)) => (messages, events, action),
-            Err(err) => (
-                vec![],
-                vec![LimitOrderEvent::SkipSettingOrder {
-                    reason: err.to_string(),
-                }
-                .into()],
-                Action::LimitOrder(self),
-            ),
+            Ok((messages, action)) => (messages, action),
+            Err(_) => (vec![], Action::LimitOrder(self)),
         }
     }
 
@@ -537,9 +435,9 @@ impl StatefulOperation<Action> for FinLimitOrder {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    ) -> StdResult<(Vec<CosmosMsg>, Action)> {
         if !desired.contains(&self.bid_denom) {
-            return Ok((vec![], vec![], Action::LimitOrder(self)));
+            return Ok((vec![], Action::LimitOrder(self)));
         }
 
         if let Some(existing_order) = self.current_order.clone() {
@@ -548,42 +446,28 @@ impl StatefulOperation<Action> for FinLimitOrder {
                 state: existing_order.refresh(deps, env, &self)?,
             };
 
-            let (messages, events, _) = order_state.withdraw()?.execute();
+            let (messages, _) = order_state.withdraw()?.execute();
 
             // We let the confirm stage remove the current order
-            Ok((messages, events, Action::LimitOrder(self)))
+            Ok((messages, Action::LimitOrder(self)))
         } else {
-            Ok((
-                vec![],
-                vec![LimitOrderEvent::SkipSettingOrder {
-                    reason: "No current order to withdraw".to_string(),
-                }
-                .into()],
-                Action::LimitOrder(self),
-            ))
+            Ok((vec![], Action::LimitOrder(self)))
         }
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
         if let Some(existing_order) = self.current_order.clone() {
             let order_state = FinLimitOrderState {
                 config: self.clone(),
                 state: existing_order.refresh(deps, env, &self)?,
             };
 
-            let (messages, events, _) = order_state.withdraw()?.execute();
+            let (messages, _) = order_state.withdraw()?.execute();
 
             // We let the commit stage remove the current order
-            Ok((messages, events, Action::LimitOrder(self)))
+            Ok((messages, Action::LimitOrder(self)))
         } else {
-            Ok((
-                vec![],
-                vec![LimitOrderEvent::SkipSettingOrder {
-                    reason: "No current order to withdraw".to_string(),
-                }
-                .into()],
-                Action::LimitOrder(self),
-            ))
+            Ok((vec![], Action::LimitOrder(self)))
         }
     }
 

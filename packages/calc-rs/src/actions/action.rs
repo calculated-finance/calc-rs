@@ -1,7 +1,7 @@
 use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
+use cosmwasm_std::{Coins, CosmosMsg, Deps, Env, StdResult};
 
 use crate::{
     actions::{
@@ -9,7 +9,6 @@ use crate::{
     },
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
-    strategy::StrategyMsg,
 };
 
 #[cw_serde]
@@ -38,7 +37,7 @@ impl Operation<Action> for Action {
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
         match self {
             Action::Swap(action) => action.execute(deps, env),
             Action::LimitOrder(action) => action.execute(deps, env),
@@ -68,17 +67,17 @@ impl StatefulOperation<Action> for Action {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    ) -> StdResult<(Vec<CosmosMsg>, Action)> {
         match self {
             Action::LimitOrder(action) => action.withdraw(deps, env, desired),
-            _ => Ok((vec![], vec![], self)),
+            _ => Ok((vec![], self)),
         }
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
         match self {
             Action::LimitOrder(action) => action.cancel(deps, env),
-            _ => Ok((vec![], vec![], self)),
+            _ => Ok((vec![], self)),
         }
     }
 

@@ -2,45 +2,15 @@ use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, Env, Event,
-    StdError, StdResult, Uint128, WasmMsg,
+    Addr, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult,
+    Uint128, WasmMsg,
 };
 
 use crate::actions::action::Action;
 use crate::constants::MAX_TOTAL_AFFILIATE_BPS;
 use crate::manager::Affiliate;
 use crate::operation::Operation;
-use crate::statistics::Statistics;
-use crate::strategy::{StrategyMsg, StrategyMsgPayload};
 use crate::thorchain::MsgDeposit;
-
-enum DistributionEvent {
-    SkipDistribution {
-        reason: String,
-    },
-    Distribute {
-        recipient: String,
-        amount: Vec<Coin>,
-    },
-}
-
-impl From<DistributionEvent> for Event {
-    fn from(val: DistributionEvent) -> Self {
-        match val {
-            DistributionEvent::SkipDistribution { reason } => {
-                Event::new("skip_distribution").add_attribute("reason", reason)
-            }
-            DistributionEvent::Distribute { recipient, amount } => Event::new("distribute")
-                .add_attribute("recipient", recipient)
-                .add_attribute(
-                    "amount",
-                    to_json_binary(&amount)
-                        .unwrap_or(Binary::default())
-                        .to_string(),
-                ),
-        }
-    }
-}
 
 #[cw_serde]
 pub enum Recipient {
@@ -109,11 +79,7 @@ impl Distribution {
         })
     }
 
-    pub fn execute_unsafe(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
         let mut balances = Coins::default();
 
         for denom in &self.denoms {
@@ -121,14 +87,7 @@ impl Distribution {
         }
 
         if balances.is_empty() {
-            return Ok((
-                vec![],
-                vec![DistributionEvent::SkipDistribution {
-                    reason: "No balances available for distribution".to_string(),
-                }
-                .into()],
-                Action::Distribute(self),
-            ));
+            return Ok((vec![], Action::Distribute(self)));
         }
 
         let mut messages = vec![];
@@ -155,7 +114,7 @@ impl Distribution {
                 })
                 .collect::<Vec<_>>();
 
-            let message = match destination.recipient.clone() {
+            let distribute_message = match destination.recipient.clone() {
                 Recipient::Bank { address, .. } => CosmosMsg::Bank(BankMsg::Send {
                     to_address: address.into(),
                     amount: denom_shares.clone(),
@@ -173,25 +132,10 @@ impl Distribution {
                 .into_cosmos_msg()?,
             };
 
-            let distribute_message = StrategyMsg::with_payload(
-                message,
-                StrategyMsgPayload {
-                    statistics: Statistics {
-                        credited: vec![(destination.recipient.clone(), denom_shares.clone())],
-                        ..Statistics::default()
-                    },
-                    events: vec![DistributionEvent::Distribute {
-                        recipient: destination.recipient.key(),
-                        amount: denom_shares,
-                    }
-                    .into()],
-                },
-            );
-
             messages.push(distribute_message);
         }
 
-        Ok((messages, vec![], Action::Distribute(self)))
+        Ok((messages, Action::Distribute(self)))
     }
 }
 
@@ -240,17 +184,10 @@ impl Operation<Action> for Distribution {
         Ok(Action::Distribute(self.with_affiliates(affiliates)?))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, events, action)) => (messages, events, action),
-            Err(err) => (
-                vec![],
-                vec![DistributionEvent::SkipDistribution {
-                    reason: err.to_string(),
-                }
-                .into()],
-                Action::Distribute(self),
-            ),
+            Ok((messages, action)) => (messages, action),
+            Err(_) => (vec![], Action::Distribute(self)),
         }
     }
 

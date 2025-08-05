@@ -1,7 +1,7 @@
 use std::{collections::HashSet, mem::discriminant};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult};
+use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult};
 
 use crate::{
     actions::{
@@ -10,22 +10,7 @@ use crate::{
     },
     manager::Affiliate,
     operation::Operation,
-    strategy::StrategyMsg,
 };
-
-pub enum SwapEvent {
-    SkipSwap { reason: String },
-}
-
-impl From<SwapEvent> for Event {
-    fn from(val: SwapEvent) -> Self {
-        match val {
-            SwapEvent::SkipSwap { reason } => {
-                Event::new("skip_swap").add_attribute("reason", reason)
-            }
-        }
-    }
-}
 
 #[cw_serde]
 pub enum SwapAmountAdjustment {
@@ -60,7 +45,7 @@ pub struct Validated {
 
 #[cw_serde]
 pub struct Executable {
-    pub messages: Vec<StrategyMsg>,
+    pub messages: Vec<CosmosMsg>,
 }
 
 pub trait Quotable {
@@ -159,7 +144,7 @@ impl SwapQuote<Validated> {
 }
 
 impl SwapQuote<Executable> {
-    pub fn swap_messages(self) -> Vec<StrategyMsg> {
+    pub fn swap_messages(self) -> Vec<CosmosMsg> {
         self.state.messages
     }
 }
@@ -224,11 +209,7 @@ impl Swap {
             }))
     }
 
-    pub fn execute_unsafe(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Action)> {
+    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
         let best_route = self.best_route(deps, env)?;
 
         if let Some(route) = best_route {
@@ -248,7 +229,6 @@ impl Swap {
 
             Ok((
                 messages,
-                vec![],
                 Action::Swap(Swap {
                     swap_amount: self.swap_amount,
                     minimum_receive_amount: self.minimum_receive_amount,
@@ -260,14 +240,7 @@ impl Swap {
                 }),
             ))
         } else {
-            Ok((
-                vec![],
-                vec![SwapEvent::SkipSwap {
-                    reason: "No viable swap route found".to_string(),
-                }
-                .into()],
-                Action::Swap(self),
-            ))
+            Ok((vec![], Action::Swap(self)))
         }
     }
 }
@@ -305,17 +278,10 @@ impl Operation<Action> for Swap {
         Ok(Action::Swap(self))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, events, action)) => (messages, events, action),
-            Err(err) => (
-                vec![],
-                vec![SwapEvent::SkipSwap {
-                    reason: format!("Swap execution failed: {err}"),
-                }
-                .into()],
-                Action::Swap(self),
-            ),
+            Ok((messages, action)) => (messages, action),
+            Err(_) => (vec![], Action::Swap(self)),
         }
     }
 

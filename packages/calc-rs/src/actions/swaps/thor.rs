@@ -8,8 +8,6 @@ use crate::{
         self, Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote, SwapRoute,
         Validated,
     },
-    statistics::Statistics,
-    strategy::{StrategyMsg, StrategyMsgPayload},
     thorchain::{MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
@@ -311,27 +309,12 @@ impl Quotable for ThorchainRoute {
             return Err(StdError::generic_err("No current swap found to execute"));
         };
 
-        let swap_msg = StrategyMsg::with_payload(
-            MsgDeposit {
-                memo: current_swap.memo,
-                coins: vec![route.swap_amount.clone()],
-                signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
-            }
-            .into_cosmos_msg()?,
-            StrategyMsgPayload {
-                statistics: Statistics {
-                    debited: vec![route.swap_amount.clone()],
-                    ..Statistics::default()
-                },
-                events: vec![ThorchainSwapEvent::AttemptSwap {
-                    swap_amount: route.swap_amount.clone(),
-                    expected_receive_amount: route.state.expected_amount_out.clone(),
-                    maximum_slippage_bps: route.maximum_slippage_bps,
-                    streaming_swap_blocks: current_swap.streaming_swap_blocks,
-                }
-                .into()],
-            },
-        );
+        let swap_msg = MsgDeposit {
+            memo: current_swap.memo,
+            coins: vec![route.swap_amount.clone()],
+            signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
+        }
+        .into_cosmos_msg()?;
 
         Ok(SwapQuote {
             swap_amount: route.swap_amount.clone(),

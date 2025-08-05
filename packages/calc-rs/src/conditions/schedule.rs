@@ -1,7 +1,7 @@
 use std::{cmp::min, collections::HashSet, str::FromStr, time::Duration};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Coins, Deps, Env, Event, StdResult};
+use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Deps, Env, StdResult};
 use cron::Schedule as CronSchedule;
 
 use crate::{
@@ -11,30 +11,7 @@ use crate::{
     manager::{Affiliate, ManagerExecuteMsg},
     operation::Operation,
     scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
-    strategy::{StrategyMsg, StrategyMsgPayload},
 };
-
-enum ScheduleEvent {
-    ExecutionSkipped { reason: String },
-    CreateTrigger { condition: Condition },
-}
-
-impl From<ScheduleEvent> for Event {
-    fn from(val: ScheduleEvent) -> Self {
-        match val {
-            ScheduleEvent::ExecutionSkipped { reason } => {
-                Event::new("skip_schedule").add_attribute("reason", reason)
-            }
-            ScheduleEvent::CreateTrigger { condition } => Event::new("create_trigger")
-                .add_attribute(
-                    "condition",
-                    to_json_binary(&condition)
-                        .unwrap_or(Binary::default())
-                        .to_string(),
-                ),
-        }
-    }
-}
 
 #[cw_serde]
 pub struct Schedule {
@@ -48,11 +25,7 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    pub fn execute_unsafe(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Condition)> {
+    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
         let mut rebate = Coins::default();
 
         for amount in self.execution_rebate.iter() {
@@ -86,20 +59,7 @@ impl Schedule {
             );
 
             Ok((
-                vec![StrategyMsg::with_payload(
-                    create_trigger_msg,
-                    StrategyMsgPayload {
-                        events: vec![ScheduleEvent::CreateTrigger {
-                            condition: condition.clone(),
-                        }
-                        .into()],
-                        ..StrategyMsgPayload::default()
-                    },
-                )],
-                vec![ScheduleEvent::CreateTrigger {
-                    condition: condition.clone(),
-                }
-                .into()],
+                vec![create_trigger_msg],
                 Condition::Schedule(Schedule {
                     cadence: self.cadence.next(deps, env)?,
                     ..self
@@ -124,25 +84,7 @@ impl Schedule {
                 rebate.to_vec(),
             );
 
-            let skipped_event = ScheduleEvent::ExecutionSkipped {
-                reason: format!("Schedule not due: {:?}", self.cadence.clone()),
-            };
-
-            let trigger_created_event = ScheduleEvent::CreateTrigger {
-                condition: condition.clone(),
-            };
-
-            Ok((
-                vec![StrategyMsg::with_payload(
-                    create_trigger_msg,
-                    StrategyMsgPayload {
-                        events: vec![ScheduleEvent::CreateTrigger { condition }.into()],
-                        ..StrategyMsgPayload::default()
-                    },
-                )],
-                vec![skipped_event.into(), trigger_created_event.into()],
-                Condition::Schedule(self),
-            ))
+            Ok((vec![create_trigger_msg], Condition::Schedule(self)))
         }
     }
 }
@@ -158,17 +100,10 @@ impl Operation<Condition> for Schedule {
         Ok(Condition::Schedule(self))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Condition) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Condition) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, events, schedule)) => (messages, events, schedule),
-            Err(err) => (
-                vec![],
-                vec![ScheduleEvent::ExecutionSkipped {
-                    reason: err.to_string(),
-                }
-                .into()],
-                Condition::Schedule(self),
-            ),
+            Ok((messages, schedule)) => (messages, schedule),
+            Err(_) => (vec![], Condition::Schedule(self)),
         }
     }
 

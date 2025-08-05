@@ -8,47 +8,12 @@ use crate::{
         Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote, Validated,
     },
     core::Contract,
-    statistics::Statistics,
-    strategy::{StrategyMsg, StrategyMsgPayload},
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Decimal, Deps, Env, Event, StdError, StdResult, Uint128,
-};
+use cosmwasm_std::{to_json_binary, Addr, Coin, Decimal, Deps, Env, StdError, StdResult, Uint128};
 use rujira_rs::fin::{
     BookResponse, ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
 };
-
-enum FinSwapEvent {
-    AttemptSwap {
-        swap_amount: Coin,
-        expected_receive_amount: Coin,
-        maximum_slippage_bps: u64,
-    },
-}
-
-impl From<FinSwapEvent> for Event {
-    fn from(val: FinSwapEvent) -> Self {
-        match val {
-            FinSwapEvent::AttemptSwap {
-                swap_amount,
-                expected_receive_amount,
-                maximum_slippage_bps,
-            } => Event::new("attempt_fin_swap")
-                .add_attribute("swap_amount", swap_amount.amount.to_string())
-                .add_attribute("swap_denom", swap_amount.denom.to_string())
-                .add_attribute(
-                    "expected_receive_amount",
-                    expected_receive_amount.amount.to_string(),
-                )
-                .add_attribute(
-                    "expected_receive_denom",
-                    expected_receive_amount.denom.to_string(),
-                )
-                .add_attribute("maximum_slippage_bps", maximum_slippage_bps.to_string()),
-        }
-    }
-}
 
 #[cw_serde]
 pub struct FinRoute {
@@ -285,27 +250,13 @@ impl Quotable for FinRoute {
         _env: &Env,
         route: &SwapQuote<Validated>,
     ) -> StdResult<SwapQuote<Executable>> {
-        let swap_msg = StrategyMsg::with_payload(
-            Contract(self.pair_address.clone()).call(
-                to_json_binary(&ExecuteMsg::Swap(SwapRequest {
-                    min_return: Some(route.minimum_receive_amount.amount),
-                    to: None,
-                    callback: None,
-                }))?,
-                vec![route.swap_amount.clone()],
-            ),
-            StrategyMsgPayload {
-                statistics: Statistics {
-                    debited: vec![route.swap_amount.clone()],
-                    ..Statistics::default()
-                },
-                events: vec![FinSwapEvent::AttemptSwap {
-                    swap_amount: route.swap_amount.clone(),
-                    expected_receive_amount: route.state.expected_amount_out.clone(),
-                    maximum_slippage_bps: route.maximum_slippage_bps,
-                }
-                .into()],
-            },
+        let swap_msg = Contract(self.pair_address.clone()).call(
+            to_json_binary(&ExecuteMsg::Swap(SwapRequest {
+                min_return: Some(route.minimum_receive_amount.amount),
+                to: None,
+                callback: None,
+            }))?,
+            vec![route.swap_amount.clone()],
         );
 
         Ok(SwapQuote {

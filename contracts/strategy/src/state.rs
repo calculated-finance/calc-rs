@@ -4,7 +4,6 @@ use calc_rs::{
     constants::MAX_STRATEGY_SIZE,
     manager::Affiliate,
     operation::Operation,
-    statistics::Statistics,
     strategy::{Node, StrategyOperation},
 };
 use cosmwasm_std::{Addr, Deps, DepsMut, Env, Order, StdError, StdResult, Storage};
@@ -14,7 +13,6 @@ pub const MANAGER: Item<Addr> = Item::new("manager");
 pub const OWNER: Item<Addr> = Item::new("owner");
 pub const AFFILIATES: Item<Vec<Affiliate>> = Item::new("affiliates");
 pub const DENOMS: Item<HashSet<String>> = Item::new("denoms");
-pub const STATS: Item<Statistics> = Item::new("stats");
 
 pub struct NodeStore {
     store: Map<u16, Node>,

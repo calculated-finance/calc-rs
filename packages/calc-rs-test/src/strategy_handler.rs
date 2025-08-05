@@ -1,9 +1,6 @@
 use std::{collections::HashSet, fmt::Debug};
 
-use calc_rs::{
-    manager::StrategyStatus, scheduler::ConditionFilter, statistics::Statistics,
-    strategy::StrategyConfig,
-};
+use calc_rs::{manager::StrategyStatus, scheduler::ConditionFilter, strategy::StrategyConfig};
 use cosmwasm_std::{Addr, Coin, Decimal, Uint128};
 use cw_multi_test::{error::AnyResult, AppResponse};
 use rujira_rs::fin::{OrderResponse, OrdersResponse, Price, Side};
@@ -198,59 +195,6 @@ impl<'a> StrategyHandler<'a> {
             // Allow for rounding discrepancies
             balances.iter().any(|b| b.amount.abs_diff(expected.amount) < Uint128::new(10)),
             "Expected strategy balance not found: {expected:?}\n\nCurrent strategy balances: {balances:#?}",
-        );
-        self
-    }
-
-    pub fn assert_stats(&mut self, expected_stats: Statistics) -> &mut Self {
-        println!("[StrategyHandler] Asserting strategy stats are {expected_stats:#?}");
-        let stats = self.harness.query_strategy_stats(&self.strategy_addr);
-        assert_eq!(
-            stats.debited, expected_stats.debited,
-            "Expected swapped coins do not match current swapped coins: expected {:#?}, got {:#?}",
-            expected_stats.debited, stats.debited
-        );
-
-        for (expected_recipient, expected_coins) in &expected_stats.credited {
-            let actual = stats
-                .credited
-                .iter()
-                .find(|(recipient, _)| recipient.key() == expected_recipient.key());
-
-            if let Some((actual_recipient, actual_coins)) = actual {
-                assert_eq!(
-                    actual_recipient, expected_recipient,
-                    "Expected recipient does not match current recipient: expected {expected_recipient:#?}, got {actual_recipient:#?}"
-                );
-
-                for coin in expected_coins {
-                    let actual_coin = actual_coins.iter().find(|c| {
-                        // Allow for rounding discrepancies
-                        c.denom == coin.denom && c.amount.abs_diff(coin.amount) < Uint128::new(10)
-                    });
-
-                    assert!(
-                        actual_coin.is_some(),
-                        "Expected coin not found in distributed stats: {coin:#?}\n\nAll coins for recipient {expected_recipient:#?}: {actual_coins:#?}"
-                    );
-                }
-            } else {
-                panic!(
-                    "Expected recipient not found in distributed stats: {expected_recipient:#?}"
-                );
-            }
-        }
-
-        self
-    }
-
-    pub fn assert_swapped(&mut self, expected_swapped: Vec<Coin>) -> &mut Self {
-        println!("[StrategyHandler] Asserting swapped coins are {expected_swapped:#?}");
-        let stats = self.harness.query_strategy_stats(&self.strategy_addr);
-        assert_eq!(
-            stats.debited, expected_swapped,
-            "Expected swapped coins do not match current swapped coins: expected {:#?}, got {:#?}",
-            expected_swapped, stats.debited
         );
         self
     }

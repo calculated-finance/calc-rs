@@ -5,7 +5,6 @@ use calc_rs::{
     scheduler::{
         ConditionFilter, SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger,
     },
-    statistics::Statistics,
     strategy::{Node, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
 };
 use cosmwasm_std::{Addr, Coin, Decimal, StdError, Uint128};
@@ -334,13 +333,6 @@ impl CalcTestApp {
         self.app
             .wrap()
             .query_wasm_smart(strategy_addr, &StrategyQueryMsg::Config {})
-            .unwrap()
-    }
-
-    pub fn query_strategy_stats(&self, strategy_addr: &Addr) -> Statistics {
-        self.app
-            .wrap()
-            .query_wasm_smart(strategy_addr, &StrategyQueryMsg::Statistics {})
             .unwrap()
     }
 

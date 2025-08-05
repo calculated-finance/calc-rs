@@ -6,7 +6,7 @@ use std::{
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Decimal, Deps, Env, Event, StdError, StdResult, Timestamp,
+    to_json_binary, Addr, Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Timestamp,
 };
 use rujira_rs::{
     fin::{OrderResponse, Price, QueryMsg, Side},
@@ -20,7 +20,6 @@ use crate::{
     conditions::schedule::Schedule,
     manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
     operation::Operation,
-    strategy::StrategyMsg,
 };
 
 #[cw_serde]
@@ -166,10 +165,10 @@ impl Operation<Condition> for Condition {
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Condition) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Condition) {
         match self {
             Condition::Schedule(schedule) => schedule.execute(deps, env),
-            _ => (vec![], vec![], self),
+            _ => (vec![], self),
         }
     }
 

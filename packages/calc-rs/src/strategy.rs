@@ -1,17 +1,13 @@
 use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, CosmosMsg, Deps, Env, Event, StdResult, SubMsg,
-};
+use cosmwasm_std::{Addr, Coin, Coins, CosmosMsg, Deps, Env, StdResult};
 
 use crate::{
     actions::action::Action,
     conditions::condition::Condition,
-    constants::PROCESS_PAYLOAD_REPLY_ID,
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
-    statistics::Statistics,
 };
 
 #[cw_serde]
@@ -55,56 +51,8 @@ pub enum StrategyExecuteMsg {
 pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
     Config {},
-    #[returns(Statistics)]
-    Statistics {},
     #[returns(Vec<Coin>)]
     Balances(HashSet<String>),
-}
-
-#[cw_serde]
-#[derive(Default)]
-pub struct StrategyMsgPayload {
-    pub statistics: Statistics,
-    pub events: Vec<Event>,
-}
-
-impl StrategyMsgPayload {
-    pub fn decorated_events(&self, decorator: &str) -> Vec<Event> {
-        self.events
-            .clone()
-            .into_iter()
-            .map(|mut event| {
-                event.ty = format!("calc/{}/{}", event.ty, decorator);
-                event
-            })
-            .collect()
-    }
-}
-
-#[cw_serde]
-pub struct StrategyMsg {
-    msg: CosmosMsg,
-    payload: StrategyMsgPayload,
-}
-
-impl StrategyMsg {
-    pub fn with_payload(msg: CosmosMsg, payload: StrategyMsgPayload) -> Self {
-        Self { msg, payload }
-    }
-
-    pub fn without_payload(msg: CosmosMsg) -> Self {
-        Self {
-            msg,
-            payload: StrategyMsgPayload::default(),
-        }
-    }
-}
-
-impl From<StrategyMsg> for SubMsg {
-    fn from(msg: StrategyMsg) -> Self {
-        SubMsg::reply_always(msg.msg, PROCESS_PAYLOAD_REPLY_ID)
-            .with_payload(to_json_binary(&msg.payload).unwrap())
-    }
 }
 
 #[cw_serde]
@@ -182,17 +130,16 @@ impl Operation<Node> for Node {
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, Node) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Node) {
         match self {
             Node::Action {
                 action,
                 index,
                 next,
             } => {
-                let (messages, events, action) = action.execute(deps, env);
+                let (messages, action) = action.execute(deps, env);
                 (
                     messages,
-                    events,
                     Node::Action {
                         action,
                         index,
@@ -206,10 +153,9 @@ impl Operation<Node> for Node {
                 on_success,
                 on_fail,
             } => {
-                let (messages, events, condition) = condition.execute(deps, env);
+                let (messages, condition) = condition.execute(deps, env);
                 (
                     messages,
-                    events,
                     Node::Condition {
                         condition,
                         index,
@@ -257,17 +203,16 @@ impl StatefulOperation<Node> for Node {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Node)> {
+    ) -> StdResult<(Vec<CosmosMsg>, Node)> {
         match self {
             Node::Action {
                 action,
                 index,
                 next,
             } => {
-                let (messages, events, action) = action.withdraw(deps, env, desired)?;
+                let (messages, action) = action.withdraw(deps, env, desired)?;
                 Ok((
                     messages,
-                    events,
                     Node::Action {
                         action,
                         index,
@@ -275,21 +220,20 @@ impl StatefulOperation<Node> for Node {
                     },
                 ))
             }
-            _ => Ok((vec![], vec![], self)),
+            _ => Ok((vec![], self)),
         }
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, Node)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Node)> {
         match self {
             Node::Action {
                 action,
                 index,
                 next,
             } => {
-                let (messages, events, action) = action.cancel(deps, env)?;
+                let (messages, action) = action.cancel(deps, env)?;
                 Ok((
                     messages,
-                    events,
                     Node::Action {
                         action,
                         index,
@@ -297,7 +241,7 @@ impl StatefulOperation<Node> for Node {
                     },
                 ))
             }
-            _ => Ok((vec![], vec![], self)),
+            _ => Ok((vec![], self)),
         }
     }
 }

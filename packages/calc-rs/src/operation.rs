@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
-use cosmwasm_std::{Coins, Deps, Env, Event, StdResult};
+use cosmwasm_std::{Coins, CosmosMsg, Deps, Env, StdResult};
 
-use crate::{manager::Affiliate, strategy::StrategyMsg};
+use crate::manager::Affiliate;
 
 pub trait Operation<T> {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<StrategyMsg>, Vec<Event>, T);
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, T);
     fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
 }
 
@@ -18,6 +18,6 @@ pub trait StatefulOperation<T> {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, T)>;
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<StrategyMsg>, Vec<Event>, T)>;
+    ) -> StdResult<(Vec<CosmosMsg>, T)>;
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
 }

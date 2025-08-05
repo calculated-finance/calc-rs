@@ -1,24 +1,22 @@
 use std::{cmp::min, collections::HashSet};
 
 use calc_rs::{
-    constants::PROCESS_PAYLOAD_REPLY_ID,
     core::{Contract, ContractError, ContractResult},
     operation::{Operation, StatefulOperation},
-    statistics::Statistics,
     strategy::{
-        StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyMsgPayload,
-        StrategyOperation, StrategyQueryMsg,
+        StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyOperation,
+        StrategyQueryMsg,
     },
 };
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    from_json, to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env,
-    MessageInfo, Reply, Response, StdError, StdResult, SubMsg, SubMsgResult,
+    to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env, MessageInfo, Reply,
+    Response, StdError, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{AFFILIATES, DENOMS, MANAGER, NODES, OWNER, STATS};
+use crate::state::{AFFILIATES, DENOMS, MANAGER, NODES, OWNER};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -37,7 +35,6 @@ pub fn instantiate(
     MANAGER.save(deps.storage, &info.sender)?;
     OWNER.save(deps.storage, &msg.owner)?;
     AFFILIATES.save(deps.storage, &msg.affiliates)?;
-    STATS.save(deps.storage, &Statistics::default())?;
 
     let init_msg = Contract(env.contract.address.clone()).call(
         to_json_binary(&StrategyExecuteMsg::Init(msg.nodes))?,
@@ -242,7 +239,7 @@ pub fn execute(
 
             loop {
                 if let Some(current_node) = next_node {
-                    let (messages, events, node) = match operation {
+                    let (messages, node) = match operation {
                         StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
                         StrategyOperation::Withdraw(ref desired) => {
                             current_node.withdraw(deps.as_ref(), &env, desired)?
@@ -255,7 +252,10 @@ pub fn execute(
                     if !messages.is_empty() {
                         break Response::new()
                             .add_submessages(
-                                messages.into_iter().map(SubMsg::from).collect::<Vec<_>>(),
+                                messages
+                                    .into_iter()
+                                    .map(|m| SubMsg::reply_always(m, 0))
+                                    .collect::<Vec<_>>(),
                             )
                             .add_submessage(SubMsg::reply_never(
                                 Contract(env.contract.address.clone()).call(
@@ -265,8 +265,7 @@ pub fn execute(
                                     })?,
                                     vec![],
                                 ),
-                            ))
-                            .add_events(events);
+                            ));
                     }
 
                     next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
@@ -279,35 +278,10 @@ pub fn execute(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
-    let response = Response::new().add_attribute("reply_id", reply.id.to_string());
-    match reply.id {
-        PROCESS_PAYLOAD_REPLY_ID => {
-            let payload = from_json::<StrategyMsgPayload>(reply.payload.clone());
-
-            if let Ok(payload) = payload {
-                match reply.result {
-                    SubMsgResult::Ok(_) => {
-                        let events = payload.decorated_events("succeeded");
-                        STATS.update(deps.storage, |s| s.update(payload.statistics))?;
-                        Ok(response.add_events(events))
-                    }
-                    SubMsgResult::Err(err) => Ok(response
-                        .add_events(payload.decorated_events("failed"))
-                        .add_attribute("msg_error", err)),
-                }
-            } else {
-                Ok(response
-                    .add_attribute("msg_error", "Failed to parse reply payload")
-                    .add_attribute("msg_payload", reply.payload.to_string()))
-            }
-        }
-        _ => match reply.result {
-            SubMsgResult::Ok(_) => Ok(response),
-            SubMsgResult::Err(err) => Ok(response
-                .add_attribute("msg_error", err)
-                .add_attribute("msg_payload", reply.payload.to_string())),
-        },
+pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
+    match reply.result {
+        SubMsgResult::Ok(_) => Ok(Response::default()),
+        SubMsgResult::Err(err) => Ok(Response::default().add_attribute("msg_error", err)),
     }
 }
 
@@ -320,7 +294,6 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
             nodes: NODES.all(deps.storage)?,
             denoms: DENOMS.load(deps.storage)?,
         }),
-        StrategyQueryMsg::Statistics {} => to_json_binary(&STATS.load(deps.storage)?),
         StrategyQueryMsg::Balances(mut include) => {
             if include.is_empty() {
                 include = DENOMS.load(deps.storage)?;
@@ -374,9 +347,6 @@ mod tests {
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
         OWNER.save(deps.as_mut().storage, &owner).unwrap();
         AFFILIATES.save(deps.as_mut().storage, &vec![]).unwrap();
-        STATS
-            .save(deps.as_mut().storage, &Statistics::default())
-            .unwrap();
 
         let nodes = vec![Node::Action {
             action: Action::Distribute(Distribution {
@@ -436,9 +406,6 @@ mod tests {
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
         OWNER.save(deps.as_mut().storage, &owner).unwrap();
         AFFILIATES.save(deps.as_mut().storage, &vec![]).unwrap();
-        STATS
-            .save(deps.as_mut().storage, &Statistics::default())
-            .unwrap();
 
         let nodes = vec![Node::Action {
             action: Action::Distribute(Distribution {
@@ -506,9 +473,6 @@ mod tests {
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
         OWNER.save(deps.as_mut().storage, &owner).unwrap();
         AFFILIATES.save(deps.as_mut().storage, &vec![]).unwrap();
-        STATS
-            .save(deps.as_mut().storage, &Statistics::default())
-            .unwrap();
 
         let nodes = vec![Node::Action {
             action: Action::Distribute(Distribution {
@@ -576,9 +540,6 @@ mod tests {
         MANAGER.save(deps.as_mut().storage, &manager).unwrap();
         OWNER.save(deps.as_mut().storage, &owner).unwrap();
         AFFILIATES.save(deps.as_mut().storage, &vec![]).unwrap();
-        STATS
-            .save(deps.as_mut().storage, &Statistics::default())
-            .unwrap();
 
         let nodes = vec![Node::Action {
             action: Action::Distribute(Distribution {

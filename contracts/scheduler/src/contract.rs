@@ -206,10 +206,7 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     match reply.result {
         SubMsgResult::Ok(_) => Ok(Response::default()),
-        SubMsgResult::Err(err) => Ok(Response::default()
-            .add_attribute("msg_error", err)
-            .add_attribute("msg_payload", reply.payload.to_string())
-            .add_attribute("reply_id", reply.id.to_string())),
+        SubMsgResult::Err(err) => Ok(Response::default().add_attribute("msg_error", err)),
     }
 }
 
