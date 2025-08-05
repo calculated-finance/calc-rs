@@ -9,7 +9,7 @@ use crate::{
     conditions::condition::Condition,
     core::Contract,
     manager::{Affiliate, ManagerExecuteMsg},
-    operation::Operation,
+    operation::{Operation, StatefulOperation},
     scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
 };
 
@@ -19,6 +19,7 @@ pub struct Schedule {
     pub contract_address: Addr,
     pub msg: Option<Binary>,
     pub cadence: Cadence,
+    pub next: Option<Cadence>,
     pub execution_rebate: Vec<Coin>,
     pub executors: Vec<Addr>,
     pub jitter: Option<Duration>,
@@ -40,11 +41,12 @@ impl Schedule {
         }
 
         if self.cadence.is_due(deps, env, &self.scheduler)? {
-            let condition = self.cadence.into_condition(deps, env, &self.scheduler)?;
+            let current = self.cadence.clone().crank(deps, env)?;
+            let condition = current.into_condition(deps, env, &self.scheduler)?;
 
             let create_trigger_msg = Contract(self.scheduler.clone()).call(
                 to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
-                    condition: condition.clone(),
+                    condition,
                     msg: self
                         .msg
                         .clone()
@@ -61,7 +63,7 @@ impl Schedule {
             Ok((
                 vec![create_trigger_msg],
                 Condition::Schedule(Schedule {
-                    cadence: self.cadence.next(deps, env)?,
+                    next: Some(current),
                     ..self
                 }),
             ))
@@ -113,5 +115,36 @@ impl Operation<Condition> for Schedule {
             .iter()
             .map(|coin| coin.denom.clone())
             .collect())
+    }
+}
+
+impl StatefulOperation<Condition> for Schedule {
+    fn commit(self, _deps: Deps, _env: &Env) -> StdResult<Condition> {
+        if let Some(next) = self.next {
+            Ok(Condition::Schedule(Schedule {
+                cadence: next,
+                next: None,
+                ..self
+            }))
+        } else {
+            Ok(Condition::Schedule(self))
+        }
+    }
+
+    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
+        Ok(Coins::default())
+    }
+
+    fn withdraw(
+        self,
+        _deps: Deps,
+        _env: &Env,
+        _desired: &HashSet<String>,
+    ) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        Ok((vec![], Condition::Schedule(self)))
+    }
+
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        Ok((vec![], Condition::Schedule(self)))
     }
 }

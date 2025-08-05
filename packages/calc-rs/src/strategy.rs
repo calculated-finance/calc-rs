@@ -66,7 +66,7 @@ pub enum Node {
         condition: Condition,
         index: u16,
         on_success: u16,
-        on_fail: Option<u16>,
+        on_failure: Option<u16>,
     },
 }
 
@@ -90,14 +90,14 @@ impl Node {
             Node::Action { next, .. } => next.clone(),
             Node::Condition {
                 condition,
-                on_fail,
+                on_failure,
                 on_success,
                 ..
             } => {
                 if condition.is_satisfied(deps, env).unwrap_or(false) {
                     Some(on_success.clone())
                 } else {
-                    on_fail.clone()
+                    on_failure.clone()
                 }
             }
         }
@@ -120,12 +120,12 @@ impl Operation<Node> for Node {
                 condition,
                 index,
                 on_success,
-                on_fail,
+                on_failure,
             } => Ok(Node::Condition {
                 condition: condition.init(deps, env, affiliates)?,
                 index,
                 on_success,
-                on_fail,
+                on_failure,
             }),
         }
     }
@@ -151,7 +151,7 @@ impl Operation<Node> for Node {
                 condition,
                 index,
                 on_success,
-                on_fail,
+                on_failure,
             } => {
                 let (messages, condition) = condition.execute(deps, env);
                 (
@@ -160,7 +160,7 @@ impl Operation<Node> for Node {
                         condition,
                         index,
                         on_success,
-                        on_fail,
+                        on_failure,
                     },
                 )
             }
@@ -187,14 +187,24 @@ impl StatefulOperation<Node> for Node {
                 index,
                 next,
             },
-            _ => self,
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_failure,
+            } => Node::Condition {
+                condition: condition.commit(deps, env)?,
+                index,
+                on_success,
+                on_failure,
+            },
         })
     }
 
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
         match self {
             Node::Action { action, .. } => action.balances(deps, env, denoms),
-            _ => Ok(Coins::default()),
+            Node::Condition { condition, .. } => condition.balances(deps, env, denoms),
         }
     }
 
@@ -220,7 +230,23 @@ impl StatefulOperation<Node> for Node {
                     },
                 ))
             }
-            _ => Ok((vec![], self)),
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_failure,
+            } => {
+                let (messages, condition) = condition.withdraw(deps, env, desired)?;
+                Ok((
+                    messages,
+                    Node::Condition {
+                        condition,
+                        index,
+                        on_success,
+                        on_failure,
+                    },
+                ))
+            }
         }
     }
 
@@ -241,7 +267,23 @@ impl StatefulOperation<Node> for Node {
                     },
                 ))
             }
-            _ => Ok((vec![], self)),
+            Node::Condition {
+                condition,
+                index,
+                on_success,
+                on_failure,
+            } => {
+                let (messages, condition) = condition.cancel(deps, env)?;
+                Ok((
+                    messages,
+                    Node::Condition {
+                        condition,
+                        index,
+                        on_success,
+                        on_failure,
+                    },
+                ))
+            }
         }
     }
 }

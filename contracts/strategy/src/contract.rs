@@ -247,9 +247,9 @@ pub fn execute(
                         StrategyOperation::Cancel => current_node.cancel(deps.as_ref(), &env)?,
                     };
 
-                    if !messages.is_empty() {
-                        NODES.save(deps.storage, &node)?;
+                    NODES.save(deps.storage, &node)?;
 
+                    if !messages.is_empty() {
                         break Response::new()
                             .add_submessages(
                                 messages

@@ -24,6 +24,7 @@ impl NodeStore {
         let mut strategy_size = 0;
 
         let node_count = nodes.len();
+        let final_index = node_count.saturating_sub(1) as u16;
         let mut in_degrees = vec![0usize; node_count];
         let mut adj_list = vec![Vec::new(); node_count];
 
@@ -41,30 +42,45 @@ impl NodeStore {
             match node {
                 Node::Action { next, .. } => {
                     if let Some(next) = next {
-                        let next_index = next.clone() as usize;
-                        if next_index < node_count {
-                            adj_list[current_index].push(next_index);
-                            in_degrees[next_index] += 1;
+                        if next > final_index {
+                            return Err(StdError::generic_err(format!(
+                                "Next node index {} exceeds total node count {}",
+                                next, node_count
+                            )));
                         }
+
+                        let next_index = next.clone() as usize;
+                        adj_list[current_index].push(next_index);
+                        in_degrees[next_index] += 1;
                     }
                 }
                 Node::Condition {
                     on_success,
-                    on_fail,
+                    on_failure,
                     ..
                 } => {
-                    let on_success_index = on_success.clone() as usize;
-                    if on_success_index < node_count {
-                        adj_list[current_index].push(on_success_index);
-                        in_degrees[on_success_index] += 1;
+                    if on_success > final_index {
+                        return Err(StdError::generic_err(format!(
+                            "On success node index {} exceeds total node count {}",
+                            on_success, node_count
+                        )));
                     }
 
-                    if let Some(on_fail) = on_fail {
-                        let on_fail_index = on_fail.clone() as usize;
-                        if on_fail_index < node_count {
-                            adj_list[current_index].push(on_fail_index);
-                            in_degrees[on_fail_index] += 1;
+                    let on_success_index = on_success.clone() as usize;
+                    adj_list[current_index].push(on_success_index);
+                    in_degrees[on_success_index] += 1;
+
+                    if let Some(on_failure) = on_failure {
+                        if on_failure > final_index {
+                            return Err(StdError::generic_err(format!(
+                                "On fail node index {} exceeds total node count {}",
+                                on_failure, node_count
+                            )));
                         }
+
+                        let on_failure_index = on_failure.clone() as usize;
+                        adj_list[current_index].push(on_failure_index);
+                        in_degrees[on_failure_index] += 1;
                     }
                 }
             }

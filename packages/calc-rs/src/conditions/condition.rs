@@ -6,7 +6,8 @@ use std::{
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Timestamp,
+    to_json_binary, Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult,
+    Timestamp,
 };
 use rujira_rs::{
     fin::{OrderResponse, Price, QueryMsg, Side},
@@ -19,7 +20,7 @@ use crate::{
     cadence::Cadence,
     conditions::schedule::Schedule,
     manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
-    operation::Operation,
+    operation::{Operation, StatefulOperation},
 };
 
 #[cw_serde]
@@ -91,8 +92,8 @@ impl Condition {
 
     pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {
         Ok(match self {
-            Condition::TimestampElapsed(timestamp) => env.block.time > *timestamp,
-            Condition::BlocksCompleted(height) => env.block.height > *height,
+            Condition::TimestampElapsed(timestamp) => env.block.time >= *timestamp,
+            Condition::BlocksCompleted(height) => env.block.height >= *height,
             Condition::Schedule(schedule) => {
                 schedule.cadence.is_due(deps, env, &schedule.scheduler)?
             }
@@ -188,6 +189,44 @@ impl Operation<Condition> for Condition {
     }
 }
 
+// 479
+// 541
+
+impl StatefulOperation<Condition> for Condition {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<Condition> {
+        match self {
+            Condition::Schedule(schedule) => schedule.commit(deps, env),
+            _ => Ok(self),
+        }
+    }
+
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+        match self {
+            Condition::Schedule(schedule) => schedule.balances(deps, env, denoms),
+            _ => Ok(Coins::default()),
+        }
+    }
+
+    fn withdraw(
+        self,
+        deps: Deps,
+        env: &Env,
+        denoms: &HashSet<String>,
+    ) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        match self {
+            Condition::Schedule(schedule) => schedule.withdraw(deps, env, denoms),
+            _ => Ok((vec![], self)),
+        }
+    }
+
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        match self {
+            Condition::Schedule(schedule) => schedule.cancel(deps, env),
+            _ => Ok((vec![], self)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod conditions_tests {
     use super::*;
@@ -216,7 +255,7 @@ mod conditions_tests {
             .is_satisfied(deps.as_ref(), &env)
             .unwrap());
 
-        assert!(!Condition::TimestampElapsed(env.block.time)
+        assert!(Condition::TimestampElapsed(env.block.time)
             .is_satisfied(deps.as_ref(), &env)
             .unwrap());
 
@@ -236,7 +275,7 @@ mod conditions_tests {
         assert!(Condition::BlocksCompleted(env.block.height - 1)
             .is_satisfied(deps.as_ref(), &env)
             .unwrap());
-        assert!(!Condition::BlocksCompleted(env.block.height)
+        assert!(Condition::BlocksCompleted(env.block.height)
             .is_satisfied(deps.as_ref(), &env)
             .unwrap());
         assert!(!Condition::BlocksCompleted(env.block.height + 1)

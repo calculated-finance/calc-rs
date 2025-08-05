@@ -169,10 +169,10 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
-    pub fn assert_bank_balances(&mut self, expected_balances: Vec<Coin>) -> &mut Self {
+    pub fn assert_bank_balances(&mut self, expected_balances: &[Coin]) -> &mut Self {
         println!("[StrategyHandler] Asserting all strategy balances are {expected_balances:#?}");
         let balances = self.harness.query_balances(&self.strategy_addr);
-        for expected in &expected_balances {
+        for expected in expected_balances {
             let actual = balances.iter().find(|c| {
                 // Allow for rounding discrepancies
                 c.denom == expected.denom && c.amount.abs_diff(expected.amount) < Uint128::new(10)

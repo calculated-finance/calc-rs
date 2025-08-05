@@ -72,7 +72,7 @@ export type Node =
       condition: {
         condition: Condition;
         index: number;
-        on_fail?: number | null;
+        on_failure?: number | null;
         on_success: number;
       };
     };

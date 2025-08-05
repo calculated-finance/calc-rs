@@ -45,7 +45,7 @@ Condition nodes provide branching logic and control flow:
 ```
 Node 0: Condition(PriceCheck)
     ├─ on_success: Node 2 (Swap)
-    └─ on_failure: Node 1 (Distribute)
+    └─ on_failureure: Node 1 (Distribute)
 
 Node 1: Action(Distribute)
     └─ next: None
@@ -61,7 +61,7 @@ Each node contains:
 
 - **Index:** Unique position in the strategy graph
 - **Operation:** The actual business logic to execute
-- **Edges:** References to subsequent nodes (next, on_success, on_failure)
+- **Edges:** References to subsequent nodes (next, on_success, on_failureure)
 
 ## Execution Model
 
@@ -70,7 +70,7 @@ Each node contains:
 The strategy contract executes nodes sequentially following the graph edges:
 
 1. **Linear Execution:** Action nodes execute and proceed to their `next` node
-2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failure` edges
+2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failureure` edges
 3. **Message Generation:** When a node generates blockchain messages, execution pauses for external calls
 4. **Continuation:** After external messages complete, execution resumes from the next node
 5. **Termination:** Execution completes when reaching a node with no outgoing edges

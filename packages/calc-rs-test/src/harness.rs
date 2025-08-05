@@ -401,4 +401,24 @@ impl CalcTestApp {
             &[],
         )
     }
+
+    // Assertion helpers
+
+    pub fn assert_address_balances(&mut self, address: &Addr, expected: &[Coin]) -> &mut Self {
+        println!("[CalcTestApp] Asserting balance for {address} is {expected:#?}");
+        let actual = self.query_balances(address);
+
+        for coin in expected {
+            assert!(
+                actual
+                    .iter()
+                    .any(|c| c.denom == coin.denom && c.amount == coin.amount),
+                "Expected balance for {} to include {}, but it was not found. Actual balances: {actual:#?}",
+                address,
+                coin
+            );
+        }
+
+        self
+    }
 }

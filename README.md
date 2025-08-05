@@ -103,12 +103,12 @@ A strategy is defined as a DAG (Directed Acyclic Graph) of interconnected nodes:
 
 #### Graph Structure
 
-Each node contains an index and references to subsequent nodes. Action nodes have a `next` field, while condition nodes have `on_success` and `on_failure` edges, enabling branching logic:
+Each node contains an index and references to subsequent nodes. Action nodes have a `next` field, while condition nodes have `on_success` and `on_failureure` edges, enabling branching logic:
 
 ```
 Node 0: Condition(PriceCheck)
     ├─ on_success: Node 2 (Swap)
-    └─ on_failure: Node 1 (Distribute)
+    └─ on_failureure: Node 1 (Distribute)
 
 Node 1: Action(Distribute) → next: None
 Node 2: Action(Swap) → next: Node 3 (LimitOrder)
@@ -131,10 +131,10 @@ Strategies are instantiated on-chain via the `manager` contract, which acts as a
 The strategy contract executes nodes sequentially following the graph edges:
 
 1. **Linear Execution:** Action nodes execute and proceed to their `next` node
-2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failure` edges
+2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failureure` edges
 3. **Fresh Balances:** Each operation queries fresh balances for accurate execution
 4. **Message Generation:** When external calls are needed, execution pauses and resumes after completion
-5. **Termination:** Execution completes when a terminal node is reached (i.e. an action with no `next` pointer, or a condition with `None` for its relevant `on_success` or `on_failure` pointer)
+5. **Termination:** Execution completes when a terminal node is reached (i.e. an action with no `next` pointer, or a condition with `None` for its relevant `on_success` or `on_failureure` pointer)
 
 #### Execution Triggers
 

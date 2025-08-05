@@ -82,7 +82,7 @@ impl Cadence {
                         }
                     }
                 } else {
-                    return Ok(true);
+                    return Ok(false);
                 }
             }
         })
@@ -137,15 +137,15 @@ impl Cadence {
         })
     }
 
-    pub fn next(self, deps: Deps, env: &Env) -> StdResult<Self> {
+    pub fn crank(self, deps: Deps, env: &Env) -> StdResult<Self> {
         Ok(match self {
             Cadence::Blocks { interval, previous } => Cadence::Blocks {
                 interval,
                 previous: Some(previous.map_or(env.block.height, |previous| {
                     let next = previous + interval;
-                    if next < env.block.height {
+                    if next < env.block.height - interval {
                         let blocks_completed = env.block.height - previous;
-                        env.block.height + blocks_completed % interval
+                        env.block.height - blocks_completed % interval
                     } else {
                         next
                     }
@@ -156,9 +156,9 @@ impl Cadence {
                 previous: Some(previous.map_or(env.block.time, |previous| {
                     let duration = duration.as_secs();
                     let next = previous.plus_seconds(duration);
-                    if next < env.block.time {
+                    if next < env.block.time.minus_seconds(duration) {
                         let time_elapsed = env.block.time.seconds() - previous.seconds();
-                        env.block.time.plus_seconds(time_elapsed % duration)
+                        env.block.time.minus_seconds(time_elapsed % duration)
                     } else {
                         next
                     }
@@ -244,7 +244,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn updates_to_next_scheduled_block() {
+    fn updates_to_next_previous_block() {
         let deps = mock_dependencies();
         let env = mock_env();
 
@@ -253,7 +253,7 @@ mod tests {
                 interval: 10,
                 previous: None
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Blocks {
                 interval: 10,
@@ -266,11 +266,11 @@ mod tests {
                 interval: 10,
                 previous: Some(env.block.height - 5)
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Blocks {
                 interval: 10,
-                previous: Some(env.block.height - 5 + 10)
+                previous: Some(env.block.height + 5)
             }
         );
 
@@ -279,11 +279,11 @@ mod tests {
                 interval: 10,
                 previous: Some(env.block.height - 15)
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Blocks {
                 interval: 10,
-                previous: Some(env.block.height + 5)
+                previous: Some(env.block.height - 5)
             }
         );
 
@@ -292,17 +292,43 @@ mod tests {
                 interval: 10,
                 previous: Some(env.block.height - 155)
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Blocks {
                 interval: 10,
-                previous: Some(env.block.height + 5)
+                previous: Some(env.block.height - 5)
+            }
+        );
+
+        assert_eq!(
+            Cadence::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 152)
+            }
+            .crank(deps.as_ref(), &env)
+            .unwrap(),
+            Cadence::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 2)
+            }
+        );
+
+        assert_eq!(
+            Cadence::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 158)
+            }
+            .crank(deps.as_ref(), &env)
+            .unwrap(),
+            Cadence::Blocks {
+                interval: 10,
+                previous: Some(env.block.height - 8)
             }
         );
     }
 
     #[test]
-    fn updates_to_next_scheduled_time() {
+    fn updates_to_next_previous_time() {
         let deps = mock_dependencies();
         let env = mock_env();
 
@@ -311,7 +337,7 @@ mod tests {
                 duration: std::time::Duration::from_secs(10),
                 previous: None
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Time {
                 duration: std::time::Duration::from_secs(10),
@@ -324,7 +350,7 @@ mod tests {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(5))
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Time {
                 duration: Duration::from_secs(10),
@@ -337,11 +363,11 @@ mod tests {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(15))
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Time {
                 duration: Duration::from_secs(10),
-                previous: Some(env.block.time.plus_seconds(5))
+                previous: Some(env.block.time.minus_seconds(5))
             }
         );
 
@@ -350,17 +376,17 @@ mod tests {
                 duration: Duration::from_secs(10),
                 previous: Some(env.block.time.minus_seconds(155))
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Time {
                 duration: Duration::from_secs(10),
-                previous: Some(env.block.time.plus_seconds(5))
+                previous: Some(env.block.time.minus_seconds(5))
             }
         );
     }
 
     #[test]
-    fn updates_to_next_scheduled_cron() {
+    fn updates_to_next_previous_cron() {
         let deps = mock_dependencies();
         let env = mock_env();
 
@@ -371,7 +397,7 @@ mod tests {
                 expr: cron.to_string(),
                 previous: None
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Cron {
                 expr: cron.to_string(),
@@ -386,7 +412,7 @@ mod tests {
                 expr: cron.to_string(),
                 previous: Some(Timestamp::from_seconds(0))
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Cron {
                 expr: cron.to_string(),
@@ -401,7 +427,7 @@ mod tests {
                 expr: cron.to_string(),
                 previous: Some(env.block.time)
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Cron {
                 expr: cron.to_string(),
@@ -416,7 +442,7 @@ mod tests {
                 expr: cron.to_string(),
                 previous: Some(env.block.time.plus_seconds(10))
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::Cron {
                 expr: cron.to_string(),
@@ -443,7 +469,7 @@ mod tests {
                 previous: None,
                 strategy: fixed_strategy.clone()
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::LimitOrder {
                 pair_address: pair_address.clone(),
@@ -482,7 +508,7 @@ mod tests {
                 previous: None,
                 strategy: offset_strategy.clone()
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::LimitOrder {
                 pair_address: pair_address.clone(),
@@ -499,7 +525,7 @@ mod tests {
                 previous: Some(Decimal::from_str("1.53").unwrap()),
                 strategy: offset_strategy.clone()
             }
-            .next(deps.as_ref(), &env)
+            .crank(deps.as_ref(), &env)
             .unwrap(),
             Cadence::LimitOrder {
                 pair_address: pair_address.clone(),
@@ -800,7 +826,7 @@ mod tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        assert!(Cadence::LimitOrder {
+        assert!(!Cadence::LimitOrder {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: None,
@@ -859,7 +885,7 @@ mod tests {
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
 
-        assert!(Cadence::LimitOrder {
+        assert!(!Cadence::LimitOrder {
             pair_address: Addr::unchecked("pair"),
             side: Side::Base,
             previous: None,
