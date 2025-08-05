@@ -1,12 +1,12 @@
 use std::{collections::HashSet, vec};
 
 use calc_rs::{
-    manager::{Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle},
+    manager::{Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy},
     scheduler::{
         ConditionFilter, SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger,
     },
     statistics::Statistics,
-    strategy::{Indexable, Strategy, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
+    strategy::{Node, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
 };
 use cosmwasm_std::{Addr, Coin, Decimal, StdError, Uint128};
 use cw_multi_test::{error::AnyResult, AppResponse, BasicAppBuilder, ContractWrapper, Executor};
@@ -225,15 +225,17 @@ impl CalcTestApp {
 
     pub fn create_strategy(
         &mut self,
+        owner: &Addr,
         label: &str,
-        strategy: Strategy<Indexable>,
         affiliates: Vec<Affiliate>,
+        nodes: Vec<Node>,
         funds: &[Coin],
     ) -> AnyResult<Addr> {
         let msg = ManagerExecuteMsg::Instantiate {
+            owner: owner.clone(),
             label: label.to_string(),
             affiliates,
-            strategy,
+            nodes,
         };
 
         let response = self.app.execute_contract(
@@ -316,7 +318,7 @@ impl CalcTestApp {
             .unwrap();
     }
 
-    pub fn query_strategy(&self, strategy_addr: &Addr) -> StrategyHandle {
+    pub fn query_strategy(&self, strategy_addr: &Addr) -> Strategy {
         self.app
             .wrap()
             .query_wasm_smart(

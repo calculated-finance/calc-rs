@@ -144,7 +144,6 @@ mod integration_tests {
                 swap_action.swap_amount.denom.clone(),
                 swap_action.minimum_receive_amount.denom.clone(),
             ]),
-            escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
         });
     }
 
@@ -219,10 +218,13 @@ mod integration_tests {
     fn test_instantiate_strategy_with_empty_nodes_succeeds() {
         let mut harness = CalcTestApp::setup();
 
-        assert!(StrategyBuilder::new(&mut harness)
+        let res = StrategyBuilder::new(&mut harness)
             .with_nodes(vec![])
-            .try_instantiate(&[])
-            .is_ok());
+            .try_instantiate(&[]);
+
+        println!("Result: {:?}", res);
+
+        assert!(res.is_ok());
     }
 
     #[test]
@@ -786,7 +788,6 @@ mod integration_tests {
                     swap_action.swap_amount.denom.clone(),
                     swap_action.minimum_receive_amount.denom.clone(),
                 ]),
-                escrowed: HashSet::from([swap_action.minimum_receive_amount.denom.clone()]),
             })
             .assert_bank_balances(vec![Coin::new(
                 swap_action

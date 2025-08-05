@@ -1,7 +1,4 @@
-use calc_rs::{
-    manager::Affiliate,
-    strategy::{Indexable, Node, Strategy},
-};
+use calc_rs::{manager::Affiliate, strategy::Node};
 use cosmwasm_std::{Addr, Coin};
 use cw_multi_test::error::AnyResult;
 
@@ -42,16 +39,9 @@ impl<'a> StrategyBuilder<'a> {
     }
 
     pub fn instantiate(self, funds: &[Coin]) -> StrategyHandler<'a> {
-        let strategy = Strategy {
-            owner: self.owner.clone(),
-            nodes: self.nodes,
-            affiliates: self.affiliates.clone(),
-            state: Indexable,
-        };
-
         let strategy_addr = self
             .app
-            .create_strategy(&self.label, strategy, self.affiliates, funds)
+            .create_strategy(&self.owner, &self.label, self.affiliates, self.nodes, funds)
             .unwrap();
 
         StrategyHandler {
@@ -63,16 +53,13 @@ impl<'a> StrategyBuilder<'a> {
     }
 
     pub fn try_instantiate(self, funds: &[Coin]) -> AnyResult<StrategyHandler<'a>> {
-        let strategy = Strategy {
-            owner: self.owner.clone(),
-            nodes: self.nodes,
-            affiliates: self.affiliates.clone(),
-            state: Indexable,
-        };
-
-        let strategy_addr =
-            self.app
-                .create_strategy(&self.label, strategy, self.affiliates, funds)?;
+        let strategy_addr = self.app.create_strategy(
+            &self.owner,
+            &self.label,
+            self.affiliates,
+            self.nodes,
+            funds,
+        )?;
 
         Ok(StrategyHandler {
             strategy_addr,
@@ -87,16 +74,9 @@ impl<'a> StrategyBuilder<'a> {
         affiliates: Vec<Affiliate>,
         funds: &[Coin],
     ) -> StrategyHandler<'a> {
-        let strategy = Strategy {
-            owner: self.owner.clone(),
-            nodes: self.nodes,
-            affiliates: self.affiliates.clone(),
-            state: Indexable,
-        };
-
         let strategy_addr = self
             .app
-            .create_strategy(&self.label, strategy, affiliates, funds)
+            .create_strategy(&self.owner, &self.label, affiliates, self.nodes, funds)
             .unwrap();
 
         StrategyHandler {
@@ -112,16 +92,9 @@ impl<'a> StrategyBuilder<'a> {
         affiliates: Vec<Affiliate>,
         funds: &[Coin],
     ) -> AnyResult<StrategyHandler<'a>> {
-        let strategy = Strategy {
-            owner: self.owner.clone(),
-            nodes: self.nodes,
-            affiliates: self.affiliates.clone(),
-            state: Indexable,
-        };
-
-        let strategy_addr = self
-            .app
-            .create_strategy(&self.label, strategy, affiliates, funds)?;
+        let strategy_addr =
+            self.app
+                .create_strategy(&self.owner, &self.label, affiliates, self.nodes, funds)?;
 
         Ok(StrategyHandler {
             strategy_addr,

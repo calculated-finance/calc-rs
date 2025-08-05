@@ -2,7 +2,7 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Addr;
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 
-use crate::strategy::{Indexable, Strategy};
+use crate::strategy::Node;
 
 #[cw_serde]
 pub struct ManagerConfig {
@@ -42,7 +42,7 @@ pub struct Affiliate {
 }
 
 #[cw_serde]
-pub struct StrategyHandle {
+pub struct Strategy {
     pub id: u64,
     pub owner: Addr,
     pub contract_address: Addr,
@@ -55,9 +55,10 @@ pub struct StrategyHandle {
 #[cw_serde]
 pub enum ManagerExecuteMsg {
     Instantiate {
+        owner: Addr,
         label: String,
         affiliates: Vec<Affiliate>,
-        strategy: Strategy<Indexable>,
+        nodes: Vec<Node>,
     },
     Execute {
         contract_address: Addr,
@@ -68,7 +69,8 @@ pub enum ManagerExecuteMsg {
     },
     Update {
         contract_address: Addr,
-        update: Strategy<Indexable>,
+        nodes: Vec<Node>,
+        label: Option<String>,
     },
 }
 
@@ -77,9 +79,9 @@ pub enum ManagerExecuteMsg {
 pub enum ManagerQueryMsg {
     #[returns(ManagerConfig)]
     Config {},
-    #[returns(StrategyHandle)]
+    #[returns(Strategy)]
     Strategy { address: Addr },
-    #[returns(Vec<StrategyHandle>)]
+    #[returns(Vec<Strategy>)]
     Strategies {
         owner: Option<Addr>,
         status: Option<StrategyStatus>,

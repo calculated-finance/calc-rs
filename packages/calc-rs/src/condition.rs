@@ -19,7 +19,7 @@ use crate::{
         limit_order::Direction, operation::Operation, schedule::Schedule, swaps::swap::Swap,
     },
     cadence::Cadence,
-    manager::{Affiliate, ManagerQueryMsg, StrategyHandle, StrategyStatus},
+    manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
     strategy::StrategyMsg,
 };
 
@@ -121,7 +121,7 @@ impl Condition {
                 contract_address,
                 status,
             } => {
-                let strategy = deps.querier.query_wasm_smart::<StrategyHandle>(
+                let strategy = deps.querier.query_wasm_smart::<Strategy>(
                     manager_contract,
                     &ManagerQueryMsg::Strategy {
                         address: contract_address.clone(),
@@ -241,7 +241,7 @@ mod conditions_tests {
             swaps::fin::FinRoute,
             swaps::swap::{SwapAmountAdjustment, SwapRoute},
         },
-        manager::{StrategyHandle, StrategyStatus},
+        manager::{Strategy, StrategyStatus},
     };
 
     #[test]
@@ -442,7 +442,7 @@ mod conditions_tests {
 
         deps.querier.update_wasm(move |_| {
             SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&StrategyHandle {
+                to_json_binary(&Strategy {
                     id: 1,
                     contract_address: Addr::unchecked("strategy"),
                     status: StrategyStatus::Active,

@@ -1,22 +1,25 @@
-use std::cmp::max;
+use std::{
+    cmp::max,
+    hash::{DefaultHasher, Hasher},
+};
 
 use calc_rs::{
     constants::{BASE_FEE_BPS, MAX_TOTAL_AFFILIATE_BPS},
     core::{Contract, ContractError, ContractResult},
     manager::{
-        Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, StrategyHandle,
-        StrategyStatus,
+        Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy, StrategyStatus,
     },
-    strategy::StrategyExecuteMsg,
+    strategy::{StrategyExecuteMsg, StrategyInstantiateMsg},
 };
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response, StdError, StdResult,
+    instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response,
+    StdError, StdResult, WasmMsg,
 };
 use cw_storage_plus::Bound;
 
-use crate::state::{strategy_store, updated_at_cursor, CONFIG, STRATEGY_COUNTER};
+use crate::state::{updated_at_cursor, CONFIG, STRATEGIES, STRATEGY_COUNTER};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -34,24 +37,30 @@ pub fn instantiate(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
     CONFIG.save(deps.storage, &msg)?;
+    Ok(Response::default())
+}
 
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
+    CONFIG.save(deps.storage, &msg)?;
     Ok(Response::default())
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
-    mut deps: DepsMut,
+    deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: ManagerExecuteMsg,
 ) -> ContractResult {
     Ok(match msg {
         ManagerExecuteMsg::Instantiate {
+            owner,
             label,
             affiliates,
-            strategy,
+            nodes,
         } => {
-            if deps.api.addr_validate(strategy.owner.as_str()).is_err() {
+            if deps.api.addr_validate(owner.as_str()).is_err() {
                 return Err(ContractError::generic_err("Invalid owner address"));
             }
 
@@ -60,8 +69,6 @@ pub fn execute(
                     "Strategy label must be between 1 and 100 characters",
                 ));
             }
-
-            let config = CONFIG.load(deps.storage)?;
 
             let total_affiliate_bps = affiliates
                 .iter()
@@ -72,6 +79,8 @@ pub fn execute(
                     "Total affiliate bps cannot exceed {MAX_TOTAL_AFFILIATE_BPS}, got {total_affiliate_bps}"
                 )));
             }
+
+            let config = CONFIG.load(deps.storage)?;
 
             let affiliates = [
                 affiliates,
@@ -86,37 +95,58 @@ pub fn execute(
             ]
             .concat();
 
-            let init_message = strategy
-                .add_index(
-                    &mut deps,
-                    &env,
-                    config.strategy_code_id,
-                    label.clone(),
-                    |storage, strategy| {
-                        let id =
-                            STRATEGY_COUNTER.update(storage, |id| Ok::<u64, StdError>(id + 1))?;
+            let id = STRATEGY_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
+            let salt_data = to_json_binary(&(owner.to_string(), id, env.block.height))?;
+            let mut hash = DefaultHasher::new();
+            hash.write(salt_data.as_slice());
+            let salt = hash.finish().to_le_bytes();
 
-                        strategy_store().save(
-                            storage,
-                            strategy.state.contract_address.clone(),
-                            &StrategyHandle {
-                                id,
-                                owner: strategy.owner.clone(),
-                                contract_address: strategy.state.contract_address.clone(),
-                                created_at: env.block.time.seconds(),
-                                updated_at: env.block.time.seconds(),
-                                label,
-                                status: StrategyStatus::Active,
-                            },
-                        )
-                    },
-                )?
-                .instantiate_msg(info, affiliates)?;
+            let contract_address = deps.api.addr_humanize(
+                &instantiate2_address(
+                    deps.querier
+                        .query_wasm_code_info(config.strategy_code_id)?
+                        .checksum
+                        .as_slice(),
+                    &deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                    &salt,
+                )
+                .map_err(|e| {
+                    StdError::generic_err(format!("Failed to instantiate contract address: {e}"))
+                })?,
+            )?;
+
+            STRATEGIES.save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    id,
+                    owner: owner.clone(),
+                    contract_address: contract_address.clone(),
+                    created_at: env.block.time.seconds(),
+                    updated_at: env.block.time.seconds(),
+                    label: label.clone(),
+                    status: StrategyStatus::Active,
+                },
+            )?;
+
+            let init_message = WasmMsg::Instantiate2 {
+                admin: Some(owner.to_string()),
+                code_id: config.strategy_code_id,
+                label: label,
+                salt: salt.into(),
+                msg: to_json_binary(&StrategyInstantiateMsg {
+                    contract_address,
+                    owner,
+                    affiliates,
+                    nodes,
+                })?,
+                funds: info.funds,
+            };
 
             Response::default().add_message(init_message)
         }
         ManagerExecuteMsg::Execute { contract_address } => {
-            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+            let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
 
             if strategy.status != StrategyStatus::Active {
                 return Err(ContractError::generic_err(
@@ -124,10 +154,10 @@ pub fn execute(
                 ));
             }
 
-            strategy_store().save(
+            STRATEGIES.save(
                 deps.storage,
                 contract_address.clone(),
-                &StrategyHandle {
+                &Strategy {
                     updated_at: env.block.time.seconds(),
                     ..strategy
                 },
@@ -140,26 +170,37 @@ pub fn execute(
         }
         ManagerExecuteMsg::Update {
             contract_address,
-            update,
+            nodes,
+            label,
         } => {
-            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+            let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
 
             if strategy.owner != info.sender {
                 return Err(ContractError::Unauthorized {});
             }
 
-            let update_msg = update
-                .update_index(&mut deps, contract_address.clone(), |storage| {
-                    strategy_store().save(
-                        storage,
-                        contract_address,
-                        &StrategyHandle {
-                            updated_at: env.block.time.seconds(),
-                            ..strategy
-                        },
-                    )
-                })?
-                .update_msg(info)?;
+            if let Some(label) = &label {
+                if label.is_empty() || label.len() > 100 {
+                    return Err(ContractError::generic_err(
+                        "Strategy label must be between 1 and 100 characters",
+                    ));
+                }
+            }
+
+            STRATEGIES.save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    updated_at: env.block.time.seconds(),
+                    label: label.unwrap_or(strategy.label),
+                    ..strategy
+                },
+            )?;
+
+            let update_msg = Contract(contract_address).call(
+                to_json_binary(&StrategyExecuteMsg::Update(nodes))?,
+                info.funds,
+            );
 
             Response::default().add_message(update_msg)
         }
@@ -167,16 +208,16 @@ pub fn execute(
             contract_address,
             status,
         } => {
-            let strategy = strategy_store().load(deps.storage, contract_address.clone())?;
+            let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
 
             if strategy.owner != info.sender {
                 return Err(ContractError::Unauthorized {});
             }
 
-            strategy_store().save(
+            STRATEGIES.save(
                 deps.storage,
                 contract_address.clone(),
-                &StrategyHandle {
+                &Strategy {
                     status: status.clone(),
                     updated_at: env.block.time.seconds(),
                     ..strategy
@@ -201,7 +242,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
         ManagerQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         ManagerQueryMsg::Strategy { address } => {
-            to_json_binary(&strategy_store().load(deps.storage, address.clone())?)
+            to_json_binary(&STRATEGIES.load(deps.storage, address.clone())?)
         }
         ManagerQueryMsg::Strategies {
             owner,
@@ -211,15 +252,15 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
         } => {
             let partition = match owner {
                 Some(owner) => match status {
-                    Some(status) => strategy_store()
+                    Some(status) => STRATEGIES
                         .idx
                         .owner_status_updated_at
                         .prefix((owner, status as u8)),
-                    None => strategy_store().idx.owner_updated_at.prefix(owner),
+                    None => STRATEGIES.idx.owner_updated_at.prefix(owner),
                 },
                 None => match status {
-                    Some(status) => strategy_store().idx.status_updated_at.prefix(status as u8),
-                    None => strategy_store().idx.updated_at.prefix(()),
+                    Some(status) => STRATEGIES.idx.status_updated_at.prefix(status as u8),
+                    None => STRATEGIES.idx.updated_at.prefix(()),
                 },
             };
 
@@ -239,7 +280,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
                     None => 30,
                 })
                 .flat_map(|result| result.map(|(_, strategy)| strategy))
-                .collect::<Vec<StrategyHandle>>();
+                .collect::<Vec<Strategy>>();
 
             to_json_binary(&strategies)
         }
@@ -248,7 +289,6 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
 #[cfg(test)]
 mod tests {
-    use calc_rs::strategy::{Indexable, Strategy};
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
         Addr,
@@ -262,7 +302,7 @@ mod tests {
         let env = mock_env();
         let info = message_info(&deps.api.addr_make("anyone"), &[]);
 
-        let strategy = StrategyHandle {
+        let strategy = Strategy {
             id: 1,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
@@ -272,7 +312,7 @@ mod tests {
             status: StrategyStatus::Archived,
         };
 
-        strategy_store()
+        STRATEGIES
             .save(
                 deps.as_mut().storage,
                 strategy.contract_address.clone(),
@@ -290,11 +330,11 @@ mod tests {
         )
         .is_err());
 
-        strategy_store()
+        STRATEGIES
             .save(
                 deps.as_mut().storage,
                 strategy.contract_address.clone(),
-                &StrategyHandle {
+                &Strategy {
                     status: StrategyStatus::Active,
                     ..strategy.clone()
                 },
@@ -318,7 +358,7 @@ mod tests {
         let env = mock_env();
         let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-        let strategy = StrategyHandle {
+        let strategy = Strategy {
             id: 1,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
@@ -328,7 +368,7 @@ mod tests {
             status: StrategyStatus::Archived,
         };
 
-        strategy_store()
+        STRATEGIES
             .save(
                 deps.as_mut().storage,
                 strategy.contract_address.clone(),
@@ -342,12 +382,8 @@ mod tests {
             info.clone(),
             ManagerExecuteMsg::Update {
                 contract_address: strategy.contract_address.clone(),
-                update: Strategy {
-                    owner: info.sender.clone(),
-                    affiliates: vec![],
-                    nodes: vec![],
-                    state: Indexable
-                }
+                nodes: vec![],
+                label: None,
             },
         )
         .is_ok());
@@ -360,12 +396,8 @@ mod tests {
             message_info(&not_owner, &[]),
             ManagerExecuteMsg::Update {
                 contract_address: strategy.contract_address.clone(),
-                update: Strategy {
-                    owner: info.sender.clone(),
-                    affiliates: vec![],
-                    nodes: vec![],
-                    state: Indexable
-                }
+                nodes: vec![],
+                label: None,
             },
         )
         .is_err());
@@ -377,7 +409,7 @@ mod tests {
         let env = mock_env();
         let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-        let strategy = StrategyHandle {
+        let strategy = Strategy {
             id: 1,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
@@ -387,7 +419,7 @@ mod tests {
             status: StrategyStatus::Archived,
         };
 
-        strategy_store()
+        STRATEGIES
             .save(
                 deps.as_mut().storage,
                 strategy.contract_address.clone(),
@@ -426,7 +458,7 @@ mod tests {
         let env = mock_env();
         let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-        let strategy = StrategyHandle {
+        let strategy = Strategy {
             id: 1,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
@@ -436,7 +468,7 @@ mod tests {
             status: StrategyStatus::Active,
         };
 
-        strategy_store()
+        STRATEGIES
             .save(
                 deps.as_mut().storage,
                 strategy.contract_address.clone(),
@@ -454,7 +486,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated_strategy = strategy_store()
+        let updated_strategy = STRATEGIES
             .load(deps.as_mut().storage, strategy.contract_address.clone())
             .unwrap();
 
@@ -468,7 +500,7 @@ mod tests {
         let env = mock_env();
         let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-        let strategy = StrategyHandle {
+        let strategy = Strategy {
             id: 1,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
@@ -478,7 +510,7 @@ mod tests {
             status: StrategyStatus::Active,
         };
 
-        strategy_store()
+        STRATEGIES
             .save(
                 deps.as_mut().storage,
                 strategy.contract_address.clone(),
@@ -492,17 +524,13 @@ mod tests {
             info.clone(),
             ManagerExecuteMsg::Update {
                 contract_address: strategy.contract_address.clone(),
-                update: Strategy {
-                    owner: info.sender.clone(),
-                    affiliates: vec![],
-                    nodes: vec![],
-                    state: Indexable,
-                },
+                nodes: vec![],
+                label: None,
             },
         )
         .unwrap();
 
-        let updated_strategy = strategy_store()
+        let updated_strategy = STRATEGIES
             .load(deps.as_mut().storage, strategy.contract_address.clone())
             .unwrap();
 
@@ -516,7 +544,7 @@ mod tests {
         let env = mock_env();
         let info = message_info(&deps.api.addr_make("owner"), &[]);
 
-        let strategy = StrategyHandle {
+        let strategy = Strategy {
             id: 1,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
@@ -526,7 +554,7 @@ mod tests {
             status: StrategyStatus::Active,
         };
 
-        strategy_store()
+        STRATEGIES
             .save(
                 deps.as_mut().storage,
                 strategy.contract_address.clone(),
@@ -545,7 +573,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated_strategy = strategy_store()
+        let updated_strategy = STRATEGIES
             .load(deps.as_mut().storage, strategy.contract_address.clone())
             .unwrap();
 

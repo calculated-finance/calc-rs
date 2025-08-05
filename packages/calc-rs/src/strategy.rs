@@ -1,20 +1,14 @@
-use std::{
-    collections::HashSet,
-    hash::{DefaultHasher, Hasher},
-    vec,
-};
+use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Addr, Binary, Coin, Coins, CosmosMsg, Deps, DepsMut, Env,
-    Event, MessageInfo, StdError, StdResult, Storage, SubMsg, WasmMsg,
+    to_json_binary, Addr, Coin, Coins, CosmosMsg, Deps, Env, Event, StdResult, SubMsg,
 };
 
 use crate::{
     actions::{action::Action, operation::Operation},
     condition::Condition,
     constants::PROCESS_PAYLOAD_REPLY_ID,
-    core::Contract,
     manager::Affiliate,
     statistics::Statistics,
 };
@@ -25,7 +19,6 @@ pub struct StrategyConfig {
     pub owner: Addr,
     pub nodes: Vec<Node>,
     pub denoms: HashSet<String>,
-    pub escrowed: HashSet<String>,
 }
 
 #[cw_serde]
@@ -33,6 +26,14 @@ pub enum StrategyOperation {
     Execute,
     Withdraw(HashSet<String>),
     Cancel,
+}
+
+#[cw_serde]
+pub struct StrategyInstantiateMsg {
+    pub contract_address: Addr,
+    pub owner: Addr,
+    pub affiliates: Vec<Affiliate>,
+    pub nodes: Vec<Node>,
 }
 
 #[cw_serde]
@@ -57,56 +58,6 @@ pub enum StrategyQueryMsg {
     Statistics {},
     #[returns(Vec<Coin>)]
     Balances(HashSet<String>),
-}
-
-#[cw_serde]
-pub struct Strategy<S> {
-    pub owner: Addr,
-    pub affiliates: Vec<Affiliate>,
-    pub nodes: Vec<Node>,
-    pub state: S,
-}
-
-impl<S> Strategy<S> {
-    pub fn size(&self) -> usize {
-        self.nodes.iter().map(|n| n.size()).sum::<usize>() + 1
-    }
-
-    pub fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        let mut denoms = HashSet::new();
-
-        for node in self.nodes.iter() {
-            let node_denoms = node.denoms(deps, env)?;
-            denoms.extend(node_denoms);
-        }
-
-        Ok(denoms)
-    }
-
-    pub fn escrowed(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        let mut escrowed = HashSet::new();
-
-        for node in self.nodes.iter() {
-            let node_escrowed = node.escrowed(deps, env)?;
-            escrowed.extend(node_escrowed);
-        }
-
-        Ok(escrowed)
-    }
-
-    pub fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
-        let mut balances = Coins::default();
-
-        for node in self.nodes.iter() {
-            let node_balances = node.balances(deps, env, denoms)?;
-
-            for balance in node_balances {
-                balances.add(balance)?;
-            }
-        }
-
-        Ok(balances)
-    }
 }
 
 #[cw_serde]
@@ -152,129 +103,6 @@ impl From<StrategyMsg> for SubMsg {
     fn from(msg: StrategyMsg) -> Self {
         SubMsg::reply_always(msg.msg, PROCESS_PAYLOAD_REPLY_ID)
             .with_payload(to_json_binary(&msg.payload).unwrap())
-    }
-}
-
-#[cw_serde]
-pub struct Indexable;
-
-pub struct Instantiable {
-    pub contract_address: Addr,
-    label: String,
-    salt: Binary,
-    code_id: u64,
-}
-
-pub struct Updatable {
-    pub contract_address: Addr,
-}
-
-#[cw_serde]
-pub struct Indexed {
-    pub contract_address: Addr,
-}
-
-impl Strategy<Indexable> {
-    pub fn add_index<F>(
-        self,
-        deps: &mut DepsMut,
-        env: &Env,
-        code_id: u64,
-        label: String,
-        save: F,
-    ) -> StdResult<Strategy<Instantiable>>
-    where
-        F: FnOnce(&mut dyn Storage, &Strategy<Instantiable>) -> StdResult<()>,
-    {
-        let salt_data = to_json_binary(&(self.owner.to_string(), self.clone(), env.block.height))?;
-        let mut hash = DefaultHasher::new();
-        hash.write(salt_data.as_slice());
-        let salt = hash.finish().to_le_bytes();
-
-        let contract_address = deps.api.addr_humanize(
-            &instantiate2_address(
-                deps.querier
-                    .query_wasm_code_info(code_id)?
-                    .checksum
-                    .as_slice(),
-                &deps.api.addr_canonicalize(env.contract.address.as_str())?,
-                &salt,
-            )
-            .map_err(|e| {
-                StdError::generic_err(format!("Failed to instantiate contract address: {e}"))
-            })?,
-        )?;
-
-        let instantiable_strategy = Strategy {
-            owner: self.owner.clone(),
-            affiliates: self.affiliates.clone(),
-            nodes: self.nodes.clone(),
-            state: Instantiable {
-                contract_address,
-                label,
-                salt: Binary::from(salt),
-                code_id,
-            },
-        };
-
-        save(deps.storage, &instantiable_strategy)?;
-
-        Ok(instantiable_strategy)
-    }
-
-    pub fn update_index<F>(
-        self,
-        deps: &mut DepsMut,
-        contract_address: Addr,
-        save: F,
-    ) -> StdResult<Strategy<Updatable>>
-    where
-        F: FnOnce(&mut dyn Storage) -> StdResult<()>,
-    {
-        let indexed_strategy = Strategy {
-            owner: self.owner,
-            affiliates: self.affiliates,
-            nodes: self.nodes,
-            state: Updatable { contract_address },
-        };
-
-        save(deps.storage)?;
-
-        Ok(indexed_strategy)
-    }
-}
-
-impl Strategy<Instantiable> {
-    pub fn instantiate_msg(
-        self,
-        info: MessageInfo,
-        affiliates: Vec<Affiliate>,
-    ) -> StdResult<CosmosMsg> {
-        Ok(WasmMsg::Instantiate2 {
-            admin: Some(self.owner.to_string()),
-            code_id: self.state.code_id,
-            label: self.state.label,
-            salt: self.state.salt,
-            msg: to_json_binary(&Strategy {
-                owner: self.owner,
-                affiliates,
-                nodes: self.nodes,
-                state: Indexed {
-                    contract_address: self.state.contract_address.clone(),
-                },
-            })?,
-            funds: info.funds,
-        }
-        .into())
-    }
-}
-
-impl Strategy<Updatable> {
-    pub fn update_msg(self, info: MessageInfo) -> StdResult<CosmosMsg> {
-        Ok(Contract(self.state.contract_address.clone()).call(
-            to_json_binary(&StrategyExecuteMsg::Update(self.nodes))?,
-            info.funds,
-        ))
     }
 }
 
