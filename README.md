@@ -57,7 +57,7 @@ Think of a strategy as a programmable decision tree that lives on the blockchain
 
 **Disconnected Subtrees & Convergent Branching**
 
-Strategies can have multiple independent branches that don't need to connect. Multiple branches can also converge on a common downstream node to ensure certain actions always execute.
+Strategies can have multiple independent branches that don't need to connect, enabling totally distinct execution paths within the same strategy. Multiple branches can also converge on a common downstream node to ensure certain actions always execute.
 
 ```
      ┌────────────────────┐          ┌────────────────────┐
