@@ -12,7 +12,6 @@ pub trait Operation<T> {
 
 pub trait StatefulOperation<T> {
     fn commit(self, deps: Deps, env: &Env) -> StdResult<T>;
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
     fn withdraw(
         self,
         deps: Deps,
@@ -20,4 +19,5 @@ pub trait StatefulOperation<T> {
         desired: &HashSet<String>,
     ) -> StdResult<(Vec<CosmosMsg>, T)>;
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
 }

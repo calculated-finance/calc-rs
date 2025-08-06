@@ -4,7 +4,7 @@
 
 The `strategy` contract is the on-chain runtime environment for executing declarative trading strategies using a directed acyclic graph (DAG) execution model. It manages the complete lifecycle of a strategy, from initialization through execution, updates, and withdrawal.
 
-Each strategy contract is an isolated execution environment that owns and manages its own funds, executes its defined operations autonomously, and maintains statistics about its operations. The contract implements a graph-based execution engine where strategies are represented as a collection of interconnected nodes that execute sequentially with conditional branching.
+Each strategy contract is an isolated execution environment that owns and manages its own funds and executes its defined operations autonomously. The contract implements a graph-based execution engine where strategies are represented as a collection of interconnected nodes that execute sequentially with conditional branching.
 
 ## Key Features
 
@@ -22,35 +22,39 @@ The strategy execution model is built around a graph of interconnected nodes:
 
 ### Node Types
 
-#### Action Nodes
+**Condition nodes**
 
-Action nodes represent concrete operations that modify state or generate blockchain messages:
+Condition nodes evaluate specific conditions and determine the next node to execute based on their outcome. They can branch execution flow into different paths.
 
-- **`Swap`:** Execute token swaps across multiple DEX protocols
-- **`Distribute`:** Send funds to multiple recipients with share-based allocations
-- **`LimitOrder`:** Place and manage static or dynamic limit orders
+- `TimestampElapsed`: Check if a specific time has passed
+- `BlocksCompleted`: Check if a specific block height has been reached
+- `Schedule`: Check if a time/block/cron/price schedule is ready
+- `CanSwap`: Check if market conditions would allow a swap
+- `FinLimitOrderFilled`: Check if a limit order was filled
+- `BalanceAvailable`: Check if a specific balance is available at a given address
+- `StrategyStatus`: Check if another CALC strategy is in a specific status (Active/Paused)
+- `OraclePrice`: Check if the current USD price of an assert is above or below a threshold
 
-#### Condition Nodes
+**Action nodes**
 
-Condition nodes provide branching logic and control flow:
+Action nodes perform specific operations and always proceed to the next node after execution. They can generate blockchain messages and require external calls to complete.
 
-- **Time-based:** `TimestampElapsed`, `BlocksCompleted`
-- **Market-based:** `CanSwap`, `LimitOrderFilled`, `OraclePrice`
-- **Balance-based:** `BalanceAvailable`, `StrategyBalanceAvailable`
-- **Schedule-based:** `Schedule` for recurring execution patterns
+- `Swap`: Execute a swap between two assets under certain market conditions
+- `LimitOrder`: Place a limit order with specific parameters
+- `Distribute`: Transfer funds to another address, execute another contract with funds, or execute a thorchain `MsgDeposit` with a memo
 
 ### Graph Structure
 
 ```
-Node 0: Condition(PriceCheck)
-    ├─ on_success: Node 2 (Swap)
-    └─ on_failure: Node 1 (Distribute)
+Node 0: Condition(BalanceAvailable)
+    ├─ on_success: Node 2
+    └─ on_failure: Node 1
 
 Node 1: Action(Distribute)
     └─ next: None
 
 Node 2: Action(Swap)
-    └─ next: Node 3 (LimitOrder)
+    └─ next: Node 3
 
 Node 3: Action(LimitOrder)
     └─ next: None
@@ -60,7 +64,7 @@ Each node contains:
 
 - **Index:** Unique position in the strategy graph
 - **Operation:** The actual business logic to execute
-- **Edges:** References to subsequent nodes (next, on_success, on_failure)
+- **Edges:** References to subsequent nodes (`next`, `on_success`, `on_failure`)
 
 ## Execution Model
 
@@ -72,23 +76,31 @@ The strategy contract executes nodes sequentially following the graph edges:
 2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failure` edges
 3. **Message Generation:** When a node generates blockchain messages, execution pauses for external calls
 4. **Continuation:** After external messages complete, execution resumes from the next node
-5. **Termination:** Execution completes when reaching a node with no outgoing edges
+5. **Termination:** Execution completes when reaching an action node with no `next`, or a condition node with no relevant `on_success` or `on_failure` edge
 
 ### State Management
 
 Each node operation follows the Operation trait pattern:
 
-```rust
-pub trait Operation<T>: Send + Sync + Clone {
+````rust
+pub trait Operation<T> {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, T);
     fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
-    fn commit(self, deps: Deps, env: &Env) -> StdResult<T>;
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
-    fn withdraw(self, deps: Deps, env: &Env, desired: &HashSet<String>) -> StdResult<(Vec<CosmosMsg>, T)>;
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
 }
-```
+
+pub trait StatefulOperation<T> {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<T>;
+    fn withdraw(
+        self,
+        deps: Deps,
+        env: &Env,
+        desired: &HashSet<String>,
+    ) -> StdResult<(Vec<CosmosMsg>, T)>;
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
+    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
+}
+``
 
 ### Cycle Prevention
 
@@ -108,7 +120,7 @@ pub struct StrategyInstantiateMsg {
     pub nodes: Vec<Node>,
     pub affiliates: Vec<Affiliate>,
 }
-```
+````
 
 Initializes a new strategy contract instance.
 
@@ -280,26 +292,6 @@ The NodeStore implements comprehensive validation:
 2. **Reference Validation:** Verifies all edge references point to valid nodes
 3. **Cycle Detection:** Uses topological sorting to prevent infinite loops
 4. **Size Limits:** Enforces maximum strategy size constraints
-
-## Integration Patterns
-
-### Manager Integration
-
-The strategy contract integrates with the manager contract:
-
-- Manager instantiates strategies with proper configuration
-- Manager controls strategy lifecycle (execute/update/cancel)
-- Manager can update strategy definitions
-- Strategy reports back execution status and statistics
-
-### Operation Integration
-
-All operations implement the unified Operation trait:
-
-- Consistent interface for initialization, execution, and cleanup
-- Polymorphic handling of different operation types
-- Standardized balance and denomination reporting
-- Unified state management across operation types
 
 ## Security Considerations
 
