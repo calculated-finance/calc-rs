@@ -20,37 +20,20 @@ Think of a strategy as a programmable decision tree that lives on the blockchain
 
 ### Simple Strategy Examples
 
-**TWAP execution:**
-
 ```
-                                    ┌────────────────────────┐
-                                    │       Every hour       │
-                                    └────────────┬───────────┘
-                                    ┌────────────┴───────────┐
-                                    │ Swap 100 USDC for RUNE │
-                                    │  with max 2% slippage  │
-                                    └────────────┬───────────┘
-                                    ┌────────────┴───────────┐
-                                    │ Send 50% RUNE to bank  │
-                                    │    and 50% to other    │
-                                    │    trading strategy    │
-                                    └────────────────────────┘
-```
-
-**GRID bot:**
-
-```
-                                    ┌────────────────────────┐
-                                    │    Every 50 blocks     │
-                                    └────────────┬───────────┘
-                                    ┌────────────┴───────────┐
-                                    │ Try swap 100 RUNE into │
-                                    │   at least 110 RUJI    │
-                                    └────────────┬───────────┘
-                                    ┌────────────┴───────────┐
-                                    │ Try swap 100 RUJI into │
-                                    │   at least 110 RUNE    │
-                                    └────────────────────────┘
+     GRID BOT:                      DCA:                           TWAP:
+    ┌────────────────────────┐     ┌────────────────────────┐     ┌────────────────────────┐
+    │    Every 50 blocks     │     │     Every weekday      │     │      Every minute      │
+    └────────────┬───────────┘     └────────────┬───────────┘     └────────────┬───────────┘
+    ┌────────────┴───────────┐     ┌────────────┴───────────┐     ┌────────────┴───────────┐
+    │ Try swap 100 RUNE into │     │ Swap 100 USDC for RUNE │     │ Claim and reset limit  │
+    │   at least 110 RUJI    │     │  with max 2% slippage  │     │  order 2pbs above ask  │
+    └────────────┬───────────┘     └────────────┬───────────┘     └────────────────────────┘
+    ┌────────────┴───────────┐     ┌────────────┴───────────┐
+    │ Try swap 100 RUJI into │     │ Send 50% RUNE to bank  │
+    │   at least 110 RUNE    │     │    and 50% to other    │
+    └────────────────────────┘     │    trading strategy    │
+                                   └────────────────────────┘
 ```
 
 ### Advanced Control Flow Patterns
