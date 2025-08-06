@@ -4,13 +4,14 @@ use std::{
 };
 
 use calc_rs::{
-    constants::{BASE_FEE_BPS, MAX_TOTAL_AFFILIATE_BPS},
+    constants::{BASE_FEE_BPS, MAX_TOTAL_AFFILIATE_BPS, MIN_FEE_BPS},
     core::{Contract, ContractError, ContractResult},
     manager::{
         Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy, StrategyStatus,
     },
     strategy::{StrategyExecuteMsg, StrategyInstantiateMsg},
 };
+use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
@@ -40,6 +41,7 @@ pub fn instantiate(
     Ok(Response::default())
 }
 
+#[cw_serde]
 pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -100,7 +102,7 @@ pub fn execute(
                 vec![Affiliate {
                     address: config.fee_collector,
                     bps: max(
-                        BASE_FEE_BPS.saturating_sub(10),
+                        BASE_FEE_BPS.saturating_sub(BASE_FEE_BPS.saturating_sub(MIN_FEE_BPS)),
                         BASE_FEE_BPS.saturating_sub(total_affiliate_bps),
                     ),
                     label: "CALC".to_string(),
@@ -109,9 +111,13 @@ pub fn execute(
             .concat();
 
             let id = STRATEGY_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
-            let salt_data = to_json_binary(&(owner.to_string(), id, env.block.height))?;
+
             let mut hash = DefaultHasher::new();
-            hash.write(salt_data.as_slice());
+
+            hash.write(owner.as_bytes());
+            hash.write(&id.to_le_bytes());
+            hash.write(&env.block.height.to_le_bytes());
+
             let salt = hash.finish().to_le_bytes();
 
             let contract_address = deps.api.addr_humanize(
@@ -124,7 +130,9 @@ pub fn execute(
                     &salt,
                 )
                 .map_err(|e| {
-                    StdError::generic_err(format!("Failed to instantiate contract address: {e}"))
+                    ContractError::generic_err(format!(
+                        "Failed to instantiate contract address: {e}"
+                    ))
                 })?,
             )?;
 
@@ -297,13 +305,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
                         .map(|updated_at| Bound::exclusive(updated_at_cursor(updated_at, None))),
                     Order::Descending,
                 )
-                .take(match limit {
-                    Some(limit) => match limit {
-                        0..=30 => limit as usize,
-                        _ => 30,
-                    },
-                    None => 30,
-                })
+                .take(limit.unwrap_or(30) as usize)
                 .flat_map(|result| result.map(|(_, strategy)| strategy))
                 .collect::<Vec<Strategy>>();
 

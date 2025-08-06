@@ -2,7 +2,6 @@ use std::vec;
 
 use calc_rs::{
     conditions::condition::Condition,
-    constants::LOG_ERRORS_REPLY_ID,
     core::{Contract, ContractError, ContractResult},
     scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg, Trigger},
 };
@@ -166,7 +165,7 @@ pub fn execute(
 
                 let execute_msg = SubMsg::reply_on_error(
                     Contract(trigger.contract_address).call(trigger.msg, vec![]),
-                    LOG_ERRORS_REPLY_ID,
+                    0,
                 );
 
                 sub_messages.push(execute_msg);
@@ -777,7 +776,7 @@ mod execute_trigger_tests {
                         .unwrap(),
                         funds: vec![],
                     },
-                    LOG_ERRORS_REPLY_ID,
+                    0,
                 ),
                 SubMsg::reply_never(BankMsg::Send {
                     to_address: executor.to_string(),
@@ -834,7 +833,7 @@ mod execute_trigger_tests {
                 .unwrap(),
                 funds: vec![]
             },
-            LOG_ERRORS_REPLY_ID
+            0
         )));
     }
 
@@ -885,7 +884,7 @@ mod execute_trigger_tests {
                 .unwrap(),
                 funds: vec![]
             },
-            LOG_ERRORS_REPLY_ID
+            0
         )));
 
         assert!(response

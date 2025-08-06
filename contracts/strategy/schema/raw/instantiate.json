@@ -51,7 +51,7 @@
           ],
           "properties": {
             "limit_order": {
-              "$ref": "#/definitions/LimitOrder"
+              "$ref": "#/definitions/FinLimitOrder"
             }
           },
           "additionalProperties": false
@@ -226,7 +226,7 @@
                   "$ref": "#/definitions/Side"
                 },
                 "strategy": {
-                  "$ref": "#/definitions/OrderPriceStrategy"
+                  "$ref": "#/definitions/PriceStrategy"
                 }
               },
               "additionalProperties": false
@@ -307,20 +307,26 @@
         {
           "type": "object",
           "required": [
-            "limit_order_filled"
+            "fin_limit_order_filled"
           ],
           "properties": {
-            "limit_order_filled": {
+            "fin_limit_order_filled": {
               "type": "object",
               "required": [
-                "owner",
                 "pair_address",
                 "price",
                 "side"
               ],
               "properties": {
                 "owner": {
-                  "$ref": "#/definitions/Addr"
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/Addr"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "pair_address": {
                   "$ref": "#/definitions/Addr"
@@ -346,34 +352,19 @@
             "balance_available": {
               "type": "object",
               "required": [
-                "address",
                 "amount"
               ],
               "properties": {
                 "address": {
-                  "$ref": "#/definitions/Addr"
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/Addr"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
-                "amount": {
-                  "$ref": "#/definitions/Coin"
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "strategy_balance_available"
-          ],
-          "properties": {
-            "strategy_balance_available": {
-              "type": "object",
-              "required": [
-                "amount"
-              ],
-              "properties": {
                 "amount": {
                   "$ref": "#/definitions/Coin"
                 }
@@ -423,7 +414,7 @@
               "required": [
                 "asset",
                 "direction",
-                "rate"
+                "price"
               ],
               "properties": {
                 "asset": {
@@ -432,23 +423,11 @@
                 "direction": {
                   "$ref": "#/definitions/Direction"
                 },
-                "rate": {
+                "price": {
                   "$ref": "#/definitions/Decimal"
                 }
               },
               "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "not"
-          ],
-          "properties": {
-            "not": {
-              "$ref": "#/definitions/Condition"
             }
           },
           "additionalProperties": false
@@ -530,19 +509,7 @@
       },
       "additionalProperties": false
     },
-    "FinRoute": {
-      "type": "object",
-      "required": [
-        "pair_address"
-      ],
-      "properties": {
-        "pair_address": {
-          "$ref": "#/definitions/Addr"
-        }
-      },
-      "additionalProperties": false
-    },
-    "LimitOrder": {
+    "FinLimitOrder": {
       "type": "object",
       "required": [
         "bid_denom",
@@ -551,6 +518,16 @@
         "strategy"
       ],
       "properties": {
+        "bid_amount": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Uint128"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "bid_denom": {
           "type": "string"
         },
@@ -564,16 +541,6 @@
             }
           ]
         },
-        "max_bid_amount": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Uint128"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "pair_address": {
           "$ref": "#/definitions/Addr"
         },
@@ -581,7 +548,19 @@
           "$ref": "#/definitions/Side"
         },
         "strategy": {
-          "$ref": "#/definitions/OrderPriceStrategy"
+          "$ref": "#/definitions/PriceStrategy"
+        }
+      },
+      "additionalProperties": false
+    },
+    "FinRoute": {
+      "type": "object",
+      "required": [
+        "pair_address"
+      ],
+      "properties": {
+        "pair_address": {
+          "$ref": "#/definitions/Addr"
         }
       },
       "additionalProperties": false
@@ -645,7 +624,7 @@
                   "format": "uint16",
                   "minimum": 0.0
                 },
-                "on_fail": {
+                "on_failure": {
                   "type": [
                     "integer",
                     "null"
@@ -696,7 +675,7 @@
         }
       ]
     },
-    "OrderPriceStrategy": {
+    "PriceStrategy": {
       "oneOf": [
         {
           "type": "object",
@@ -860,6 +839,16 @@
           "anyOf": [
             {
               "$ref": "#/definitions/Binary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Cadence"
             },
             {
               "type": "null"

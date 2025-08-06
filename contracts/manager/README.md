@@ -217,7 +217,7 @@ Strategies {
     owner: Option<Addr>,           // Filter by strategy owner
     status: Option<StrategyStatus>, // Filter by operational status
     start_after: Option<u64>,      // Pagination cursor (timestamp)
-    limit: Option<u16>,            // Result limit (max 30, default 30)
+    limit: Option<u16>,            // Result limit (default 30)
 } -> Vec<Strategy>
 ```
 

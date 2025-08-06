@@ -18,19 +18,6 @@
     {
       "type": "object",
       "required": [
-        "statistics"
-      ],
-      "properties": {
-        "statistics": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
         "balances"
       ],
       "properties": {

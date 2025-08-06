@@ -56,8 +56,13 @@ export type ManagerExecuteMsg =
   | {
       update: {
         contract_address: Addr;
-        label?: string | null;
         nodes: Node[];
+      };
+    }
+  | {
+      update_label: {
+        contract_address: Addr;
+        label: string;
       };
     };
 export type Node =
@@ -81,7 +86,7 @@ export type Action =
       swap: Swap;
     }
   | {
-      limit_order: LimitOrder;
+      limit_order: FinLimitOrder;
     }
   | {
       distribute: Distribution;
@@ -123,7 +128,7 @@ export type SwapRoute =
       thorchain: ThorchainRoute;
     };
 export type Side = "base" | "quote";
-export type OrderPriceStrategy =
+export type PriceStrategy =
   | {
       fixed: Decimal;
     }
@@ -179,8 +184,8 @@ export type Condition =
       can_swap: Swap;
     }
   | {
-      limit_order_filled: {
-        owner: Addr;
+      fin_limit_order_filled: {
+        owner?: Addr | null;
         pair_address: Addr;
         price: Decimal;
         side: Side;
@@ -188,12 +193,7 @@ export type Condition =
     }
   | {
       balance_available: {
-        address: Addr;
-        amount: Coin;
-      };
-    }
-  | {
-      strategy_balance_available: {
+        address?: Addr | null;
         amount: Coin;
       };
     }
@@ -208,11 +208,8 @@ export type Condition =
       oracle_price: {
         asset: string;
         direction: Direction;
-        rate: Decimal;
+        price: Decimal;
       };
-    }
-  | {
-      not: Condition;
     };
 /**
  * A point in time in nanosecond precision.
@@ -262,7 +259,7 @@ export type Cadence =
         pair_address: Addr;
         previous?: Decimal | null;
         side: Side;
-        strategy: OrderPriceStrategy;
+        strategy: PriceStrategy;
       };
     };
 
@@ -299,13 +296,13 @@ export interface StreamingSwap {
   streaming_swap_blocks: number;
   swap_amount: Coin;
 }
-export interface LimitOrder {
+export interface FinLimitOrder {
+  bid_amount?: Uint128 | null;
   bid_denom: string;
   current_order?: StaleOrder | null;
-  max_bid_amount?: Uint128 | null;
   pair_address: Addr;
   side: Side;
-  strategy: OrderPriceStrategy;
+  strategy: PriceStrategy;
 }
 export interface StaleOrder {
   price: Decimal;
@@ -326,6 +323,7 @@ export interface Schedule {
   executors: Addr[];
   jitter?: Duration | null;
   msg?: Binary | null;
+  next?: Cadence | null;
   scheduler: Addr;
 }
 export interface Duration {
@@ -424,9 +422,6 @@ export interface StrategyInstantiateMsg {
 export type StrategyQueryMsg =
   | {
       config: {};
-    }
-  | {
-      statistics: {};
     }
   | {
       balances: string[];

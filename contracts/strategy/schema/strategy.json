@@ -55,7 +55,7 @@
             ],
             "properties": {
               "limit_order": {
-                "$ref": "#/definitions/LimitOrder"
+                "$ref": "#/definitions/FinLimitOrder"
               }
             },
             "additionalProperties": false
@@ -230,7 +230,7 @@
                     "$ref": "#/definitions/Side"
                   },
                   "strategy": {
-                    "$ref": "#/definitions/OrderPriceStrategy"
+                    "$ref": "#/definitions/PriceStrategy"
                   }
                 },
                 "additionalProperties": false
@@ -311,20 +311,26 @@
           {
             "type": "object",
             "required": [
-              "limit_order_filled"
+              "fin_limit_order_filled"
             ],
             "properties": {
-              "limit_order_filled": {
+              "fin_limit_order_filled": {
                 "type": "object",
                 "required": [
-                  "owner",
                   "pair_address",
                   "price",
                   "side"
                 ],
                 "properties": {
                   "owner": {
-                    "$ref": "#/definitions/Addr"
+                    "anyOf": [
+                      {
+                        "$ref": "#/definitions/Addr"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "pair_address": {
                     "$ref": "#/definitions/Addr"
@@ -350,34 +356,19 @@
               "balance_available": {
                 "type": "object",
                 "required": [
-                  "address",
                   "amount"
                 ],
                 "properties": {
                   "address": {
-                    "$ref": "#/definitions/Addr"
+                    "anyOf": [
+                      {
+                        "$ref": "#/definitions/Addr"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
-                  "amount": {
-                    "$ref": "#/definitions/Coin"
-                  }
-                },
-                "additionalProperties": false
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "strategy_balance_available"
-            ],
-            "properties": {
-              "strategy_balance_available": {
-                "type": "object",
-                "required": [
-                  "amount"
-                ],
-                "properties": {
                   "amount": {
                     "$ref": "#/definitions/Coin"
                   }
@@ -427,7 +418,7 @@
                 "required": [
                   "asset",
                   "direction",
-                  "rate"
+                  "price"
                 ],
                 "properties": {
                   "asset": {
@@ -436,23 +427,11 @@
                   "direction": {
                     "$ref": "#/definitions/Direction"
                   },
-                  "rate": {
+                  "price": {
                     "$ref": "#/definitions/Decimal"
                   }
                 },
                 "additionalProperties": false
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "not"
-            ],
-            "properties": {
-              "not": {
-                "$ref": "#/definitions/Condition"
               }
             },
             "additionalProperties": false
@@ -534,19 +513,7 @@
         },
         "additionalProperties": false
       },
-      "FinRoute": {
-        "type": "object",
-        "required": [
-          "pair_address"
-        ],
-        "properties": {
-          "pair_address": {
-            "$ref": "#/definitions/Addr"
-          }
-        },
-        "additionalProperties": false
-      },
-      "LimitOrder": {
+      "FinLimitOrder": {
         "type": "object",
         "required": [
           "bid_denom",
@@ -555,6 +522,16 @@
           "strategy"
         ],
         "properties": {
+          "bid_amount": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Uint128"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "bid_denom": {
             "type": "string"
           },
@@ -568,16 +545,6 @@
               }
             ]
           },
-          "max_bid_amount": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/Uint128"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "pair_address": {
             "$ref": "#/definitions/Addr"
           },
@@ -585,7 +552,19 @@
             "$ref": "#/definitions/Side"
           },
           "strategy": {
-            "$ref": "#/definitions/OrderPriceStrategy"
+            "$ref": "#/definitions/PriceStrategy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FinRoute": {
+        "type": "object",
+        "required": [
+          "pair_address"
+        ],
+        "properties": {
+          "pair_address": {
+            "$ref": "#/definitions/Addr"
           }
         },
         "additionalProperties": false
@@ -649,7 +628,7 @@
                     "format": "uint16",
                     "minimum": 0.0
                   },
-                  "on_fail": {
+                  "on_failure": {
                     "type": [
                       "integer",
                       "null"
@@ -700,7 +679,7 @@
           }
         ]
       },
-      "OrderPriceStrategy": {
+      "PriceStrategy": {
         "oneOf": [
           {
             "type": "object",
@@ -864,6 +843,16 @@
             "anyOf": [
               {
                 "$ref": "#/definitions/Binary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Cadence"
               },
               {
                 "type": "null"
@@ -1212,7 +1201,7 @@
             ],
             "properties": {
               "limit_order": {
-                "$ref": "#/definitions/LimitOrder"
+                "$ref": "#/definitions/FinLimitOrder"
               }
             },
             "additionalProperties": false
@@ -1365,7 +1354,7 @@
                     "$ref": "#/definitions/Side"
                   },
                   "strategy": {
-                    "$ref": "#/definitions/OrderPriceStrategy"
+                    "$ref": "#/definitions/PriceStrategy"
                   }
                 },
                 "additionalProperties": false
@@ -1446,20 +1435,26 @@
           {
             "type": "object",
             "required": [
-              "limit_order_filled"
+              "fin_limit_order_filled"
             ],
             "properties": {
-              "limit_order_filled": {
+              "fin_limit_order_filled": {
                 "type": "object",
                 "required": [
-                  "owner",
                   "pair_address",
                   "price",
                   "side"
                 ],
                 "properties": {
                   "owner": {
-                    "$ref": "#/definitions/Addr"
+                    "anyOf": [
+                      {
+                        "$ref": "#/definitions/Addr"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "pair_address": {
                     "$ref": "#/definitions/Addr"
@@ -1485,34 +1480,19 @@
               "balance_available": {
                 "type": "object",
                 "required": [
-                  "address",
                   "amount"
                 ],
                 "properties": {
                   "address": {
-                    "$ref": "#/definitions/Addr"
+                    "anyOf": [
+                      {
+                        "$ref": "#/definitions/Addr"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
-                  "amount": {
-                    "$ref": "#/definitions/Coin"
-                  }
-                },
-                "additionalProperties": false
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "strategy_balance_available"
-            ],
-            "properties": {
-              "strategy_balance_available": {
-                "type": "object",
-                "required": [
-                  "amount"
-                ],
-                "properties": {
                   "amount": {
                     "$ref": "#/definitions/Coin"
                   }
@@ -1562,7 +1542,7 @@
                 "required": [
                   "asset",
                   "direction",
-                  "rate"
+                  "price"
                 ],
                 "properties": {
                   "asset": {
@@ -1571,23 +1551,11 @@
                   "direction": {
                     "$ref": "#/definitions/Direction"
                   },
-                  "rate": {
+                  "price": {
                     "$ref": "#/definitions/Decimal"
                   }
                 },
                 "additionalProperties": false
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "not"
-            ],
-            "properties": {
-              "not": {
-                "$ref": "#/definitions/Condition"
               }
             },
             "additionalProperties": false
@@ -1669,19 +1637,7 @@
         },
         "additionalProperties": false
       },
-      "FinRoute": {
-        "type": "object",
-        "required": [
-          "pair_address"
-        ],
-        "properties": {
-          "pair_address": {
-            "$ref": "#/definitions/Addr"
-          }
-        },
-        "additionalProperties": false
-      },
-      "LimitOrder": {
+      "FinLimitOrder": {
         "type": "object",
         "required": [
           "bid_denom",
@@ -1690,6 +1646,16 @@
           "strategy"
         ],
         "properties": {
+          "bid_amount": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Uint128"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "bid_denom": {
             "type": "string"
           },
@@ -1703,16 +1669,6 @@
               }
             ]
           },
-          "max_bid_amount": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/Uint128"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "pair_address": {
             "$ref": "#/definitions/Addr"
           },
@@ -1720,7 +1676,19 @@
             "$ref": "#/definitions/Side"
           },
           "strategy": {
-            "$ref": "#/definitions/OrderPriceStrategy"
+            "$ref": "#/definitions/PriceStrategy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FinRoute": {
+        "type": "object",
+        "required": [
+          "pair_address"
+        ],
+        "properties": {
+          "pair_address": {
+            "$ref": "#/definitions/Addr"
           }
         },
         "additionalProperties": false
@@ -1784,7 +1752,7 @@
                     "format": "uint16",
                     "minimum": 0.0
                   },
-                  "on_fail": {
+                  "on_failure": {
                     "type": [
                       "integer",
                       "null"
@@ -1835,7 +1803,7 @@
           }
         ]
       },
-      "OrderPriceStrategy": {
+      "PriceStrategy": {
         "oneOf": [
           {
             "type": "object",
@@ -1999,6 +1967,16 @@
             "anyOf": [
               {
                 "$ref": "#/definitions/Binary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Cadence"
               },
               {
                 "type": "null"
@@ -2286,19 +2264,6 @@
       {
         "type": "object",
         "required": [
-          "statistics"
-        ],
-        "properties": {
-          "statistics": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "type": "object",
-        "required": [
           "balances"
         ],
         "properties": {
@@ -2401,7 +2366,7 @@
               ],
               "properties": {
                 "limit_order": {
-                  "$ref": "#/definitions/LimitOrder"
+                  "$ref": "#/definitions/FinLimitOrder"
                 }
               },
               "additionalProperties": false
@@ -2554,7 +2519,7 @@
                       "$ref": "#/definitions/Side"
                     },
                     "strategy": {
-                      "$ref": "#/definitions/OrderPriceStrategy"
+                      "$ref": "#/definitions/PriceStrategy"
                     }
                   },
                   "additionalProperties": false
@@ -2635,20 +2600,26 @@
             {
               "type": "object",
               "required": [
-                "limit_order_filled"
+                "fin_limit_order_filled"
               ],
               "properties": {
-                "limit_order_filled": {
+                "fin_limit_order_filled": {
                   "type": "object",
                   "required": [
-                    "owner",
                     "pair_address",
                     "price",
                     "side"
                   ],
                   "properties": {
                     "owner": {
-                      "$ref": "#/definitions/Addr"
+                      "anyOf": [
+                        {
+                          "$ref": "#/definitions/Addr"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "pair_address": {
                       "$ref": "#/definitions/Addr"
@@ -2674,34 +2645,19 @@
                 "balance_available": {
                   "type": "object",
                   "required": [
-                    "address",
                     "amount"
                   ],
                   "properties": {
                     "address": {
-                      "$ref": "#/definitions/Addr"
+                      "anyOf": [
+                        {
+                          "$ref": "#/definitions/Addr"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
-                    "amount": {
-                      "$ref": "#/definitions/Coin"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "required": [
-                "strategy_balance_available"
-              ],
-              "properties": {
-                "strategy_balance_available": {
-                  "type": "object",
-                  "required": [
-                    "amount"
-                  ],
-                  "properties": {
                     "amount": {
                       "$ref": "#/definitions/Coin"
                     }
@@ -2751,7 +2707,7 @@
                   "required": [
                     "asset",
                     "direction",
-                    "rate"
+                    "price"
                   ],
                   "properties": {
                     "asset": {
@@ -2760,23 +2716,11 @@
                     "direction": {
                       "$ref": "#/definitions/Direction"
                     },
-                    "rate": {
+                    "price": {
                       "$ref": "#/definitions/Decimal"
                     }
                   },
                   "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "required": [
-                "not"
-              ],
-              "properties": {
-                "not": {
-                  "$ref": "#/definitions/Condition"
                 }
               },
               "additionalProperties": false
@@ -2858,19 +2802,7 @@
           },
           "additionalProperties": false
         },
-        "FinRoute": {
-          "type": "object",
-          "required": [
-            "pair_address"
-          ],
-          "properties": {
-            "pair_address": {
-              "$ref": "#/definitions/Addr"
-            }
-          },
-          "additionalProperties": false
-        },
-        "LimitOrder": {
+        "FinLimitOrder": {
           "type": "object",
           "required": [
             "bid_denom",
@@ -2879,6 +2811,16 @@
             "strategy"
           ],
           "properties": {
+            "bid_amount": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "bid_denom": {
               "type": "string"
             },
@@ -2892,16 +2834,6 @@
                 }
               ]
             },
-            "max_bid_amount": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Uint128"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "pair_address": {
               "$ref": "#/definitions/Addr"
             },
@@ -2909,7 +2841,19 @@
               "$ref": "#/definitions/Side"
             },
             "strategy": {
-              "$ref": "#/definitions/OrderPriceStrategy"
+              "$ref": "#/definitions/PriceStrategy"
+            }
+          },
+          "additionalProperties": false
+        },
+        "FinRoute": {
+          "type": "object",
+          "required": [
+            "pair_address"
+          ],
+          "properties": {
+            "pair_address": {
+              "$ref": "#/definitions/Addr"
             }
           },
           "additionalProperties": false
@@ -2973,7 +2917,7 @@
                       "format": "uint16",
                       "minimum": 0.0
                     },
-                    "on_fail": {
+                    "on_failure": {
                       "type": [
                         "integer",
                         "null"
@@ -3024,7 +2968,7 @@
             }
           ]
         },
-        "OrderPriceStrategy": {
+        "PriceStrategy": {
           "oneOf": [
             {
               "type": "object",
@@ -3188,6 +3132,16 @@
               "anyOf": [
                 {
                   "$ref": "#/definitions/Binary"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Cadence"
                 },
                 {
                   "type": "null"
@@ -3424,144 +3378,6 @@
         },
         "Uint64": {
           "description": "A thin wrapper around u64 that is using strings for JSON encoding/decoding, such that the full u64 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u64` to get the value out:\n\n``` # use cosmwasm_std::Uint64; let a = Uint64::from(42u64); assert_eq!(a.u64(), 42);\n\nlet b = Uint64::from(70u32); assert_eq!(b.u64(), 70); ```",
-          "type": "string"
-        }
-      }
-    },
-    "statistics": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Statistics",
-      "type": "object",
-      "required": [
-        "credited",
-        "debited"
-      ],
-      "properties": {
-        "credited": {
-          "type": "array",
-          "items": {
-            "type": "array",
-            "items": [
-              {
-                "$ref": "#/definitions/Recipient"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/Coin"
-                }
-              }
-            ],
-            "maxItems": 2,
-            "minItems": 2
-          }
-        },
-        "debited": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/Coin"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "definitions": {
-        "Addr": {
-          "description": "A human readable address.\n\nIn Cosmos, this is typically bech32 encoded. But for multi-chain smart contracts no assumptions should be made other than being UTF-8 encoded and of reasonable length.\n\nThis type represents a validated address. It can be created in the following ways 1. Use `Addr::unchecked(input)` 2. Use `let checked: Addr = deps.api.addr_validate(input)?` 3. Use `let checked: Addr = deps.api.addr_humanize(canonical_addr)?` 4. Deserialize from JSON. This must only be done from JSON that was validated before such as a contract's state. `Addr` must not be used in messages sent by the user because this would result in unvalidated instances.\n\nThis type is immutable. If you really need to mutate it (Really? Are you sure?), create a mutable copy using `let mut mutable = Addr::to_string()` and operate on that `String` instance.",
-          "type": "string"
-        },
-        "Binary": {
-          "description": "Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.\n\nThis is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>. See also <https://github.com/CosmWasm/cosmwasm/blob/main/docs/MESSAGE_TYPES.md>.",
-          "type": "string"
-        },
-        "Coin": {
-          "type": "object",
-          "required": [
-            "amount",
-            "denom"
-          ],
-          "properties": {
-            "amount": {
-              "$ref": "#/definitions/Uint128"
-            },
-            "denom": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
-        "Recipient": {
-          "oneOf": [
-            {
-              "type": "object",
-              "required": [
-                "bank"
-              ],
-              "properties": {
-                "bank": {
-                  "type": "object",
-                  "required": [
-                    "address"
-                  ],
-                  "properties": {
-                    "address": {
-                      "$ref": "#/definitions/Addr"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "required": [
-                "contract"
-              ],
-              "properties": {
-                "contract": {
-                  "type": "object",
-                  "required": [
-                    "address",
-                    "msg"
-                  ],
-                  "properties": {
-                    "address": {
-                      "$ref": "#/definitions/Addr"
-                    },
-                    "msg": {
-                      "$ref": "#/definitions/Binary"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "required": [
-                "deposit"
-              ],
-              "properties": {
-                "deposit": {
-                  "type": "object",
-                  "required": [
-                    "memo"
-                  ],
-                  "properties": {
-                    "memo": {
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            }
-          ]
-        },
-        "Uint128": {
-          "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
           "type": "string"
         }
       }
