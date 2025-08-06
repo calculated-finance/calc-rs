@@ -28,6 +28,12 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: ManagerConfig,
 ) -> ContractResult {
+    if deps.api.addr_validate(msg.fee_collector.as_str()).is_err() {
+        return Err(ContractError::generic_err("Invalid fee collector address"));
+    }
+
+    deps.querier.query_wasm_code_info(msg.strategy_code_id)?;
+
     CONFIG.save(deps.storage, &msg)?;
     STRATEGY_COUNTER.save(deps.storage, &0)?;
 
@@ -43,6 +49,12 @@ pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
+    if deps.api.addr_validate(msg.fee_collector.as_str()).is_err() {
+        return Err(ContractError::generic_err("Invalid fee collector address"));
+    }
+
+    deps.querier.query_wasm_code_info(msg.strategy_code_id)?;
+
     CONFIG.save(deps.storage, &msg)?;
     Ok(Response::default())
 }
@@ -150,9 +162,7 @@ pub fn execute(
             let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
 
             if strategy.status != StrategyStatus::Active {
-                return Err(ContractError::generic_err(
-                    "Cannot execute strategy that is not active",
-                ));
+                return Err(ContractError::generic_err("Cannot execute paused strategy"));
             }
 
             STRATEGIES.save(
@@ -229,26 +239,22 @@ pub fn execute(
             contract_address,
             label,
         } => {
-            let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
-
-            if strategy.owner != info.sender {
-                return Err(ContractError::Unauthorized {});
-            }
-
             if label.is_empty() || label.len() > 100 {
                 return Err(ContractError::generic_err(
                     "Strategy label must be between 1 and 100 characters",
                 ));
             }
 
+            let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
+
+            if strategy.owner != info.sender {
+                return Err(ContractError::Unauthorized {});
+            }
+
             STRATEGIES.save(
                 deps.storage,
                 contract_address.clone(),
-                &Strategy {
-                    updated_at: env.block.time.seconds(),
-                    label,
-                    ..strategy
-                },
+                &Strategy { label, ..strategy },
             )?;
 
             Response::default()

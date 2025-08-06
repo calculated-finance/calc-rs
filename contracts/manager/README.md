@@ -162,6 +162,23 @@ UpdateStatus {
      - Active: StrategyExecuteMsg::Execute
      - Paused: StrategyExecuteMsg::Cancel
 
+### `UpdateLabel`
+
+Changes the display label of a strategy.
+
+```rust
+UpdateLabel {
+    contract_address: Addr,       // Strategy contract to update
+    label: String,                // New label (1-100 characters)
+}
+```
+
+- **Authorization:** Strategy owner only
+- **Logic:**
+  1. **Owner Verification:** Validates caller is strategy owner
+  2. **Label Validation:** Ensures label is 1-100 characters
+  3. **Registry Update:** Updates label in registry
+
 ## Query Messages
 
 ### `Config`
