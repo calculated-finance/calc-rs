@@ -27,7 +27,7 @@ Think of a strategy as a programmable decision tree that lives on the blockchain
     └────────────┬───────────┘     └────────────┬───────────┘     └────────────┬───────────┘
     ┌────────────┴───────────┐     ┌────────────┴───────────┐     ┌────────────┴───────────┐
     │ Try swap 100 RUNE into │     │ Swap 100 USDC for RUNE │     │ Claim and reset limit  │
-    │   at least 110 RUJI    │     │  with max 2% slippage  │     │  order 2pbs above ask  │
+    │   at least 110 RUJI    │     │  with max 2% slippage  │     │ order 2 bps above ask  │
     └────────────┬───────────┘     └────────────┬───────────┘     └────────────────────────┘
     ┌────────────┴───────────┐     ┌────────────┴───────────┐
     │ Try swap 100 RUJI into │     │ Send 50% RUNE to bank  │
