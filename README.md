@@ -14,6 +14,132 @@ The CALC protocol is a decentralized framework for creating, managing, and autom
 - **Manager:** A factory and registry for creating and managing multiple strategy contracts
 - **Scheduler:** A decentralized automation engine that executes strategies based on predefined conditions
 
+## What Are Strategies?
+
+Think of a strategy as a programmable decision tree that lives on the blockchain. You create a flowchart-like structure of conditions and actions that execute automatically when triggered. Each strategy runs in its own smart contract with its own isolated funds.
+
+### Simple Strategy Examples
+
+**Automated Market Making:**
+
+```
+                                ┌────────────────────────┐
+                                │     Every 5 blocks     │
+                                └────────────┬───────────┘
+                                ┌────────────┴───────────┐
+                                │   Claim & reset sell   │
+                                │  limit order at 1bps   │
+                                │    above ask price     │
+                                └────────────┬───────────┘
+                                ┌────────────┴───────────┐
+                                │   Claim & reset buy    │
+                                │  limit order at 1bps   │
+                                │    below bid price     │
+                                └────────────────────────┘
+```
+
+**TWAP execution:**
+
+```
+                                ┌────────────────────────┐
+                                │       Every hour       │
+                                └────────────┬───────────┘
+                                ┌────────────┴───────────┐
+                                │ Swap 100 USDC for RUNE │
+                                │  with max 2% slippage  │
+                                └────────────┬───────────┘
+                                ┌────────────┴───────────┐
+                                │ Send 50% RUNE to bank  │
+                                │    and 50% to other    │
+                                │    trading strategy    │
+                                └────────────────────────┘
+```
+
+**GRID bot:**
+
+```
+                                ┌────────────────────────┐
+                                │    Every 50 blocks     │
+                                └────────────┬───────────┘
+                                ┌────────────┴───────────┐
+                                │ Try swap 100 RUNE into │
+                                │   at least 110 RUJI    │
+                                └────────────┬───────────┘
+                                ┌────────────┴───────────┐
+                                │ Try swap 100 RUJI into │
+                                │   at least 110 RUNE    │
+                                └────────────────────────┘
+```
+
+### How Execution Actually Works
+
+1. **Single Path Traversal:** Each execution follows one path through the graph from start to finish
+2. **Conditional Branching:** Conditions evaluate to true/false and branch accordingly
+3. **Message Execution:** When actions generate blockchain messages, they are executed immediately
+4. **Automatic Continuation:** After messages complete, execution resumes from the next node
+5. **State Persistence:** Each node's state is saved individually and survives between executions
+
+### Advanced Control Flow Patterns
+
+**Convergent Branching:**
+Multiple paths can converge on the same downstream node, enabling sophisticated decision trees:
+
+```
+    ┌────────────────────┐          ┌────────────────────┐
+    │  If condition met  ├── then ──┤   execute action   │
+    └──────────┬─────────┘          └──────────┬─────────┘
+               │                               │
+               │                             then
+               │                               │
+               │                    ┌──────────┴─────────┐          ┌────────────────────┐
+               │                    │  If condition met  ├── then ──┤   execute action   │
+               │                    └──────────┬─────────┘          └──────────┬─────────┘
+               │                               │                               │
+               │                               │                             then
+               │                               │                               │
+               │                               │                    ┌──────────┴─────────┐
+               │                               │                    │   execute action   │
+               │                               │                    └──────────┬─────────┘
+               │                               │                               │
+               │                               │                             then
+               │                               │                               │
+               │                               │                    ┌──────────┴─────────┐
+              else ───────────────────────── else ──────────────────┤   execute action   │
+                                                                    └────────────────────┘
+```
+
+**Scheduling:**
+The Schedule condition supports multiple cadence types:
+
+- **Time intervals:** Execute every N seconds
+- **Block intervals:** Execute every N blocks
+- **Cron expressions:** "0 9 \* \* MON" (every Monday at 9 AM)
+- **Price triggers:** Execute every time a limit order is filled
+
+**Dynamic Limit Orders:**
+Limit orders can use the following pricing strategies:
+
+- **Fixed pricing:** Always place orders at $5.00
+- **Dynamic offset:** Place orders 2% above current market price, only resetting order if price moves >1% from current order price
+
+### Key Limitations & Realities
+
+- **Trigger-Based Execution:** Strategies don't run continuously - they must be triggered manually or via the scheduler
+- **Single Execution Path:** Each trigger follows one path through the graph, then stops
+- **Deterministic Only:** Can only use on-chain data (token balances, DEX prices, oracle feeds)
+
+### The Power of Automation
+
+Despite constraints, strategies enable:
+
+- **Systematic Trading:** Execute pre-defined logic without human supervision
+- **24/7 Operation:** Automated triggers through decentralized keeper networks
+- **Complex Logic:** Combine simple building blocks into sophisticated decision trees
+- **Risk Management:** Built-in slippage protection, balance checks, and error handling
+- **Composability:** Strategies can monitor and interact with other strategies
+
+Think of CALC strategies as "smart standing orders with branching logic" rather than high-frequency trading algorithms. They excel at systematic, rule-based trading that adapts to market conditions.
+
 ## Quick Start
 
 ### Prerequisites
@@ -99,16 +225,15 @@ A strategy is defined as a DAG (Directed Acyclic Graph) of interconnected nodes:
 - **Time-based:** `TimestampElapsed`, `BlocksCompleted`, `Schedule` for temporal execution
 - **Market-based:** `CanSwap`, `LimitOrderFilled`, `OraclePrice` for market conditions
 - **Balance-based:** `BalanceAvailable`, `StrategyBalanceAvailable` for fund checks
-- **Logical:** `Not` for logical negation of other conditions
 
 #### Graph Structure
 
-Each node contains an index and references to subsequent nodes. Action nodes have a `next` field, while condition nodes have `on_success` and `on_failureure` edges, enabling branching logic:
+Each node contains an index and references to subsequent nodes. Action nodes have a `next` field, while condition nodes have `on_success` and `on_failure` edges, enabling branching logic:
 
 ```
 Node 0: Condition(PriceCheck)
     ├─ on_success: Node 2 (Swap)
-    └─ on_failureure: Node 1 (Distribute)
+    └─ on_failure: Node 1 (Distribute)
 
 Node 1: Action(Distribute) → next: None
 Node 2: Action(Swap) → next: Node 3 (LimitOrder)
@@ -131,10 +256,10 @@ Strategies are instantiated on-chain via the `manager` contract, which acts as a
 The strategy contract executes nodes sequentially following the graph edges:
 
 1. **Linear Execution:** Action nodes execute and proceed to their `next` node
-2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failureure` edges
+2. **Conditional Branching:** Condition nodes evaluate and follow `on_success` or `on_failure` edges
 3. **Fresh Balances:** Each operation queries fresh balances for accurate execution
 4. **Message Generation:** When external calls are needed, execution pauses and resumes after completion
-5. **Termination:** Execution completes when a terminal node is reached (i.e. an action with no `next` pointer, or a condition with `None` for its relevant `on_success` or `on_failureure` pointer)
+5. **Termination:** Execution completes when a terminal node is reached (i.e. an action with no `next` pointer, or a condition with `None` for its relevant `on_success` or `on_failure` pointer)
 
 #### Execution Triggers
 

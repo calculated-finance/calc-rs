@@ -81,7 +81,7 @@ mod integration_tests {
         FinLimitOrder {
             pair_address: harness.fin_addr.clone(),
             bid_denom: fin_pair.denoms.base().to_string(),
-            max_bid_amount: None,
+            bid_amount: None,
             side: Side::Base,
             strategy: PriceStrategy::Fixed(Decimal::percent(100)),
             current_order: None,
@@ -1290,7 +1290,7 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
 
         let order_action = FinLimitOrder {
-            max_bid_amount: Some(Uint128::new(999)),
+            bid_amount: Some(Uint128::new(999)),
             ..default_limit_order_action(&harness)
         };
 

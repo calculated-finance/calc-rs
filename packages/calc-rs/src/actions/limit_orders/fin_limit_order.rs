@@ -101,6 +101,55 @@ impl PriceStrategy {
 }
 
 #[cw_serde]
+pub struct FinLimitOrder {
+    pub pair_address: Addr,
+    pub bid_denom: String,
+    pub bid_amount: Option<Uint128>,
+    pub side: Side,
+    pub strategy: PriceStrategy,
+    pub current_order: Option<StaleOrder>,
+}
+
+impl FinLimitOrder {
+    pub fn get_pair(&self, deps: Deps) -> StdResult<ConfigResponse> {
+        deps.querier
+            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
+    }
+
+    fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
+        let mut messages = vec![];
+
+        let order = if let Some(existing_order) = self.current_order.clone() {
+            let existing_order_state = FinLimitOrderState {
+                config: self.clone(),
+                state: existing_order.refresh(deps, env, &self)?,
+            };
+
+            let (withdraw_messages, withdrawn_order_state) =
+                existing_order_state.saturating_withdraw(deps)?.execute();
+
+            messages.extend(withdraw_messages);
+
+            withdrawn_order_state
+        } else {
+            FinLimitOrderState::new(self)
+        };
+
+        let (set_messages, set_order_state) = order.set(deps, env)?.execute();
+
+        messages.extend(set_messages);
+
+        Ok((
+            messages,
+            Action::LimitOrder(FinLimitOrder {
+                current_order: Some(set_order_state.state.cached()),
+                ..set_order_state.config
+            }),
+        ))
+    }
+}
+
+#[cw_serde]
 pub struct UnsetOrder {
     remaining: Uint128,
     withdrawing: Uint128,
@@ -196,7 +245,7 @@ impl FinLimitOrderState<UnsetOrder> {
             .query_balance(env.contract.address.clone(), self.config.bid_denom.clone())?;
 
         let available = balance.amount + self.state.withdrawing + self.state.remaining;
-        let final_offer = min(available, self.config.max_bid_amount.unwrap_or(available));
+        let final_offer = min(available, self.config.bid_amount.unwrap_or(available));
         let funding = min(balance.amount + self.state.withdrawing, final_offer);
 
         if funding.is_zero() && !should_reset {
@@ -320,58 +369,9 @@ impl FinLimitOrderState<WithdrawingOrder> {
     }
 }
 
-#[cw_serde]
-pub struct FinLimitOrder {
-    pub pair_address: Addr,
-    pub bid_denom: String,
-    pub max_bid_amount: Option<Uint128>,
-    pub side: Side,
-    pub strategy: PriceStrategy,
-    pub current_order: Option<StaleOrder>,
-}
-
-impl FinLimitOrder {
-    pub fn get_pair(&self, deps: Deps) -> StdResult<ConfigResponse> {
-        deps.querier
-            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
-    }
-
-    fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
-        let mut messages = vec![];
-
-        let order = if let Some(existing_order) = self.current_order.clone() {
-            let existing_order_state = FinLimitOrderState {
-                config: self.clone(),
-                state: existing_order.refresh(deps, env, &self)?,
-            };
-
-            let (withdraw_messages, withdrawn_order_state) =
-                existing_order_state.saturating_withdraw(deps)?.execute();
-
-            messages.extend(withdraw_messages);
-
-            withdrawn_order_state
-        } else {
-            FinLimitOrderState::new(self)
-        };
-
-        let (set_messages, set_order_state) = order.set(deps, env)?.execute();
-
-        messages.extend(set_messages);
-
-        Ok((
-            messages,
-            Action::LimitOrder(FinLimitOrder {
-                current_order: Some(set_order_state.state.cached()),
-                ..set_order_state.config
-            }),
-        ))
-    }
-}
-
 impl Operation<Action> for FinLimitOrder {
     fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Action> {
-        if let Some(amount) = self.max_bid_amount {
+        if let Some(amount) = self.bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
                 return Err(StdError::generic_err(
                     "Bid amount cannot be less than 1,000",
