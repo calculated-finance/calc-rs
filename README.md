@@ -67,7 +67,7 @@ Strategies can have multiple independent branches that don't need to connect, en
               else                            then
                 │                               │
      ┌──────────┴─────────┐          ┌──────────┴─────────┐          ┌────────────────────┐
-     │   execute action   │          │  if condition met  ├── then ──┤   execute action   │
+     │  if condition met  │          │  if condition met  ├── then ──┤   execute action   │
      └──────────┬─────────┘          └──────────┬─────────┘          └──────────┬─────────┘
                 │                               │                               │
               then                              │                             then
@@ -81,6 +81,29 @@ Strategies can have multiple independent branches that don't need to connect, en
                                                 │                    ┌──────────┴─────────┐
                                               else ──────────────────┤   execute action   │
                                                                      └────────────────────┘
+```
+
+**Logical AND/OR/NOT Conditions**
+
+Condition nodes can be combined in the following ways to create logical AND, OR, and NOT conditions:
+
+```
+    A AND B:                      A OR B:                             NOT A:
+   ┌────────────────────┐        ┌────────────────────┐              ┌────────────────────┐
+   │   if condition A   │        │   if condition A   ├────┐         │   if condition A   │
+   └──────────┬─────────┘        └──────────┬─────────┘    │         └──────────┬─────────┘
+              │                             │              │                    │
+             then                         else             │                  else
+              │                             │              │                    │
+   ┌──────────┴─────────┐        ┌──────────┴─────────┐    │         ┌──────────┴─────────┐
+   │   if condition B   │        │   if condition B   │   then       │   execute action   │
+   └──────────┬─────────┘        └──────────┬─────────┘    │         └────────────────────┘
+              │                             │              │
+             then                          then            │
+              │                             │              │
+   ┌──────────┴─────────┐        ┌──────────┴─────────┐    │
+   │   execute action   │        │   execute action   ├────┘
+   └────────────────────┘        └────────────────────┘
 ```
 
 ### Node types
