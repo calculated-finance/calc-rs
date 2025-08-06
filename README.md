@@ -101,8 +101,6 @@ Strategies can have multiple independent branches that don't need to connect. Mu
                                                                     └────────────────────┘
 ```
 
-Think of CALC strategies as "smart standing orders with branching logic" rather than high-frequency trading algorithms. They excel at systematic, rule-based trading that adapts to market conditions.
-
 ### Node types
 
 Strategies contain a set of nodes, each representing a specific action or condition. Nodes can be:
