@@ -11,7 +11,7 @@ A decentralized framework for creating, managing, and automating on-chain tradin
 The CALC protocol is a decentralized framework for creating, managing, and automating on-chain trading strategies. It is built around three core contracts that provide a clear separation of concerns:
 
 - **Strategy:** The runtime environment for a single, declarative trading strategy ([docs](contracts/strategy/README.md))
-- **Manager:** A factory and registry for creating and managing multiple strategy contracts ([docs](contracts/manager/README.md))
+- **Manager:** A factory and registry for creating and managing strategies ([docs](contracts/manager/README.md))
 - **Scheduler:** A decentralized automation engine that executes on-chain actions based on triggers ([docs](contracts/scheduler/README.md))
 
 ## What Are Strategies?
@@ -61,13 +61,13 @@ Strategies can have multiple independent branches that don't need to connect. Mu
 
 ```
      ┌────────────────────┐          ┌────────────────────┐
-     │  If condition met  ├── then ──┤   execute action   │
+     │  if condition met  ├── then ──┤   execute action   │
      └──────────┬─────────┘          └──────────┬─────────┘
                 │                               │
               else                            then
                 │                               │
      ┌──────────┴─────────┐          ┌──────────┴─────────┐          ┌────────────────────┐
-     │   execute action   │          │  If condition met  ├── then ──┤   execute action   │
+     │   execute action   │          │  if condition met  ├── then ──┤   execute action   │
      └──────────┬─────────┘          └──────────┬─────────┘          └──────────┬─────────┘
                 │                               │                               │
               then                              │                             then
@@ -87,8 +87,8 @@ Strategies can have multiple independent branches that don't need to connect. Mu
 
 Strategies contain a set of nodes, each representing a specific action or condition. Nodes can be:
 
-- **Condition nodes:** Check if a condition is met
-- **Action nodes:** Execute an action
+- **Condition nodes:** Check if a condition is met and control the flow of execution
+- **Action nodes:** Execute an action and pass control to the next node
 
 **Condition nodes** can be:
 
