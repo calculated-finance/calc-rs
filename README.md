@@ -10,9 +10,9 @@ A decentralized framework for creating, managing, and automating on-chain tradin
 
 The CALC protocol is a decentralized framework for creating, managing, and automating on-chain trading strategies. It is built around three core contracts that provide a clear separation of concerns:
 
-- **Strategy:** The runtime environment for a single, declarative trading strategy
-- **Manager:** A factory and registry for creating and managing multiple strategy contracts
-- **Scheduler:** A decentralized automation engine that executes strategies based on predefined conditions
+- **Strategy:** The runtime environment for a single, declarative trading strategy ([README.md](contracts/strategy/README.md))
+- **Manager:** A factory and registry for creating and managing multiple strategy contracts ([README.md](contracts/manager/README.md))
+- **Scheduler:** A decentralized automation engine that executes strategies based on predefined conditions ([README.md](contracts/scheduler/README.md))
 
 ## What Are Strategies?
 
@@ -20,55 +20,37 @@ Think of a strategy as a programmable decision tree that lives on the blockchain
 
 ### Simple Strategy Examples
 
-**Automated Market Making:**
-
-```
-                                ┌────────────────────────┐
-                                │     Every 5 blocks     │
-                                └────────────┬───────────┘
-                                ┌────────────┴───────────┐
-                                │   Claim & reset sell   │
-                                │  limit order at 1bps   │
-                                │    above ask price     │
-                                └────────────┬───────────┘
-                                ┌────────────┴───────────┐
-                                │   Claim & reset buy    │
-                                │  limit order at 1bps   │
-                                │    below bid price     │
-                                └────────────────────────┘
-```
-
 **TWAP execution:**
 
 ```
-                                ┌────────────────────────┐
-                                │       Every hour       │
-                                └────────────┬───────────┘
-                                ┌────────────┴───────────┐
-                                │ Swap 100 USDC for RUNE │
-                                │  with max 2% slippage  │
-                                └────────────┬───────────┘
-                                ┌────────────┴───────────┐
-                                │ Send 50% RUNE to bank  │
-                                │    and 50% to other    │
-                                │    trading strategy    │
-                                └────────────────────────┘
+                                    ┌────────────────────────┐
+                                    │       Every hour       │
+                                    └────────────┬───────────┘
+                                    ┌────────────┴───────────┐
+                                    │ Swap 100 USDC for RUNE │
+                                    │  with max 2% slippage  │
+                                    └────────────┬───────────┘
+                                    ┌────────────┴───────────┐
+                                    │ Send 50% RUNE to bank  │
+                                    │    and 50% to other    │
+                                    │    trading strategy    │
+                                    └────────────────────────┘
 ```
 
 **GRID bot:**
 
 ```
-                                ┌────────────────────────┐
-                                │    Every 50 blocks     │
-                                └────────────┬───────────┘
-                                ┌────────────┴───────────┐
-                                │ Try swap 100 RUNE into │
-                                │   at least 110 RUJI    │
-                                └────────────┬───────────┘
-                                ┌────────────┴───────────┐
-                                │ Try swap 100 RUJI into │
-                                │   at least 110 RUNE    │
-                                └────────────────────────┘
+                                    ┌────────────────────────┐
+                                    │    Every 50 blocks     │
+                                    └────────────┬───────────┘
+                                    ┌────────────┴───────────┐
+                                    │ Try swap 100 RUNE into │
+                                    │   at least 110 RUJI    │
+                                    └────────────┬───────────┘
+                                    ┌────────────┴───────────┐
+                                    │ Try swap 100 RUJI into │
+                                    │   at least 110 RUNE    │
+                                    └────────────────────────┘
 ```
 
 ### Advanced Control Flow Patterns
@@ -78,27 +60,27 @@ Think of a strategy as a programmable decision tree that lives on the blockchain
 Strategies can have multiple independent branches that don't need to connect. Multiple branches can also converge on a common downstream node to ensure certain actions always execute.
 
 ```
-    ┌────────────────────┐          ┌────────────────────┐
-    │  If condition met  ├── then ──┤   execute action   │
-    └──────────┬─────────┘          └──────────┬─────────┘
-               │                               │
-             else                            then
-               │                               │
-    ┌──────────┴─────────┐          ┌──────────┴─────────┐          ┌────────────────────┐
-    │   execute action   │          │  If condition met  ├── then ──┤   execute action   │
-    └──────────┬─────────┘          └──────────┬─────────┘          └──────────┬─────────┘
-               │                               │                               │
-             then                              │                             then
-               │                               │                               │
-    ┌──────────┴─────────┐                     │                    ┌──────────┴─────────┐
-    ┤   execute action   │                     │                    │   execute action   │
-    └────────────────────┘                     │                    └──────────┬─────────┘
-                                               │                               │
-                                               │                             then
-                                               │                               │
-                                               │                    ┌──────────┴─────────┐
-                                             else ──────────────────┤   execute action   │
-                                                                    └────────────────────┘
+     ┌────────────────────┐          ┌────────────────────┐
+     │  If condition met  ├── then ──┤   execute action   │
+     └──────────┬─────────┘          └──────────┬─────────┘
+                │                               │
+              else                            then
+                │                               │
+     ┌──────────┴─────────┐          ┌──────────┴─────────┐          ┌────────────────────┐
+     │   execute action   │          │  If condition met  ├── then ──┤   execute action   │
+     └──────────┬─────────┘          └──────────┬─────────┘          └──────────┬─────────┘
+                │                               │                               │
+              then                              │                             then
+                │                               │                               │
+     ┌──────────┴─────────┐                     │                    ┌──────────┴─────────┐
+     │   execute action   │                     │                    │   execute action   │
+     └────────────────────┘                     │                    └──────────┬─────────┘
+                                                │                               │
+                                                │                             then
+                                                │                               │
+                                                │                    ┌──────────┴─────────┐
+                                              else ──────────────────┤   execute action   │
+                                                                     └────────────────────┘
 ```
 
 ### Node types
