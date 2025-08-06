@@ -59,16 +59,24 @@ impl NodeStore {
                     on_failure,
                     ..
                 } => {
-                    if on_success > final_index {
-                        return Err(StdError::generic_err(format!(
-                            "On success node index {} exceeds total node count {}",
-                            on_success, node_count
-                        )));
+                    if on_failure.is_none() && on_success.is_none() {
+                        return Err(StdError::generic_err(
+                            "Condition node must have at least one branch defined",
+                        ));
                     }
 
-                    let on_success_index = on_success.clone() as usize;
-                    adj_list[current_index].push(on_success_index);
-                    in_degrees[on_success_index] += 1;
+                    if let Some(on_success) = on_success {
+                        if on_success > final_index {
+                            return Err(StdError::generic_err(format!(
+                                "On success node index {} exceeds total node count {}",
+                                on_success, node_count
+                            )));
+                        }
+
+                        let on_success_index = on_success.clone() as usize;
+                        adj_list[current_index].push(on_success_index);
+                        in_degrees[on_success_index] += 1;
+                    }
 
                     if let Some(on_failure) = on_failure {
                         if on_failure > final_index {

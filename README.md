@@ -93,13 +93,13 @@ Condition nodes can be combined in the following ways to create logical AND, OR,
    │   if condition A   │        │   if condition A   ├────┐         │   if condition A   │
    └──────────┬─────────┘        └──────────┬─────────┘    │         └──────────┬─────────┘
               │                             │              │                    │
-             then                         else             │                  else
+            then                          else             │                  else
               │                             │              │                    │
    ┌──────────┴─────────┐        ┌──────────┴─────────┐    │         ┌──────────┴─────────┐
    │   if condition B   │        │   if condition B   │   then       │   execute action   │
    └──────────┬─────────┘        └──────────┬─────────┘    │         └────────────────────┘
               │                             │              │
-             then                          then            │
+            then                          then             │
               │                             │              │
    ┌──────────┴─────────┐        ┌──────────┴─────────┐    │
    │   execute action   │        │   execute action   ├────┘

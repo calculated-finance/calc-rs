@@ -151,13 +151,13 @@ mod integration_tests {
             Node::Condition {
                 condition: Condition::TimestampElapsed(Timestamp::from_seconds(1)),
                 index: 1,
-                on_success: 2,
+                on_success: Some(2),
                 on_failure: Some(3),
             },
             Node::Condition {
                 condition: Condition::BlocksCompleted(1),
                 index: 2,
-                on_success: 3,
+                on_success: Some(3),
                 on_failure: Some(4),
             },
             Node::Condition {
@@ -175,7 +175,7 @@ mod integration_tests {
                     next: None,
                 }),
                 index: 3,
-                on_success: 4,
+                on_success: Some(4),
                 on_failure: Some(5),
             },
             Node::Condition {
@@ -189,7 +189,7 @@ mod integration_tests {
                     })],
                 }),
                 index: 4,
-                on_success: 5,
+                on_success: Some(5),
                 on_failure: Some(6),
             },
             Node::Condition {
@@ -200,7 +200,7 @@ mod integration_tests {
                     price: Decimal::percent(100),
                 },
                 index: 5,
-                on_success: 6,
+                on_success: Some(6),
                 on_failure: Some(7),
             },
             Node::Condition {
@@ -209,7 +209,7 @@ mod integration_tests {
                     amount: Coin::new(1000u128, "rune"),
                 },
                 index: 6,
-                on_success: 7,
+                on_success: Some(7),
                 on_failure: Some(8),
             },
             Node::Condition {
@@ -219,7 +219,7 @@ mod integration_tests {
                     status: StrategyStatus::Active,
                 },
                 index: 7,
-                on_success: 9,
+                on_success: Some(9),
                 on_failure: Some(10),
             },
             Node::Condition {
@@ -229,7 +229,7 @@ mod integration_tests {
                     price: Decimal::percent(100),
                 },
                 index: 8,
-                on_success: 10,
+                on_success: Some(10),
                 on_failure: Some(10),
             },
             Node::Action {
@@ -300,7 +300,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_instantiate_strategy_with_out_of_bounds_on_success_index_fails() {
+    fn test_instantiate_strategy_with_out_of_bounds_on_success_fails() {
         let mut harness = CalcTestApp::setup();
         let swap_action = default_swap_action(&harness);
 
@@ -308,7 +308,7 @@ mod integration_tests {
             Node::Condition {
                 condition: Condition::TimestampElapsed(Timestamp::from_seconds(1)),
                 index: 0,
-                on_success: 2,
+                on_success: Some(2),
                 on_failure: Some(1),
             },
             Node::Action {
@@ -333,7 +333,7 @@ mod integration_tests {
             Node::Condition {
                 condition: Condition::TimestampElapsed(Timestamp::from_seconds(1)),
                 index: 0,
-                on_success: 1,
+                on_success: Some(1),
                 on_failure: Some(2),
             },
             Node::Action {
@@ -2188,7 +2188,7 @@ mod integration_tests {
                         amount: swap_action.swap_amount.clone(),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2229,7 +2229,7 @@ mod integration_tests {
                         amount: Coin::new(funds[0].amount + Uint128::one(), funds[0].denom.clone()),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2280,7 +2280,7 @@ mod integration_tests {
                         amount: Coin::new(funds[0].amount + Uint128::one(), funds[0].denom.clone()),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: Some(2),
                 },
                 Node::Action {
@@ -2328,7 +2328,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::TimestampElapsed(block_time.plus_seconds(60)),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2371,7 +2371,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::BlocksCompleted(block_height + 60),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2404,7 +2404,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::CanSwap(swap_action.clone()),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2424,7 +2424,7 @@ mod integration_tests {
                         ..swap_action.clone()
                     }),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2465,7 +2465,7 @@ mod integration_tests {
                         amount: funds[0].clone(),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2488,7 +2488,7 @@ mod integration_tests {
                         ),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2537,7 +2537,7 @@ mod integration_tests {
                         status: StrategyStatus::Active,
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2558,7 +2558,7 @@ mod integration_tests {
                         status: StrategyStatus::Paused,
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2608,7 +2608,7 @@ mod integration_tests {
                         price: Decimal::from_str("100000").unwrap(),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2629,7 +2629,7 @@ mod integration_tests {
                         price: Decimal::from_str("100000").unwrap(),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2650,7 +2650,7 @@ mod integration_tests {
                         price: Decimal::from_str("100200").unwrap(),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2671,7 +2671,7 @@ mod integration_tests {
                         price: Decimal::from_str("100200").unwrap(),
                     },
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2709,7 +2709,7 @@ mod integration_tests {
                         next: None,
                     }),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2751,7 +2751,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2792,7 +2792,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2836,7 +2836,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2877,7 +2877,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2921,7 +2921,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -2962,7 +2962,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -3008,7 +3008,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -3050,7 +3050,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -3101,7 +3101,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {
@@ -3155,7 +3155,7 @@ mod integration_tests {
                 Node::Condition {
                     condition: Condition::Schedule(schedule),
                     index: 0,
-                    on_success: 1,
+                    on_success: Some(1),
                     on_failure: None,
                 },
                 Node::Action {

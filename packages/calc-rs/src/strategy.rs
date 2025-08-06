@@ -65,7 +65,7 @@ pub enum Node {
     Condition {
         condition: Condition,
         index: u16,
-        on_success: u16,
+        on_success: Option<u16>,
         on_failure: Option<u16>,
     },
 }
@@ -95,7 +95,7 @@ impl Node {
                 ..
             } => {
                 if condition.is_satisfied(deps, env).unwrap_or(false) {
-                    Some(on_success.clone())
+                    on_success.clone()
                 } else {
                     on_failure.clone()
                 }
