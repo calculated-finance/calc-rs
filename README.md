@@ -206,4 +206,4 @@ Summary:
 
 - Built with [CosmWasm](https://cosmwasm.com/)
 - Inspired by decentralized finance automation needs
-- Special thanks to the Rujira & Thorchain teams for their contributions and support
+- Special thanks to the Rujira, Thorchain & NAMI teams for their contributions and support
