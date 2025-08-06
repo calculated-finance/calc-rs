@@ -12,7 +12,7 @@ The CALC protocol is a decentralized framework for creating, managing, and autom
 
 - **Strategy:** The runtime environment for a single, declarative trading strategy ([docs](contracts/strategy/README.md))
 - **Manager:** A factory and registry for creating and managing multiple strategy contracts ([docs](contracts/manager/README.md))
-- **Scheduler:** A decentralized automation engine that executes strategies based on predefined conditions ([docs](contracts/scheduler/README.md))
+- **Scheduler:** A decentralized automation engine that executes on-chain actions based on triggers ([docs](contracts/scheduler/README.md))
 
 ## What Are Strategies?
 
@@ -109,7 +109,7 @@ Strategies contain a set of nodes, each representing a specific action or condit
 
 ## Fees
 
-The base CALC automation fee is 25 bps on any funds withdrawn or distributed from a strategy. CALC takes no fees on swaps or limit orders executed by strategies, meaning you can set up recurring trading strategies without worrying about losing all your profits to fees.
+The base CALC automation fee is 25 bps on any funds withdrawn or distributed from a strategy. CALC takes _**no fees**_ on swaps or limit orders executed by strategies, meaning you can set up recurring trading strategies without worrying about losing all your margins to fees.
 
 ### Affiliates
 
