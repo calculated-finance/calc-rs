@@ -158,28 +158,28 @@ Any number of affiliate addresses with custom fee rates can be provided to recei
 
 ### Manager Contract
 
-- **Instantiate:** Create a new strategy contract with DAG validation
-- **Execute:** Manually trigger strategy execution
-- **Update:** Update an existing strategy with new DAG structure (owner only)
-- **UpdateStatus:** Change strategy status (Active/Paused)
-- **UpdateLabel:** Change strategy label (1-100 characters)
-- **Query:** Retrieve strategy information & manager config
+- `Instantiate`: Create a new strategy contract with DAG validation
+- `Execute`: Manually trigger strategy execution
+- `Update`: Update an existing strategy with new DAG structure (owner only)
+- `UpdateStatus`: Change strategy status (Active/Paused)
+- `UpdateLabel`: Change strategy label (1-100 characters)
+- `Query`: Retrieve strategy information & manager config
 
 ### Scheduler Contract
 
-- **Create:** Register a new trigger linking conditions to contract execution
-- **Execute:** Execute triggers when their conditions are satisfied
-- **Query:** Retrieve triggers to execute and check execution eligibility
+- `Create`: Register a new trigger linking conditions to contract execution
+- `Execute`: Execute triggers when their conditions are satisfied
+- `Query`: Retrieve triggers to execute and check execution eligibility
 
 ### Strategy Contract
 
-- **Init:** Initialize strategy graph with validation and node setup
-- **Execute:** Run the strategy's DAG traversal and node execution
-- **Update:** Replace strategy graph with a new DAG structure (owner only)
-- **Withdraw:** Retrieve funds from the strategy with affiliate fee processing
-- **Cancel:** Cancel all active operations and clean up state
-- **Process:** Internal message for graph traversal and node execution
-- **Query:** Get strategy configuration and balance information
+- `Init`: Initialize strategy graph with validation and node setup
+- `Execute`: Run the strategy's DAG traversal and node execution
+- `Update`: Replace strategy graph with a new DAG structure (owner only)
+- `Withdraw`: Retrieve funds from the strategy with affiliate fee processing
+- `Cancel`: Cancel all active operations and clean up state
+- `Process`: Internal message for graph traversal and node execution
+- `Query`: Get strategy configuration and balance information
 
 ## Contributing
 
