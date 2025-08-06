@@ -6,8 +6,7 @@ use std::{
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    to_json_binary, Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult,
-    Timestamp,
+    Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Timestamp,
 };
 use rujira_rs::{
     fin::{OrderResponse, Price, QueryMsg, Side},
@@ -68,7 +67,7 @@ impl Condition {
         }
     }
 
-    pub fn id(&self, owner: Addr) -> StdResult<u64> {
+    pub fn id(&self) -> StdResult<u64> {
         let condition_data = match self {
             Condition::TimestampElapsed(timestamp) => timestamp.to_string(),
             Condition::BlocksCompleted(height) => height.to_string(),
@@ -84,9 +83,8 @@ impl Condition {
             )))?,
         };
 
-        let salt_data = to_json_binary(&(owner, condition_data))?;
         let mut hash = DefaultHasher::new();
-        hash.write(salt_data.as_slice());
+        hash.write(condition_data.as_bytes());
         Ok(hash.finish())
     }
 

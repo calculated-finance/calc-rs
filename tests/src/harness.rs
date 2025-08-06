@@ -17,7 +17,7 @@ use calc_rs::manager::StrategyStatus;
 
 use strategy::contract::{execute, instantiate, query, reply};
 
-use crate::stargate::{RujiraApp, RujiraStargate};
+use calc_rs_test::stargate::{RujiraApp, RujiraStargate};
 
 pub struct CalcTestApp {
     pub app: RujiraApp,

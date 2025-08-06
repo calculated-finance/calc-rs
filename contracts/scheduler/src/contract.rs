@@ -729,7 +729,7 @@ mod execute_trigger_tests {
             .save(
                 deps.as_mut().storage,
                 &Trigger {
-                    id: Uint64::from(condition.id(owner.clone()).unwrap()),
+                    id: Uint64::new(156434254),
                     contract_address: manager.clone(),
                     msg: to_json_binary(&ManagerExecuteMsg::Execute {
                         contract_address: owner.clone(),
@@ -747,7 +747,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&executor, &[]),
-            SchedulerExecuteMsg::Execute(vec![Uint64::from(condition.id(owner.clone()).unwrap())]),
+            SchedulerExecuteMsg::Execute(vec![Uint64::new(156434254)]),
         )
         .unwrap();
 

@@ -4,7 +4,7 @@ use std::{
 };
 
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Decimal, StdResult, Timestamp, Uint64};
+use cosmwasm_std::{Addr, Binary, Coin, Decimal, StdResult, Timestamp, Uint64};
 
 use crate::conditions::condition::Condition;
 
@@ -33,9 +33,12 @@ pub struct CreateTriggerMsg {
 
 impl CreateTriggerMsg {
     pub fn id(&self) -> StdResult<Uint64> {
-        let salt_data = to_json_binary(&self)?;
         let mut hash = DefaultHasher::new();
-        hash.write(salt_data.as_slice());
+
+        hash.write(&self.condition.id()?.to_le_bytes());
+        hash.write(&self.msg);
+        hash.write(self.contract_address.as_bytes());
+
         Ok(hash.finish().into())
     }
 }
