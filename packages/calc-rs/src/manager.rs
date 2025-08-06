@@ -69,7 +69,10 @@ pub enum ManagerExecuteMsg {
     Update {
         contract_address: Addr,
         nodes: Vec<Node>,
-        label: Option<String>,
+    },
+    UpdateLabel {
+        contract_address: Addr,
+        label: String,
     },
 }
 

@@ -172,7 +172,6 @@ pub fn execute(
         ManagerExecuteMsg::Update {
             contract_address,
             nodes,
-            label,
         } => {
             let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
 
@@ -180,20 +179,11 @@ pub fn execute(
                 return Err(ContractError::Unauthorized {});
             }
 
-            if let Some(label) = &label {
-                if label.is_empty() || label.len() > 100 {
-                    return Err(ContractError::generic_err(
-                        "Strategy label must be between 1 and 100 characters",
-                    ));
-                }
-            }
-
             STRATEGIES.save(
                 deps.storage,
                 contract_address.clone(),
                 &Strategy {
                     updated_at: env.block.time.seconds(),
-                    label: label.unwrap_or(strategy.label),
                     ..strategy
                 },
             )?;
@@ -234,6 +224,34 @@ pub fn execute(
             );
 
             Response::default().add_message(strategy_msg)
+        }
+        ManagerExecuteMsg::UpdateLabel {
+            contract_address,
+            label,
+        } => {
+            let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
+
+            if strategy.owner != info.sender {
+                return Err(ContractError::Unauthorized {});
+            }
+
+            if label.is_empty() || label.len() > 100 {
+                return Err(ContractError::generic_err(
+                    "Strategy label must be between 1 and 100 characters",
+                ));
+            }
+
+            STRATEGIES.save(
+                deps.storage,
+                contract_address.clone(),
+                &Strategy {
+                    updated_at: env.block.time.seconds(),
+                    label,
+                    ..strategy
+                },
+            )?;
+
+            Response::default()
         }
     })
 }
@@ -384,7 +402,6 @@ mod tests {
             ManagerExecuteMsg::Update {
                 contract_address: strategy.contract_address.clone(),
                 nodes: vec![],
-                label: None,
             },
         )
         .is_ok());
@@ -398,7 +415,6 @@ mod tests {
             ManagerExecuteMsg::Update {
                 contract_address: strategy.contract_address.clone(),
                 nodes: vec![],
-                label: None,
             },
         )
         .is_err());
@@ -526,7 +542,6 @@ mod tests {
             ManagerExecuteMsg::Update {
                 contract_address: strategy.contract_address.clone(),
                 nodes: vec![],
-                label: None,
             },
         )
         .unwrap();
