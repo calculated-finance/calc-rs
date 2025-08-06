@@ -25,7 +25,7 @@ The manager implements the following affiliate fee system:
 - Max 200 basis points (2%) total affiliate fees allowed
 - Affiliate fees are only taken on distribute and withdrawal actions
 
-### Examples [](#fee-calculation-examples)
+### Examples <a id="fee-calculation-examples"></a>
 
 ```
 Example 1: 5 bps affiliate fee
