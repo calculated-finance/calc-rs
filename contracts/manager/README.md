@@ -4,28 +4,28 @@
 
 The `manager` contract serves as the central factory, registry, and orchestrator for all strategy contracts within the CALC protocol. It acts as the primary gateway for users to create, manage, execute, and fetch trading strategies.
 
-The contract manages the strategy lifecycle, from initial instantiation through execution and eventual archival. It automatically handles affiliate fee integration, validates strategy parameters, and provides efficient querying capabilities through multi-indexed storage. The manager serves as both a smart contract factory and a centralized registry.
+It automatically handles affiliate fee integration, validates strategy parameters, and provides efficient querying capabilities through multi-indexed storage. The manager serves as both a smart contract factory and a centralized registry.
 
 ## Key Features
 
-- **Strategy Factory:** Deploys new strategy contracts using deterministic instantiate2_address addresses
-- **Registry & Discovery:** Maintains searchable registry with multi-indexed storage for efficient queries
-- **Affiliate Management:** Integration of affiliate fees with CALC protocol base fees
-- **Lifecycle Management:** Strategy status management (Active/Paused/Archived)
-- **Access Control:** Owner-based authorization for sensitive operations
-- **Metadata Tracking:** Tracking of creation & update timestamps
-- **Validation:** Input validation for strategy parameters, labels, and affiliate configurations
+- Deploys new strategy contracts using deterministic `instantiate2_address` addresses
+- Maintains searchable registry with multi-indexed storage for efficient queries
+- Integration of affiliate fees with CALC protocol base fees
+- Strategy status management (`Active` | `Paused`)
+- Owner-based authorization for sensitive operations
+- Tracking of creation & update timestamps
+- Input validation for strategy parameters, labels, and affiliate configurations
 
 ## Affiliate Fee System
 
 The manager implements the following affiliate fee system:
 
-- **Base Protocol Fee:** 25 basis points (0.25%) on all distributions
-- **Affiliate Allocation:** First 10 bps can reduce protocol fee, additional bps add to total
-- **Maximum Affiliate Fees:** 200 basis points (2%) total affiliate fees allowed
-- **Automatic Integration:** Affiliate fees are only taken on distribute and withdrawal actions
+- 25 basis points (0.25%) on all distributions
+- First 10 bps can reduce protocol fee, additional bps add to total
+- Max 200 basis points (2%) total affiliate fees allowed
+- Affiliate fees are only taken on distribute and withdrawal actions
 
-### Fee Calculation Examples
+### [Fee Calculation Examples](#fee-calculation-examples)
 
 ```
 Example 1: 5 bps affiliate fee

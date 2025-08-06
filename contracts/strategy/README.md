@@ -38,7 +38,6 @@ Condition nodes provide branching logic and control flow:
 - **Market-based:** `CanSwap`, `LimitOrderFilled`, `OraclePrice`
 - **Balance-based:** `BalanceAvailable`, `StrategyBalanceAvailable`
 - **Schedule-based:** `Schedule` for recurring execution patterns
-- **Logical:** `Not`
 
 ### Graph Structure
 
@@ -216,7 +215,7 @@ StrategyExecuteMsg::Process {
   1. **State Transition:** Commits previous node state if applicable
   2. **Node Loading:** Determines next node to process based on graph edges
   3. **Execution Loop:** Processes nodes sequentially until external messages are needed
-  4. **Message Generation:** When external calls are required, pauses execution and schedules continuation
+  4. **Message Generation:** When external calls are required, executes them and their replies before continuing
   5. **Completion:** Continues until reaching graph termination
 
 The Process message implements the core graph traversal logic, handling both sequential execution and conditional branching.
@@ -236,10 +235,6 @@ pub struct StrategyConfig {
 }
 ```
 
-### `Statistics`
-
-Returns execution statistics and performance metrics.
-
 ### `Balances(HashSet<String>)`
 
 Returns strategy balances across all holdings.
@@ -258,7 +253,6 @@ Returns strategy balances across all holdings.
 - **`OWNER`:** Strategy owner address
 - **`AFFILIATES`:** Fee distribution configuration
 - **`DENOMS`:** Set of all denominations used by the strategy
-- **`STATS`:** Cumulative execution statistics
 - **`NODES`:** Map of node index to Node data
 
 ### Node Storage
@@ -311,25 +305,6 @@ All operations implement the unified Operation trait:
 
 - **Fund Isolation:** Each strategy contract holds its own funds separately
 - **Authorization:** Strict access control with separate owner/manager roles
-- **Cycle Prevention:** Graph validation prevents infinite execution loops
-- **Index Validation:** Comprehensive validation prevents out-of-bounds access
+- **Cycle Prevention:** Graph validation prevents infinite execution loops and hanging pointers
 - **State Consistency:** Operation trait ensures consistent state transitions
 - **Size Limits:** Prevents gas exhaustion through strategy size constraints
-
-## Error Handling
-
-The contract provides comprehensive error handling:
-
-- **Validation Errors:** Clear messages for invalid graph structures
-- **Execution Errors:** Graceful handling of operation failures
-- **State Recovery:** Failed operations don't corrupt graph state
-- **Debug Support:** Rich error attributes for troubleshooting
-
-## Performance Considerations
-
-The DAG execution model provides several performance benefits:
-
-- **Sequential Processing:** Fresh balance queries ensure accurate execution
-- **Conditional Skipping:** Unmet conditions skip unnecessary operations
-- **Batch Processing:** Multiple nodes can execute in a single process message when no external calls are needed
-- **State Persistence:** Node state updates are saved individually for optimal storage
