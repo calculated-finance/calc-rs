@@ -311,6 +311,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
             to_json_binary(&strategies)
         }
+        ManagerQueryMsg::Count {} => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
     }
 }
 

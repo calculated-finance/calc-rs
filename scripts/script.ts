@@ -15,7 +15,6 @@ import { setTimeout } from "timers/promises";
 import {
   Addr,
   Decimal,
-  ManagerExecuteMsg,
   SchedulerQueryMsg,
   Side,
   StrategyExecuteMsg,
@@ -331,9 +330,9 @@ export const getStrategyConfig = async (address: string) => {
   return response;
 };
 
-export const getStrategies = async () => {
+export const getStrategies = async (managerAddress: string) => {
   const cosmWasmClient = await getSigner();
-  const response = await cosmWasmClient.queryContractSmart(MANAGER_ADDRESS, {
+  const response = await cosmWasmClient.queryContractSmart(managerAddress, {
     strategies: {},
   });
 
@@ -496,7 +495,7 @@ export const withdrawFromStrategy = async (address: string) => {
     account,
     address,
     {
-      withdraw: balances.map((b) => b.denom),
+      withdraw: balances,
     } as StrategyExecuteMsg,
     "auto",
   );
@@ -630,24 +629,24 @@ export const queryQuote = async () => {
   return QueryQuoteResponse.decode(response.value).toJSON();
 };
 
-export const updateStrategy = async (address: string, update: any) => {
-  const cosmWasmClient = await getSigner();
-  const account = await getAccount(await getWalletWithMnemonic());
+// export const updateStrategy = async (address: string, update: any) => {
+//   const cosmWasmClient = await getSigner();
+//   const account = await getAccount(await getWalletWithMnemonic());
 
-  const response = await cosmWasmClient.execute(
-    account,
-    MANAGER_ADDRESS,
-    {
-      update_strategy: {
-        contract_address: address,
-        update,
-      },
-    } as ManagerExecuteMsg,
-    "auto",
-  );
+//   const response = await cosmWasmClient.execute(
+//     account,
+//     MANAGER_ADDRESS,
+//     {
+//       update_strategy: {
+//         contract_address: address,
+//         update,
+//       },
+//     } as ManagerExecuteMsg,
+//     "auto",
+//   );
 
-  return response;
-};
+//   return response;
+// };
 
 export const bankSend = async (amount: Coin, recipient: string) => {
   const cosmWasmClient = await getSigner();

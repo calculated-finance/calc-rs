@@ -105,9 +105,13 @@ pub fn execute(
         }
         SchedulerExecuteMsg::Execute(ids) => {
             for id in ids {
-                let trigger = TRIGGERS.load(deps.storage, id.into()).map_err(|e| {
-                    ContractError::generic_err(format!("Failed to load trigger with id {id}: {e}"))
-                })?;
+                let trigger = TRIGGERS.load(deps.storage, id.into());
+
+                if trigger.is_err() {
+                    continue;
+                }
+
+                let trigger = trigger.unwrap();
 
                 if !trigger.executors.is_empty() && !trigger.executors.contains(&info.sender) {
                     continue;
@@ -618,7 +622,7 @@ mod execute_trigger_tests {
     use rujira_rs::fin::{ConfigResponse, Denoms, OrderResponse, Price, QueryMsg, Side, Tick};
 
     #[test]
-    fn returns_error_if_trigger_does_not_exist() {
+    fn fails_silently_if_trigger_does_not_exist() {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
@@ -627,15 +631,15 @@ mod execute_trigger_tests {
             funds: vec![],
         };
 
-        let err = execute(
+        let response = execute(
             deps.as_mut(),
             env.clone(),
             execution_info.clone(),
             SchedulerExecuteMsg::Execute(vec![Uint64::one()]),
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.to_string().contains("Failed to load trigger"));
+        assert!(response.messages.is_empty());
     }
 
     #[test]

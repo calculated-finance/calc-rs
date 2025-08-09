@@ -7,10 +7,11 @@ use cosmwasm_std::{
 };
 
 use crate::actions::action::Action;
-use crate::constants::MAX_TOTAL_AFFILIATE_BPS;
 use crate::manager::Affiliate;
 use crate::operation::Operation;
 use crate::thorchain::MsgDeposit;
+
+const MINIMUM_TOTAL_SHARES: Uint128 = Uint128::new(10_000);
 
 #[cw_serde]
 pub enum Recipient {
@@ -20,12 +21,10 @@ pub enum Recipient {
 }
 
 impl Recipient {
-    pub fn key(&self) -> String {
+    pub fn key(&self) -> &str {
         match self {
-            Recipient::Bank { address } | Recipient::Contract { address, .. } => {
-                address.to_string()
-            }
-            Recipient::Deposit { memo } => memo.clone(),
+            Recipient::Bank { address } | Recipient::Contract { address, .. } => address.as_str(),
+            Recipient::Deposit { memo } => memo.as_str(),
         }
     }
 }
@@ -45,25 +44,15 @@ pub struct Distribution {
 
 impl Distribution {
     pub fn with_affiliates(self, affiliates: &[Affiliate]) -> StdResult<Self> {
-        let total_affiliate_bps = affiliates
-            .iter()
-            .fold(0, |acc, affiliate| acc + affiliate.bps);
-
-        if total_affiliate_bps > MAX_TOTAL_AFFILIATE_BPS {
-            return Err(StdError::generic_err(format!(
-                "Total affiliate bps cannot exceed {MAX_TOTAL_AFFILIATE_BPS}, got {total_affiliate_bps}"
-            )));
-        }
-
         let total_fee_applied_shares = self
             .destinations
             .iter()
             .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
         Ok(Distribution {
-            denoms: self.denoms.clone(),
+            denoms: self.denoms,
             destinations: [
-                self.destinations.clone(),
+                self.destinations,
                 affiliates
                     .iter()
                     .map(|affiliate| Destination {
@@ -83,7 +72,10 @@ impl Distribution {
         let mut balances = Coins::default();
 
         for denom in &self.denoms {
-            balances.add(deps.querier.query_balance(&env.contract.address, denom)?)?;
+            balances.add(
+                deps.querier
+                    .query_balance(env.contract.address.as_ref(), denom)?,
+            )?;
         }
 
         if balances.is_empty() {
@@ -94,39 +86,41 @@ impl Distribution {
 
         let total_shares = self
             .destinations
-            .clone()
-            .into_iter()
+            .iter()
             .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
-        for destination in self.destinations.clone() {
+        for destination in &self.destinations {
+            let share_ratio = Decimal::from_ratio(destination.shares, total_shares);
+
             let denom_shares = balances
                 .iter()
                 .flat_map(|coin| {
-                    let shares_amount = coin
-                        .amount
-                        .mul_floor(Decimal::from_ratio(destination.shares, total_shares));
-
-                    if shares_amount.is_zero() {
-                        return None;
+                    let amount = coin.amount.mul_floor(share_ratio);
+                    if amount.is_zero() {
+                        None
+                    } else {
+                        Some(Coin::new(amount, coin.denom.clone()))
                     }
-
-                    Some(Coin::new(shares_amount, coin.denom.clone()))
                 })
                 .collect::<Vec<_>>();
+
+            if denom_shares.is_empty() {
+                continue;
+            }
 
             let distribute_message = match destination.recipient.clone() {
                 Recipient::Bank { address, .. } => CosmosMsg::Bank(BankMsg::Send {
                     to_address: address.into(),
-                    amount: denom_shares.clone(),
+                    amount: denom_shares,
                 }),
                 Recipient::Contract { address, msg, .. } => CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: address.into(),
                     msg,
-                    funds: denom_shares.clone(),
+                    funds: denom_shares,
                 }),
                 Recipient::Deposit { memo } => MsgDeposit {
                     memo,
-                    coins: denom_shares.clone(),
+                    coins: denom_shares,
                     signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
                 }
                 .into_cosmos_msg()?,
@@ -175,10 +169,11 @@ impl Operation<Action> for Distribution {
             total_shares += destination.shares;
         }
 
-        if total_shares < Uint128::new(10_000) {
-            return Err(StdError::generic_err(
-                "Total shares must be at least 10,000",
-            ));
+        if total_shares < MINIMUM_TOTAL_SHARES {
+            return Err(StdError::generic_err(format!(
+                "Total shares must be at least {}",
+                MINIMUM_TOTAL_SHARES
+            )));
         }
 
         Ok(Action::Distribute(self.with_affiliates(affiliates)?))

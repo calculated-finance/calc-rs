@@ -1,21 +1,20 @@
-use std::{
-    collections::HashSet,
-    hash::{DefaultHasher, Hasher},
-    vec,
-};
+use std::{collections::HashSet, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Timestamp,
 };
 use rujira_rs::{
-    fin::{OrderResponse, Price, QueryMsg, Side},
+    fin::{ConfigResponse, OrderResponse, Price, QueryMsg, Side},
     query::Pool,
     Layer1Asset,
 };
 
 use crate::{
-    actions::{limit_orders::fin_limit_order::Direction, swaps::swap::Swap},
+    actions::{
+        limit_orders::fin_limit_order::{Direction, FinLimitOrder, PriceStrategy},
+        swaps::swap::Swap,
+    },
     cadence::Cadence,
     conditions::schedule::Schedule,
     manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
@@ -57,7 +56,7 @@ impl Condition {
             Condition::BlocksCompleted(_) => 1,
             Condition::Schedule(schedule) => match schedule.cadence {
                 Cadence::LimitOrder { .. } => 4,
-                _ => 1,
+                _ => 2,
             },
             Condition::CanSwap { .. } => 2,
             Condition::FinLimitOrderFilled { .. } => 2,
@@ -67,33 +66,14 @@ impl Condition {
         }
     }
 
-    pub fn id(&self) -> StdResult<u64> {
-        let condition_data = match self {
-            Condition::TimestampElapsed(timestamp) => timestamp.to_string(),
-            Condition::BlocksCompleted(height) => height.to_string(),
-            Condition::FinLimitOrderFilled {
-                owner,
-                pair_address,
-                side,
-                price,
-            } => format!("{:?}{}{}{}", owner, pair_address, side, price),
-            _ => Err(StdError::generic_err(format!(
-                "ID generation for condition {:?} not supported",
-                self
-            )))?,
-        };
-
-        let mut hash = DefaultHasher::new();
-        hash.write(condition_data.as_bytes());
-        Ok(hash.finish())
-    }
-
     pub fn is_satisfied(&self, deps: Deps, env: &Env) -> StdResult<bool> {
         Ok(match self {
             Condition::TimestampElapsed(timestamp) => env.block.time >= *timestamp,
             Condition::BlocksCompleted(height) => env.block.height >= *height,
             Condition::Schedule(schedule) => {
-                schedule.cadence.is_due(deps, env, &schedule.scheduler)?
+                schedule
+                    .cadence
+                    .is_due(deps, env, &schedule.scheduler_address)?
             }
             Condition::FinLimitOrderFilled {
                 owner,
@@ -104,21 +84,18 @@ impl Condition {
                 let order = deps.querier.query_wasm_smart::<OrderResponse>(
                     pair_address,
                     &QueryMsg::Order((
-                        owner
-                            .clone()
-                            .unwrap_or(env.contract.address.clone())
-                            .to_string(),
+                        owner.as_ref().unwrap_or(&env.contract.address).to_string(),
                         side.clone(),
-                        Price::Fixed(price.clone()),
+                        Price::Fixed(*price),
                     )),
                 )?;
 
                 order.remaining.is_zero()
             }
-            Condition::CanSwap(swap) => swap.best_route(deps, env)?.is_some(),
+            Condition::CanSwap(swap) => swap.best_quote(deps, env)?.is_some(),
             Condition::BalanceAvailable { address, amount } => {
                 let balance = deps.querier.query_balance(
-                    address.clone().unwrap_or(env.contract.address.clone()),
+                    address.as_ref().unwrap_or(&env.contract.address),
                     amount.denom.clone(),
                 )?;
                 balance.amount >= amount.amount
@@ -168,7 +145,81 @@ impl Operation<Condition> for Condition {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<Condition> {
         match self {
             Condition::Schedule(schedule) => schedule.init(deps, env, affiliates),
-            _ => Ok(self),
+            Condition::BalanceAvailable { ref address, .. } => {
+                if let Some(address) = address {
+                    deps.api.addr_validate(address.as_str()).map_err(|_| {
+                        StdError::generic_err(format!(
+                            "Invalid address to check for balance: {}",
+                            address
+                        ))
+                    })?;
+                }
+
+                Ok(self)
+            }
+            Condition::CanSwap(ref swap) => {
+                swap.clone().init(deps, env, affiliates)?;
+                Ok(self)
+            }
+            Condition::StrategyStatus {
+                ref manager_contract,
+                ref contract_address,
+                ..
+            } => {
+                deps.querier
+                    .query_wasm_smart::<Strategy>(
+                        manager_contract,
+                        &ManagerQueryMsg::Strategy {
+                            address: contract_address.clone(),
+                        },
+                    )
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Failed to query strategy status for {}: {}",
+                            contract_address, e
+                        ))
+                    })?;
+
+                Ok(self)
+            }
+            Condition::FinLimitOrderFilled {
+                ref pair_address,
+                ref side,
+                price,
+                ..
+            } => {
+                let pair = deps
+                    .querier
+                    .query_wasm_smart::<ConfigResponse>(pair_address, &QueryMsg::Config {})?;
+
+                let limit_order = FinLimitOrder {
+                    pair_address: pair_address.clone(),
+                    side: side.clone(),
+                    bid_amount: None,
+                    bid_denom: if side == &Side::Base {
+                        pair.denoms.base()
+                    } else {
+                        pair.denoms.quote()
+                    }
+                    .to_string(),
+                    strategy: PriceStrategy::Fixed(price),
+                    current_order: None,
+                };
+
+                limit_order.init(deps, env, &[])?;
+
+                Ok(self)
+            }
+            Condition::OraclePrice { ref asset, .. } => {
+                Layer1Asset::from_native(asset.clone()).map_err(|e| {
+                    StdError::generic_err(format!(
+                        "Denom ({asset}) not a secured asset, error: {e}"
+                    ))
+                })?;
+
+                Ok(self)
+            }
+            Condition::BlocksCompleted(_) | Condition::TimestampElapsed(_) => Ok(self),
         }
     }
 

@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashSet};
+use std::cmp::min;
 
 use calc_rs::{
     core::{Contract, ContractError, ContractResult},
@@ -64,21 +64,6 @@ pub fn execute(
             if info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
             }
-
-            let existing_denoms = DENOMS.load(deps.storage).unwrap_or(HashSet::new());
-            let mut new_denoms = HashSet::with_capacity(nodes.len());
-
-            for node in nodes.iter() {
-                new_denoms.extend(node.denoms(deps.as_ref(), &env)?);
-            }
-
-            DENOMS.save(
-                deps.storage,
-                &new_denoms
-                    .union(&existing_denoms)
-                    .cloned()
-                    .collect::<HashSet<String>>(),
-            )?;
 
             NODES.init(deps, &env, nodes)?;
 

@@ -63,12 +63,12 @@ impl PriceStrategy {
         pair_address: &Addr,
         side: &Side,
     ) -> StdResult<Decimal> {
-        Ok(match self.clone() {
-            PriceStrategy::Fixed(price) => price,
+        Ok(match self {
+            PriceStrategy::Fixed(price) => price.clone(),
             PriceStrategy::Offset {
                 direction, offset, ..
             } => {
-                let book = deps.querier.query_wasm_smart::<BookResponse>(
+                let book_response = deps.querier.query_wasm_smart::<BookResponse>(
                     pair_address.clone(),
                     &QueryMsg::Book {
                         limit: Some(10),
@@ -76,24 +76,31 @@ impl PriceStrategy {
                     },
                 )?;
 
-                let book_price = if side == &Side::Base {
-                    book.base
+                let book = if side == &Side::Base {
+                    book_response.base
                 } else {
-                    book.quote
-                }[0]
-                .price;
+                    book_response.quote
+                };
 
-                match offset {
+                if book.is_empty() {
+                    return Err(StdError::generic_err("Order book is empty"));
+                }
+
+                let price = book[0].price;
+
+                match offset.clone() {
                     Offset::Exact(offset) => match direction {
-                        Direction::Above => book_price.saturating_add(offset),
-                        Direction::Below => book_price.saturating_sub(offset),
+                        Direction::Above => price.saturating_add(offset),
+                        Direction::Below => price.saturating_sub(offset),
                     },
-                    Offset::Percent(offset) => match direction {
-                        Direction::Above => book_price
-                            .saturating_mul(Decimal::percent(100u64.saturating_add(offset))),
-                        Direction::Below => book_price
-                            .saturating_mul(Decimal::percent(100u64.saturating_sub(offset))),
-                    },
+                    Offset::Percent(offset) => {
+                        match direction {
+                            Direction::Above => price
+                                .saturating_mul(Decimal::percent(100u64.saturating_add(offset))),
+                            Direction::Below => price
+                                .saturating_mul(Decimal::percent(100u64.saturating_sub(offset))),
+                        }
+                    }
                 }
             }
         })
@@ -120,9 +127,11 @@ impl FinLimitOrder {
         let mut messages = vec![];
 
         let order = if let Some(existing_order) = self.current_order.clone() {
+            let refreshed_order = existing_order.refresh(deps, env, &self)?;
+
             let existing_order_state = FinLimitOrderState {
-                config: self.clone(),
-                state: existing_order.refresh(deps, env, &self)?,
+                config: self,
+                state: refreshed_order,
             };
 
             let (withdraw_messages, withdrawn_order_state) =
@@ -206,6 +215,7 @@ pub struct WithdrawingOrder {
     pub withdrawing: Uint128,
     pub remaining: Uint128,
     pub messages: Vec<CosmosMsg>,
+    pub new_price: Option<Decimal>,
 }
 
 #[cw_serde]
@@ -318,6 +328,7 @@ impl FinLimitOrderState<SetOrder> {
             state: WithdrawingOrder {
                 withdrawing: self.state.remaining,
                 remaining: Uint128::zero(),
+                new_price: None,
                 messages: vec![withdraw_order_message],
             },
         })
@@ -340,7 +351,15 @@ impl FinLimitOrderState<SetOrder> {
                 .should_reset(self.state.price, new_price);
 
         if should_withdraw {
-            return self.withdraw();
+            let withdrawing_order = self.withdraw()?;
+
+            return Ok(FinLimitOrderState {
+                state: WithdrawingOrder {
+                    new_price: Some(new_price),
+                    ..withdrawing_order.state
+                },
+                ..withdrawing_order
+            });
         }
 
         Ok(FinLimitOrderState {
@@ -348,6 +367,7 @@ impl FinLimitOrderState<SetOrder> {
             state: WithdrawingOrder {
                 withdrawing: Uint128::zero(),
                 remaining: self.state.remaining,
+                new_price: Some(new_price),
                 messages: vec![],
             },
         })

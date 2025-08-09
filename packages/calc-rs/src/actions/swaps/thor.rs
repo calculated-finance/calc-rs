@@ -5,42 +5,12 @@ use std::{
 
 use crate::{
     actions::swaps::swap::{
-        self, Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote, SwapRoute,
-        Validated,
+        Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote, SwapRoute,
     },
     thorchain::{MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, Decimal, Deps, Env, Event, StdError, StdResult, Uint128};
-
-pub enum ThorchainSwapEvent {
-    AttemptSwap {
-        swap_amount: Coin,
-        expected_receive_amount: Coin,
-        maximum_slippage_bps: u64,
-        streaming_swap_blocks: u64,
-    },
-}
-
-impl From<ThorchainSwapEvent> for Event {
-    fn from(val: ThorchainSwapEvent) -> Self {
-        match val {
-            ThorchainSwapEvent::AttemptSwap {
-                swap_amount,
-                expected_receive_amount,
-                maximum_slippage_bps,
-                streaming_swap_blocks,
-            } => Event::new("attempt_thorchain_swap")
-                .add_attribute("swap_amount", swap_amount.to_string())
-                .add_attribute(
-                    "expected_receive_amount",
-                    expected_receive_amount.to_string(),
-                )
-                .add_attribute("maximum_slippage_bps", maximum_slippage_bps.to_string())
-                .add_attribute("streaming_swap_blocks", streaming_swap_blocks.to_string()),
-        }
-    }
-}
+use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
 
 #[cw_serde]
 pub struct StreamingSwap {
@@ -65,17 +35,7 @@ fn is_secured_asset(denom: &str) -> bool {
 }
 
 impl Quotable for ThorchainRoute {
-    fn verify(&self, _deps: Deps, route: &swap::SwapQuote<New>) -> StdResult<()> {
-        if route.swap_amount.amount.is_zero() {
-            return Err(StdError::generic_err("Swap amount cannot be zero"));
-        }
-
-        if route.maximum_slippage_bps > 10_000 {
-            return Err(StdError::generic_err(
-                "Maximum slippage basis points cannot exceed 10,000",
-            ));
-        }
-
+    fn validate(&self, _deps: Deps, route: &SwapQuote<New>) -> StdResult<()> {
         if !is_secured_asset(route.swap_amount.denom.as_str()) {
             return Err(StdError::generic_err(
                 "Swap denom must be RUNE or a secured asset",
@@ -122,7 +82,7 @@ impl Quotable for ThorchainRoute {
         &self,
         deps: Deps,
         env: &Env,
-        route: &SwapQuote<New>,
+        route: SwapQuote<New>,
     ) -> StdResult<SwapQuote<Adjusted>> {
         let (new_swap_amount, new_minimum_receive_amount, max_streaming_quantity) =
             match route.adjustment.clone() {
@@ -148,7 +108,7 @@ impl Quotable for ThorchainRoute {
                         route.minimum_receive_amount.denom.clone(),
                     );
 
-                    let quote = get_swap_quote(deps, route)?;
+                    let quote = get_swap_quote(deps, &route)?;
 
                     (
                         new_swap_amount,
@@ -165,7 +125,7 @@ impl Quotable for ThorchainRoute {
                     minimum_swap_amount,
                     scalar,
                 } => {
-                    let quote = get_swap_quote(deps, route)?;
+                    let quote = get_swap_quote(deps, &route)?;
 
                     let base_price =
                         Decimal::from_ratio(base_receive_amount.amount, route.swap_amount.amount);
@@ -226,7 +186,7 @@ impl Quotable for ThorchainRoute {
             swap_amount: new_swap_amount,
             minimum_receive_amount: new_minimum_receive_amount,
             maximum_slippage_bps: route.maximum_slippage_bps,
-            adjustment: route.adjustment.clone(),
+            adjustment: route.adjustment,
             route: SwapRoute::Thorchain(ThorchainRoute {
                 max_streaming_quantity: Some(max_streaming_quantity),
                 ..self.clone()
@@ -235,17 +195,17 @@ impl Quotable for ThorchainRoute {
         })
     }
 
-    fn validate(
+    fn validate_adjusted(
         &self,
         deps: Deps,
         env: &Env,
-        route: &SwapQuote<Adjusted>,
-    ) -> StdResult<SwapQuote<Validated>> {
+        route: SwapQuote<Adjusted>,
+    ) -> StdResult<SwapQuote<Executable>> {
         if route.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
 
-        let adjusted_quote = get_swap_quote(deps, route)?;
+        let adjusted_quote = get_swap_quote(deps, &route)?;
 
         if let Some(fees) = adjusted_quote.fees {
             if fees.slippage_bps > route.maximum_slippage_bps {
@@ -274,10 +234,10 @@ impl Quotable for ThorchainRoute {
             swap_amount: route.swap_amount.clone(),
             minimum_receive_amount: route.minimum_receive_amount.clone(),
             maximum_slippage_bps: route.maximum_slippage_bps,
-            adjustment: route.adjustment.clone(),
+            adjustment: route.adjustment,
             route: SwapRoute::Thorchain(ThorchainRoute {
                 latest_swap: Some(StreamingSwap {
-                    swap_amount: route.swap_amount.clone(),
+                    swap_amount: route.swap_amount,
                     expected_receive_amount: Coin::new(
                         adjusted_quote.expected_amount_out,
                         route.minimum_receive_amount.denom.clone(),
@@ -288,10 +248,10 @@ impl Quotable for ThorchainRoute {
                 }),
                 ..self.clone()
             }),
-            state: Validated {
+            state: Executable {
                 expected_amount_out: Coin::new(
                     adjusted_quote.expected_amount_out,
-                    route.minimum_receive_amount.denom.clone(),
+                    route.minimum_receive_amount.denom,
                 ),
             },
         })
@@ -301,8 +261,9 @@ impl Quotable for ThorchainRoute {
         &self,
         deps: Deps,
         env: &Env,
-        route: &SwapQuote<Validated>,
-    ) -> StdResult<SwapQuote<Executable>> {
+        swap_amount: Coin,
+        _minimum_receive_amount: Coin,
+    ) -> StdResult<CosmosMsg> {
         let current_swap = if let Some(current_swap) = self.latest_swap.clone() {
             current_swap
         } else {
@@ -311,21 +272,12 @@ impl Quotable for ThorchainRoute {
 
         let swap_msg = MsgDeposit {
             memo: current_swap.memo,
-            coins: vec![route.swap_amount.clone()],
+            coins: vec![swap_amount.clone()],
             signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
         }
         .into_cosmos_msg()?;
 
-        Ok(SwapQuote {
-            swap_amount: route.swap_amount.clone(),
-            minimum_receive_amount: route.minimum_receive_amount.clone(),
-            maximum_slippage_bps: route.maximum_slippage_bps,
-            adjustment: route.adjustment.clone(),
-            route: SwapRoute::Thorchain(self.clone()),
-            state: Executable {
-                messages: vec![swap_msg],
-            },
-        })
+        Ok(swap_msg)
     }
 }
 

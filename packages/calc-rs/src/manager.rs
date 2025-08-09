@@ -90,4 +90,6 @@ pub enum ManagerQueryMsg {
         start_after: Option<u64>,
         limit: Option<u16>,
     },
+    #[returns(u64)]
+    Count {},
 }

@@ -162,9 +162,8 @@ mod integration_tests {
             },
             Node::Condition {
                 condition: Condition::Schedule(Schedule {
-                    scheduler: harness.scheduler_addr.clone(),
-                    contract_address: harness.manager_addr.clone(),
-                    msg: Some(Binary::default()),
+                    scheduler_address: harness.scheduler_addr.clone(),
+                    manager_address: harness.manager_addr.clone(),
                     cadence: Cadence::Blocks {
                         interval: 1,
                         previous: None,
@@ -2696,9 +2695,8 @@ mod integration_tests {
             .with_nodes(vec![
                 Node::Condition {
                     condition: Condition::Schedule(Schedule {
-                        scheduler,
-                        contract_address: manager,
-                        msg: None,
+                        scheduler_address: scheduler,
+                        manager_address: manager,
                         cadence: Cadence::Cron {
                             expr: "bad cron".to_string(),
                             previous: None,
@@ -2733,12 +2731,11 @@ mod integration_tests {
         let funds = vec![swap_action.swap_amount.clone()];
 
         let schedule = Schedule {
-            scheduler,
+            scheduler_address: scheduler,
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: manager,
-            msg: None,
+            manager_address: manager,
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: None,
@@ -2774,12 +2771,11 @@ mod integration_tests {
         let funds = vec![swap_action.swap_amount.clone()];
 
         let schedule = Schedule {
-            scheduler,
+            scheduler_address: scheduler,
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: manager,
-            msg: None,
+            manager_address: manager,
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: Some(harness.app.block_info().time),
@@ -2818,12 +2814,11 @@ mod integration_tests {
         let funds = vec![swap_action.swap_amount.clone()];
 
         let schedule = Schedule {
-            scheduler,
+            scheduler_address: scheduler,
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: manager,
-            msg: None,
+            manager_address: manager,
             cadence: Cadence::Blocks {
                 interval: 60,
                 previous: None,
@@ -2859,12 +2854,11 @@ mod integration_tests {
         let funds = vec![swap_action.swap_amount.clone()];
 
         let schedule = Schedule {
-            scheduler,
+            scheduler_address: scheduler,
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: manager,
-            msg: None,
+            manager_address: manager,
             cadence: Cadence::Blocks {
                 interval: 60,
                 previous: Some(harness.app.block_info().height),
@@ -2903,12 +2897,11 @@ mod integration_tests {
         let funds = vec![swap_action.swap_amount.clone()];
 
         let schedule = Schedule {
-            scheduler,
+            scheduler_address: scheduler,
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: manager,
-            msg: None,
+            manager_address: manager,
             cadence: Cadence::Cron {
                 expr: "0 * * * * *".to_string(),
                 previous: None,
@@ -2944,12 +2937,11 @@ mod integration_tests {
         let funds = vec![swap_action.swap_amount.clone()];
 
         let schedule = Schedule {
-            scheduler,
+            scheduler_address: scheduler,
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: manager,
-            msg: None,
+            manager_address: manager,
             cadence: Cadence::Cron {
                 expr: "0 * * * * *".to_string(),
                 previous: Some(harness.app.block_info().time),
@@ -2988,12 +2980,11 @@ mod integration_tests {
         let funds = vec![swap_action.swap_amount.clone()];
 
         let schedule = Schedule {
-            scheduler,
+            scheduler_address: scheduler,
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: manager,
-            msg: None,
+            manager_address: manager,
             cadence: Cadence::LimitOrder {
                 pair_address: harness.fin_addr.clone(),
                 side: Side::Base,
@@ -3027,12 +3018,11 @@ mod integration_tests {
         let swap_action = default_swap_action(&harness);
 
         let schedule = Schedule {
-            scheduler: harness.scheduler_addr.clone(),
+            scheduler_address: harness.scheduler_addr.clone(),
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: harness.manager_addr.clone(),
-            msg: None,
+            manager_address: harness.manager_addr.clone(),
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: Some(harness.app.block_info().time),
@@ -3078,12 +3068,11 @@ mod integration_tests {
         let swap_action = default_swap_action(&harness);
 
         let schedule = Schedule {
-            scheduler: harness.scheduler_addr.clone(),
+            scheduler_address: harness.scheduler_addr.clone(),
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: harness.manager_addr.clone(),
-            msg: None,
+            manager_address: harness.manager_addr.clone(),
             cadence: Cadence::Blocks {
                 interval: 60,
                 previous: Some(harness.app.block_info().height),
@@ -3129,12 +3118,11 @@ mod integration_tests {
         let swap_action = default_swap_action(&harness);
 
         let schedule = Schedule {
-            scheduler: harness.scheduler_addr.clone(),
+            scheduler_address: harness.scheduler_addr.clone(),
             executors: vec![],
             jitter: None,
             next: None,
-            contract_address: harness.manager_addr.clone(),
-            msg: None,
+            manager_address: harness.manager_addr.clone(),
             cadence: Cadence::Time {
                 duration: Duration::from_secs(60),
                 previous: Some(harness.app.block_info().time),

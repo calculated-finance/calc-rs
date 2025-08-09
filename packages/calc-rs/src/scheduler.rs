@@ -1,10 +1,10 @@
 use std::{
-    hash::{DefaultHasher, Hasher},
+    hash::{DefaultHasher, Hash, Hasher},
     time::Duration,
 };
 
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin, Decimal, StdResult, Timestamp, Uint64};
+use cosmwasm_std::{Addr, Binary, Coin, Decimal, StdError, StdResult, Timestamp, Uint64};
 
 use crate::conditions::condition::Condition;
 
@@ -33,13 +33,42 @@ pub struct CreateTriggerMsg {
 
 impl CreateTriggerMsg {
     pub fn id(&self) -> StdResult<Uint64> {
-        let mut hash = DefaultHasher::new();
+        let mut hasher = DefaultHasher::new();
 
-        hash.write(&self.condition.id()?.to_le_bytes());
-        hash.write(&self.msg);
-        hash.write(self.contract_address.as_bytes());
+        match &self.condition {
+            Condition::TimestampElapsed(timestamp) => {
+                0u8.hash(&mut hasher);
+                timestamp.seconds().hash(&mut hasher);
+            }
+            Condition::BlocksCompleted(height) => {
+                1u8.hash(&mut hasher);
+                height.hash(&mut hasher);
+            }
+            Condition::FinLimitOrderFilled {
+                owner,
+                pair_address,
+                side,
+                price,
+            } => {
+                2u8.hash(&mut hasher);
+                owner
+                    .as_ref()
+                    .unwrap_or(&Addr::unchecked(""))
+                    .hash(&mut hasher);
+                pair_address.hash(&mut hasher);
+                side.to_string().hash(&mut hasher);
+                price.to_string().hash(&mut hasher);
+            }
+            _ => Err(StdError::generic_err(format!(
+                "ID generation for condition {:?} not supported",
+                self.condition
+            )))?,
+        };
 
-        Ok(hash.finish().into())
+        hasher.write(&self.msg);
+        hasher.write(self.contract_address.as_bytes());
+
+        Ok(hasher.finish().into())
     }
 }
 

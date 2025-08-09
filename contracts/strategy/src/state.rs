@@ -28,6 +28,9 @@ impl NodeStore {
         let mut in_degrees = vec![0usize; node_count];
         let mut adj_list = vec![Vec::new(); node_count];
 
+        let mut denoms = DENOMS.load(deps.storage).unwrap_or_default();
+
+        // Use Kahn's algorithm to ensure no cycles in the strategy
         for (i, node) in nodes.into_iter().enumerate() {
             let current_index = i;
 
@@ -93,10 +96,13 @@ impl NodeStore {
                 }
             }
 
-            strategy_size += node.size();
-
             let initialised_node = node.init(deps.as_ref(), env, &affiliates)?;
             self.save(deps.storage, &initialised_node)?;
+
+            let node_denoms = initialised_node.denoms(deps.as_ref(), env)?;
+            denoms.extend(node_denoms);
+
+            strategy_size += initialised_node.size();
         }
 
         if strategy_size > MAX_STRATEGY_SIZE {
@@ -132,6 +138,8 @@ impl NodeStore {
                 "Strategy contains a cycle that could cause infinite recursion",
             ));
         }
+
+        DENOMS.save(deps.storage, &denoms)?;
 
         Ok(())
     }

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, mem::discriminant};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult};
+use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
 
 use crate::{
     actions::{
@@ -22,10 +22,6 @@ pub enum SwapAmountAdjustment {
     },
 }
 
-pub trait Routable {
-    fn get_expected_amount_out(&self, swap_amount: Coin) -> StdResult<Coin>;
-}
-
 #[cw_serde]
 pub enum SwapRoute {
     Fin(FinRoute),
@@ -39,42 +35,38 @@ pub struct New;
 pub struct Adjusted;
 
 #[cw_serde]
-pub struct Validated {
+pub struct Executable {
     pub expected_amount_out: Coin,
 }
 
-#[cw_serde]
-pub struct Executable {
-    pub messages: Vec<CosmosMsg>,
-}
-
 pub trait Quotable {
-    fn verify(&self, deps: Deps, route: &SwapQuote<New>) -> StdResult<()>;
+    fn validate(&self, deps: Deps, route: &SwapQuote<New>) -> StdResult<()>;
     fn adjust(
         &self,
         deps: Deps,
         env: &Env,
-        route: &SwapQuote<New>,
+        route: SwapQuote<New>,
     ) -> StdResult<SwapQuote<Adjusted>>;
-    fn validate(
+    fn validate_adjusted(
         &self,
         deps: Deps,
         env: &Env,
-        route: &SwapQuote<Adjusted>,
-    ) -> StdResult<SwapQuote<Validated>>;
+        route: SwapQuote<Adjusted>,
+    ) -> StdResult<SwapQuote<Executable>>;
     fn execute(
         &self,
         deps: Deps,
         env: &Env,
-        route: &SwapQuote<Validated>,
-    ) -> StdResult<SwapQuote<Executable>>;
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+    ) -> StdResult<CosmosMsg>;
 }
 
 impl Quotable for SwapRoute {
-    fn verify(&self, deps: Deps, quote: &SwapQuote<New>) -> StdResult<()> {
+    fn validate(&self, deps: Deps, quote: &SwapQuote<New>) -> StdResult<()> {
         match self {
-            SwapRoute::Fin(route) => route.verify(deps, quote),
-            SwapRoute::Thorchain(route) => route.verify(deps, quote),
+            SwapRoute::Fin(route) => route.validate(deps, quote),
+            SwapRoute::Thorchain(route) => route.validate(deps, quote),
         }
     }
 
@@ -82,7 +74,7 @@ impl Quotable for SwapRoute {
         &self,
         deps: Deps,
         env: &Env,
-        quote: &SwapQuote<New>,
+        quote: SwapQuote<New>,
     ) -> StdResult<SwapQuote<Adjusted>> {
         match self {
             SwapRoute::Fin(pair_address) => pair_address.adjust(deps, env, quote),
@@ -90,15 +82,15 @@ impl Quotable for SwapRoute {
         }
     }
 
-    fn validate(
+    fn validate_adjusted(
         &self,
         deps: Deps,
         env: &Env,
-        quote: &SwapQuote<Adjusted>,
-    ) -> StdResult<SwapQuote<Validated>> {
+        quote: SwapQuote<Adjusted>,
+    ) -> StdResult<SwapQuote<Executable>> {
         match self {
-            SwapRoute::Fin(pair_address) => pair_address.validate(deps, env, quote),
-            SwapRoute::Thorchain(route) => route.validate(deps, env, quote),
+            SwapRoute::Fin(pair_address) => pair_address.validate_adjusted(deps, env, quote),
+            SwapRoute::Thorchain(route) => route.validate_adjusted(deps, env, quote),
         }
     }
 
@@ -106,11 +98,14 @@ impl Quotable for SwapRoute {
         &self,
         deps: Deps,
         env: &Env,
-        quote: &SwapQuote<Validated>,
-    ) -> StdResult<SwapQuote<Executable>> {
+        swap_amount: Coin,
+        minimum_receive_amount: Coin,
+    ) -> StdResult<CosmosMsg> {
         match self {
-            SwapRoute::Fin(pair_address) => pair_address.execute(deps, env, quote),
-            SwapRoute::Thorchain(route) => route.execute(deps, env, quote),
+            SwapRoute::Fin(route) => route.execute(deps, env, swap_amount, minimum_receive_amount),
+            SwapRoute::Thorchain(route) => {
+                route.execute(deps, env, swap_amount, minimum_receive_amount)
+            }
         }
     }
 }
@@ -126,26 +121,29 @@ pub struct SwapQuote<S> {
 }
 
 impl SwapQuote<New> {
+    pub fn validate(&self, deps: Deps) -> StdResult<()> {
+        self.route.validate(deps, self)
+    }
+
     pub fn adjust(self, deps: Deps, env: &Env) -> StdResult<SwapQuote<Adjusted>> {
-        self.route.adjust(deps, env, &self)
+        self.route.clone().adjust(deps, env, self)
     }
 }
 
 impl SwapQuote<Adjusted> {
-    pub fn validate(self, deps: Deps, env: &Env) -> StdResult<SwapQuote<Validated>> {
-        self.route.validate(deps, env, &self)
-    }
-}
-
-impl SwapQuote<Validated> {
-    pub fn execute(self, deps: Deps, env: &Env) -> StdResult<SwapQuote<Executable>> {
-        self.route.execute(deps, env, &self)
+    pub fn validate(self, deps: Deps, env: &Env) -> StdResult<SwapQuote<Executable>> {
+        self.route.clone().validate_adjusted(deps, env, self)
     }
 }
 
 impl SwapQuote<Executable> {
-    pub fn swap_messages(self) -> Vec<CosmosMsg> {
-        self.state.messages
+    pub fn execute(&self, deps: Deps, env: &Env) -> StdResult<CosmosMsg> {
+        self.route.execute(
+            deps,
+            env,
+            self.swap_amount.clone(),
+            self.minimum_receive_amount.clone(),
+        )
     }
 }
 
@@ -178,49 +176,45 @@ impl Swap {
         }
     }
 
-    pub fn best_route(&self, deps: Deps, env: &Env) -> StdResult<Option<SwapQuote<Validated>>> {
-        Ok(self
-            .routes
-            .clone()
-            .into_iter()
-            .filter_map(|route| {
-                route
-                    .adjust(
-                        deps,
-                        env,
-                        &SwapQuote {
-                            swap_amount: self.swap_amount.clone(),
-                            minimum_receive_amount: self.minimum_receive_amount.clone(),
-                            maximum_slippage_bps: self.maximum_slippage_bps,
-                            adjustment: self.adjustment.clone(),
-                            route: route.clone(),
-                            state: New,
-                        },
-                    )
-                    .ok()?
-                    .validate(deps, env)
-                    .ok()
-            })
-            .max_by(|a, b| {
-                a.state
-                    .expected_amount_out
-                    .amount
-                    .cmp(&b.state.expected_amount_out.amount)
-            }))
+    pub fn best_quote(&self, deps: Deps, env: &Env) -> StdResult<Option<SwapQuote<Executable>>> {
+        let mut best_quote = None;
+        let mut best_amount = Uint128::zero();
+
+        for route in &self.routes {
+            let quote = SwapQuote {
+                swap_amount: self.swap_amount.clone(),
+                minimum_receive_amount: self.minimum_receive_amount.clone(),
+                maximum_slippage_bps: self.maximum_slippage_bps,
+                adjustment: self.adjustment.clone(),
+                route: route.clone(),
+                state: New,
+            }
+            .adjust(deps, env)
+            .and_then(|adjusted_quote| adjusted_quote.validate(deps, env));
+
+            if let Ok(validated_quote) = quote {
+                if validated_quote.state.expected_amount_out.amount > best_amount {
+                    best_amount = validated_quote.state.expected_amount_out.amount;
+                    best_quote = Some(validated_quote);
+                }
+            }
+        }
+
+        Ok(best_quote)
     }
 
     pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
-        let best_route = self.best_route(deps, env)?;
+        let best_quote = self.best_quote(deps, env)?;
 
-        if let Some(route) = best_route {
-            let messages = route.clone().execute(deps, env)?.swap_messages();
+        if let Some(quote) = best_quote {
+            let swap_message = quote.execute(deps, env)?;
 
             let updated_routes = self
                 .routes
                 .iter()
                 .map(|r| {
-                    if discriminant(r) == discriminant(&route.route) {
-                        route.route.clone()
+                    if discriminant(r) == discriminant(&quote.route) {
+                        quote.route.clone()
                     } else {
                         r.clone()
                     }
@@ -228,15 +222,12 @@ impl Swap {
                 .collect::<Vec<_>>();
 
             Ok((
-                messages,
+                vec![swap_message],
                 Action::Swap(Swap {
-                    swap_amount: self.swap_amount,
-                    minimum_receive_amount: self.minimum_receive_amount,
-                    maximum_slippage_bps: self.maximum_slippage_bps,
-                    adjustment: self.adjustment,
                     // Some routes (i.e. Thorchain) may have relevant state that cannot be
                     // verifiably committed or recreated, so we cache it here.
                     routes: updated_routes,
+                    ..self
                 }),
             ))
         } else {
@@ -262,20 +253,18 @@ impl Operation<Action> for Swap {
         }
 
         for route in &self.routes {
-            route.verify(
-                deps,
-                &SwapQuote {
-                    swap_amount: self.swap_amount.clone(),
-                    minimum_receive_amount: self.minimum_receive_amount.clone(),
-                    maximum_slippage_bps: self.maximum_slippage_bps,
-                    adjustment: self.adjustment.clone(),
-                    route: route.clone(),
-                    state: New,
-                },
-            )?;
+            SwapQuote {
+                swap_amount: self.swap_amount.clone(),
+                minimum_receive_amount: self.minimum_receive_amount.clone(),
+                maximum_slippage_bps: self.maximum_slippage_bps,
+                adjustment: self.adjustment.clone(),
+                route: route.clone(),
+                state: New,
+            }
+            .validate(deps)?;
         }
 
-        Ok(Action::Swap(self))
+        Ok(Action::Swap(self.with_affiliates()))
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
