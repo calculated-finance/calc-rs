@@ -174,8 +174,7 @@ impl Operation<Distribution> for Distribution {
 
         if total_shares < MINIMUM_TOTAL_SHARES {
             return Err(StdError::generic_err(format!(
-                "Total shares must be at least {}",
-                MINIMUM_TOTAL_SHARES
+                "Total shares must be at least {MINIMUM_TOTAL_SHARES}"
             )));
         }
 

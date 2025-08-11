@@ -74,7 +74,7 @@ impl CreateTriggerMsg {
 
 #[cw_serde]
 pub enum SchedulerExecuteMsg {
-    Create(CreateTriggerMsg),
+    Create(Box<CreateTriggerMsg>),
     Execute(Vec<Uint64>),
 }
 

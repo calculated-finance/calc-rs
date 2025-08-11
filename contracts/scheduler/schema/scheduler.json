@@ -548,17 +548,14 @@
         "type": "object",
         "required": [
           "cadence",
-          "contract_address",
           "execution_rebate",
           "executors",
-          "scheduler"
+          "manager_address",
+          "scheduler_address"
         ],
         "properties": {
           "cadence": {
             "$ref": "#/definitions/Cadence"
-          },
-          "contract_address": {
-            "$ref": "#/definitions/Addr"
           },
           "execution_rebate": {
             "type": "array",
@@ -582,15 +579,8 @@
               }
             ]
           },
-          "msg": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/Binary"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "manager_address": {
+            "$ref": "#/definitions/Addr"
           },
           "next": {
             "anyOf": [
@@ -602,7 +592,7 @@
               }
             ]
           },
-          "scheduler": {
+          "scheduler_address": {
             "$ref": "#/definitions/Addr"
           }
         },
@@ -1494,17 +1484,14 @@
           "type": "object",
           "required": [
             "cadence",
-            "contract_address",
             "execution_rebate",
             "executors",
-            "scheduler"
+            "manager_address",
+            "scheduler_address"
           ],
           "properties": {
             "cadence": {
               "$ref": "#/definitions/Cadence"
-            },
-            "contract_address": {
-              "$ref": "#/definitions/Addr"
             },
             "execution_rebate": {
               "type": "array",
@@ -1528,15 +1515,8 @@
                 }
               ]
             },
-            "msg": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Binary"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "manager_address": {
+              "$ref": "#/definitions/Addr"
             },
             "next": {
               "anyOf": [
@@ -1548,7 +1528,7 @@
                 }
               ]
             },
-            "scheduler": {
+            "scheduler_address": {
               "$ref": "#/definitions/Addr"
             }
           },

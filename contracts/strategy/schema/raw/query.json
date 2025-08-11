@@ -3,6 +3,12 @@
   "title": "QueryMsg",
   "oneOf": [
     {
+      "type": "string",
+      "enum": [
+        "balances"
+      ]
+    },
+    {
       "type": "object",
       "required": [
         "config"
@@ -11,22 +17,6 @@
         "config": {
           "type": "object",
           "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
-        "balances"
-      ],
-      "properties": {
-        "balances": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true
         }
       },
       "additionalProperties": false

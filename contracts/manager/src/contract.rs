@@ -51,11 +51,18 @@ pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
-    if deps.api.addr_validate(msg.fee_collector.as_str()).is_err() {
-        return Err(ContractError::generic_err("Invalid fee collector address"));
-    }
+    deps.api
+        .addr_validate(msg.fee_collector.as_str())
+        .map_err(|_| ContractError::generic_err("Invalid fee collector address"))?;
 
-    deps.querier.query_wasm_code_info(msg.strategy_code_id)?;
+    deps.querier
+        .query_wasm_code_info(msg.strategy_code_id)
+        .map_err(|_| {
+            ContractError::generic_err(format!(
+                "Invalid strategy code ID: {}",
+                msg.strategy_code_id
+            ))
+        })?;
 
     CONFIG.save(deps.storage, &msg)?;
     Ok(Response::default())
@@ -153,7 +160,7 @@ pub fn execute(
             let init_message = WasmMsg::Instantiate2 {
                 admin: Some(owner.to_string()),
                 code_id: config.strategy_code_id,
-                label: label,
+                label,
                 salt: salt.into(),
                 msg: to_json_binary(&StrategyInstantiateMsg {
                     contract_address,

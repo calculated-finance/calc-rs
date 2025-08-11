@@ -32,7 +32,11 @@ export type ManagerQueryMsg =
         start_after?: number | null;
         status?: StrategyStatus | null;
       };
+    }
+  | {
+      count: {};
     };
+export type Uint64 = number;
 export type ManagerExecuteMsg =
   | {
       instantiate: {
@@ -78,7 +82,7 @@ export type Node =
         condition: Condition;
         index: number;
         on_failure?: number | null;
-        on_success: number;
+        on_success?: number | null;
       };
     };
 export type Action =
@@ -223,18 +227,6 @@ export type Condition =
  * let ts = ts.plus_seconds(2); assert_eq!(ts.nanos(), 3_000_000_202); assert_eq!(ts.seconds(), 3); assert_eq!(ts.subsec_nanos(), 202); ```
  */
 export type Timestamp = Uint64;
-/**
- * A thin wrapper around u64 that is using strings for JSON encoding/decoding, such that the full u64 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.
- *
- * # Examples
- *
- * Use `from` to create instances of this and `u64` to get the value out:
- *
- * ``` # use cosmwasm_std::Uint64; let a = Uint64::from(42u64); assert_eq!(a.u64(), 42);
- *
- * let b = Uint64::from(70u32); assert_eq!(b.u64(), 70); ```
- */
-export type Uint64 = string;
 export type Cadence =
   | {
       blocks: {
@@ -318,13 +310,12 @@ export interface Destination {
 }
 export interface Schedule {
   cadence: Cadence;
-  contract_address: Addr;
   execution_rebate: Coin[];
   executors: Addr[];
   jitter?: Duration | null;
-  msg?: Binary | null;
+  manager_address: Addr;
   next?: Cadence | null;
-  scheduler: Addr;
+  scheduler_address: Addr;
 }
 export interface Duration {
   nanos: number;
@@ -420,11 +411,9 @@ export interface StrategyInstantiateMsg {
 }
 
 export type StrategyQueryMsg =
+  | "balances"
   | {
       config: {};
-    }
-  | {
-      balances: string[];
     };
 export type StrategyExecuteMsg =
   | ("execute" | "cancel")
@@ -451,7 +440,6 @@ export type StrategyOperation =
 export type ArrayOf_Coin = Coin[];
 
 export interface StrategyConfig {
-  denoms: string[];
   manager: Addr;
   nodes: Node[];
   owner: Addr;

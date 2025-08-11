@@ -42,12 +42,11 @@ impl NodeStore {
                     if let Some(next) = next {
                         if next > final_index {
                             return Err(StdError::generic_err(format!(
-                                "Next node index {} exceeds total node count {}",
-                                next, node_count
+                                "Next node index {next} exceeds total node count {node_count}"
                             )));
                         }
 
-                        let next_index = next.clone() as usize;
+                        let next_index = next as usize;
                         adj_list[current_index].push(next_index);
                         in_degrees[next_index] += 1;
                     }
@@ -66,12 +65,11 @@ impl NodeStore {
                     if let Some(on_success) = on_success {
                         if on_success > final_index {
                             return Err(StdError::generic_err(format!(
-                                "On success node index {} exceeds total node count {}",
-                                on_success, node_count
+                                "On success node index {on_success} exceeds total node count {node_count}"
                             )));
                         }
 
-                        let on_success_index = on_success.clone() as usize;
+                        let on_success_index = on_success as usize;
                         adj_list[current_index].push(on_success_index);
                         in_degrees[on_success_index] += 1;
                     }
@@ -79,12 +77,11 @@ impl NodeStore {
                     if let Some(on_failure) = on_failure {
                         if on_failure > final_index {
                             return Err(StdError::generic_err(format!(
-                                "On fail node index {} exceeds total node count {}",
-                                on_failure, node_count
+                                "On fail node index {on_failure} exceeds total node count {node_count}"
                             )));
                         }
 
-                        let on_failure_index = on_failure.clone() as usize;
+                        let on_failure_index = on_failure as usize;
                         adj_list[current_index].push(on_failure_index);
                         in_degrees[on_failure_index] += 1;
                     }
@@ -99,8 +96,7 @@ impl NodeStore {
 
         if strategy_size > MAX_STRATEGY_SIZE {
             return Err(StdError::generic_err(format!(
-                "Strategy size exceeds maximum limit of {}",
-                MAX_STRATEGY_SIZE
+                "Strategy size exceeds maximum limit of {MAX_STRATEGY_SIZE}"
             )));
         }
 

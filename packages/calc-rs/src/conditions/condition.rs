@@ -149,8 +149,7 @@ impl Operation<Condition> for Condition {
                 if let Some(address) = address {
                     deps.api.addr_validate(address.as_str()).map_err(|_| {
                         StdError::generic_err(format!(
-                            "Invalid address to check for balance: {}",
-                            address
+                            "Invalid address to check for balance: {address}"
                         ))
                     })?;
                 }
@@ -175,8 +174,7 @@ impl Operation<Condition> for Condition {
                     )
                     .map_err(|e| {
                         StdError::generic_err(format!(
-                            "Failed to query strategy status for {}: {}",
-                            contract_address, e
+                            "Failed to query strategy status for {contract_address}: {e}"
                         ))
                     })?;
 

@@ -428,9 +428,7 @@ impl CalcTestApp {
                 actual
                     .iter()
                     .any(|c| c.denom == coin.denom && c.amount == coin.amount),
-                "Expected balance for {} to include {}, but it was not found. Actual balances: {actual:#?}",
-                address,
-                coin
+                "Expected balance for {address} to include {coin}, but it was not found. Actual balances: {actual:#?}"
             );
         }
 

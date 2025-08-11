@@ -61,7 +61,7 @@ impl Cadence {
                             owner: Some(scheduler.clone()),
                             pair_address: pair_address.clone(),
                             side: side.clone(),
-                            price: price.clone(),
+                            price: *price,
                         }
                         .is_satisfied(deps, env)?,
                         PriceStrategy::Offset { .. } => {
@@ -69,7 +69,7 @@ impl Cadence {
                                 owner: Some(scheduler.clone()),
                                 pair_address: pair_address.clone(),
                                 side: side.clone(),
-                                price: previous.clone(),
+                                price: *previous,
                             }
                             .is_satisfied(deps, env)?;
 
@@ -77,7 +77,7 @@ impl Cadence {
                                 true
                             } else {
                                 let new_price = strategy.get_new_price(deps, pair_address, side)?;
-                                strategy.should_reset(previous.clone(), new_price)
+                                strategy.should_reset(*previous, new_price)
                             }
                         }
                     }
@@ -122,7 +122,7 @@ impl Cadence {
                 previous,
             } => {
                 let price = if let Some(previous) = previous {
-                    previous.clone()
+                    *previous
                 } else {
                     strategy.get_new_price(deps, pair_address, side)?
                 };

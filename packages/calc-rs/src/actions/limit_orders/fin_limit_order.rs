@@ -63,7 +63,7 @@ impl PriceStrategy {
         side: &Side,
     ) -> StdResult<Decimal> {
         Ok(match self {
-            PriceStrategy::Fixed(price) => price.clone(),
+            PriceStrategy::Fixed(price) => *price,
             PriceStrategy::Offset {
                 direction, offset, ..
             } => {

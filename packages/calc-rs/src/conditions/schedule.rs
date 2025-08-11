@@ -57,7 +57,7 @@ impl Schedule {
         };
 
         let create_trigger_msg = Contract(schedule.scheduler_address.clone()).call(
-            to_json_binary(&SchedulerExecuteMsg::Create(CreateTriggerMsg {
+            to_json_binary(&SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
                 condition: condition.clone(),
                 msg: to_json_binary(&ManagerExecuteMsg::Execute {
                     contract_address: env.contract.address.clone(),
@@ -65,7 +65,7 @@ impl Schedule {
                 contract_address: schedule.manager_address.clone(),
                 executors: schedule.executors.clone(),
                 jitter: schedule.jitter,
-            }))?,
+            })))?,
             rebate.to_vec(),
         );
 
@@ -100,7 +100,7 @@ impl Operation<Condition> for Schedule {
         }
 
         if let Cadence::Cron { expr, .. } = &self.cadence {
-            CronSchedule::from_str(&expr).map_err(|e| {
+            CronSchedule::from_str(expr).map_err(|e| {
                 cosmwasm_std::StdError::generic_err(format!("Invalid cron string: {e}"))
             })?;
         }

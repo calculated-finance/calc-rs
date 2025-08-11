@@ -79,14 +79,14 @@ impl Node {
 
     pub fn index(&self) -> u16 {
         match self {
-            Node::Action { index, .. } => index.clone(),
-            Node::Condition { index, .. } => index.clone(),
+            Node::Action { index, .. } => *index,
+            Node::Condition { index, .. } => *index,
         }
     }
 
     pub fn next_index(&self, deps: Deps, env: &Env) -> Option<u16> {
         match self {
-            Node::Action { next, .. } => next.clone(),
+            Node::Action { next, .. } => *next,
             Node::Condition {
                 condition,
                 on_failure,
@@ -94,9 +94,9 @@ impl Node {
                 ..
             } => {
                 if condition.is_satisfied(deps, env).unwrap_or(false) {
-                    on_success.clone()
+                    *on_success
                 } else {
-                    on_failure.clone()
+                    *on_failure
                 }
             }
         }

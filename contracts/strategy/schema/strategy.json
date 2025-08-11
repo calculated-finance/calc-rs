@@ -616,8 +616,7 @@
                 "type": "object",
                 "required": [
                   "condition",
-                  "index",
-                  "on_success"
+                  "index"
                 ],
                 "properties": {
                   "condition": {
@@ -637,7 +636,10 @@
                     "minimum": 0.0
                   },
                   "on_success": {
-                    "type": "integer",
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
                     "format": "uint16",
                     "minimum": 0.0
                   }
@@ -805,17 +807,14 @@
         "type": "object",
         "required": [
           "cadence",
-          "contract_address",
           "execution_rebate",
           "executors",
-          "scheduler"
+          "manager_address",
+          "scheduler_address"
         ],
         "properties": {
           "cadence": {
             "$ref": "#/definitions/Cadence"
-          },
-          "contract_address": {
-            "$ref": "#/definitions/Addr"
           },
           "execution_rebate": {
             "type": "array",
@@ -839,15 +838,8 @@
               }
             ]
           },
-          "msg": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/Binary"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "manager_address": {
+            "$ref": "#/definitions/Addr"
           },
           "next": {
             "anyOf": [
@@ -859,7 +851,7 @@
               }
             ]
           },
-          "scheduler": {
+          "scheduler_address": {
             "$ref": "#/definitions/Addr"
           }
         },
@@ -1740,8 +1732,7 @@
                 "type": "object",
                 "required": [
                   "condition",
-                  "index",
-                  "on_success"
+                  "index"
                 ],
                 "properties": {
                   "condition": {
@@ -1761,7 +1752,10 @@
                     "minimum": 0.0
                   },
                   "on_success": {
-                    "type": "integer",
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
                     "format": "uint16",
                     "minimum": 0.0
                   }
@@ -1929,17 +1923,14 @@
         "type": "object",
         "required": [
           "cadence",
-          "contract_address",
           "execution_rebate",
           "executors",
-          "scheduler"
+          "manager_address",
+          "scheduler_address"
         ],
         "properties": {
           "cadence": {
             "$ref": "#/definitions/Cadence"
-          },
-          "contract_address": {
-            "$ref": "#/definitions/Addr"
           },
           "execution_rebate": {
             "type": "array",
@@ -1963,15 +1954,8 @@
               }
             ]
           },
-          "msg": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/Binary"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "manager_address": {
+            "$ref": "#/definitions/Addr"
           },
           "next": {
             "anyOf": [
@@ -1983,7 +1967,7 @@
               }
             ]
           },
-          "scheduler": {
+          "scheduler_address": {
             "$ref": "#/definitions/Addr"
           }
         },
@@ -2249,6 +2233,12 @@
     "title": "QueryMsg",
     "oneOf": [
       {
+        "type": "string",
+        "enum": [
+          "balances"
+        ]
+      },
+      {
         "type": "object",
         "required": [
           "config"
@@ -2257,22 +2247,6 @@
           "config": {
             "type": "object",
             "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "type": "object",
-        "required": [
-          "balances"
-        ],
-        "properties": {
-          "balances": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "uniqueItems": true
           }
         },
         "additionalProperties": false
@@ -2317,19 +2291,11 @@
       "title": "StrategyConfig",
       "type": "object",
       "required": [
-        "denoms",
         "manager",
         "nodes",
         "owner"
       ],
       "properties": {
-        "denoms": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true
-        },
         "manager": {
           "$ref": "#/definitions/Addr"
         },
@@ -2905,8 +2871,7 @@
                   "type": "object",
                   "required": [
                     "condition",
-                    "index",
-                    "on_success"
+                    "index"
                   ],
                   "properties": {
                     "condition": {
@@ -2926,7 +2891,10 @@
                       "minimum": 0.0
                     },
                     "on_success": {
-                      "type": "integer",
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
                       "format": "uint16",
                       "minimum": 0.0
                     }
@@ -3094,17 +3062,14 @@
           "type": "object",
           "required": [
             "cadence",
-            "contract_address",
             "execution_rebate",
             "executors",
-            "scheduler"
+            "manager_address",
+            "scheduler_address"
           ],
           "properties": {
             "cadence": {
               "$ref": "#/definitions/Cadence"
-            },
-            "contract_address": {
-              "$ref": "#/definitions/Addr"
             },
             "execution_rebate": {
               "type": "array",
@@ -3128,15 +3093,8 @@
                 }
               ]
             },
-            "msg": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Binary"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "manager_address": {
+              "$ref": "#/definitions/Addr"
             },
             "next": {
               "anyOf": [
@@ -3148,7 +3106,7 @@
                 }
               ]
             },
-            "scheduler": {
+            "scheduler_address": {
               "$ref": "#/definitions/Addr"
             }
           },

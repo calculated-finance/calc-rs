@@ -47,7 +47,7 @@ pub fn execute(
         SchedulerExecuteMsg::Create(create_command) => {
             let trigger_id = create_command.id()?;
 
-            if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id.into()) {
+            if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id) {
                 TRIGGERS.delete(deps.storage, existing_trigger.id.into())?;
 
                 sub_messages.push(SubMsg::reply_never(BankMsg::Send {
@@ -105,7 +105,7 @@ pub fn execute(
         }
         SchedulerExecuteMsg::Execute(ids) => {
             for id in ids {
-                let trigger = TRIGGERS.load(deps.storage, id.into());
+                let trigger = TRIGGERS.load(deps.storage, id);
 
                 if trigger.is_err() {
                     continue;
@@ -132,11 +132,11 @@ pub fn execute(
                     } = trigger.condition
                     {
                         let order = deps.querier.query_wasm_smart::<OrderResponse>(
-                            pair_address.clone(),
+                            &pair_address,
                             &QueryMsg::Order((
                                 env.contract.address.to_string(),
                                 side.clone(),
-                                Price::Fixed(price.clone()),
+                                Price::Fixed(price),
                             )),
                         )?;
 
@@ -198,7 +198,7 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
         }
         SchedulerQueryMsg::CanExecute(id) => to_json_binary(
             &TRIGGERS
-                .load(deps.storage, id.into())?
+                .load(deps.storage, id)?
                 .condition
                 .is_satisfied(deps, &env)?,
         ),
@@ -247,7 +247,7 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             info.clone(),
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
@@ -297,7 +297,7 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             info.clone(),
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
@@ -339,7 +339,7 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             updated_info.clone(),
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
@@ -402,13 +402,13 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&owner, &[]),
-            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+            SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
                 condition: condition.clone(),
                 msg: Binary::default(),
                 contract_address: owner.clone(),
                 executors: vec![],
                 jitter: None
-            }),
+            })),
         )
         .unwrap_err()
         .to_string()
@@ -418,13 +418,13 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&owner, &[Coin::new(1213_u128, "random-denom")]),
-            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+            SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
                 condition: condition.clone(),
                 msg: Binary::default(),
                 contract_address: owner.clone(),
                 executors: vec![],
                 jitter: None
-            }),
+            })),
         )
         .unwrap_err()
         .to_string()
@@ -451,17 +451,17 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             info,
-            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+            SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
                 condition: condition.clone(),
                 msg: Binary::default(),
                 contract_address: owner.clone(),
                 executors: vec![],
                 jitter: None
-            }),
+            })),
         )
         .unwrap_err()
         .to_string()
-        .contains(format!("Querier system error: No such contract: {}", pair_address).as_str()));
+        .contains(format!("Querier system error: No such contract: {pair_address}").as_str()));
     }
 
     #[test]
@@ -480,7 +480,7 @@ mod create_trigger_tests {
             owner: Some(Addr::unchecked("owner")),
             pair_address: pair_address.clone(),
             side: side.clone(),
-            price: price.clone(),
+            price: price,
         };
 
         deps.querier.update_wasm(|_| {
@@ -502,13 +502,13 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             info,
-            SchedulerExecuteMsg::Create(CreateTriggerMsg {
+            SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
                 condition: condition.clone(),
                 msg: Binary::default(),
                 contract_address: owner.clone(),
                 executors: vec![],
                 jitter: None,
-            }),
+            })),
         )
         .unwrap();
 
@@ -517,7 +517,7 @@ mod create_trigger_tests {
             vec![SubMsg::reply_never(
                 Contract(pair_address.clone()).call(
                     to_json_binary(&ExecuteMsg::Order((
-                        vec![(side, Price::Fixed(price), Some(bid_amount.amount.clone()),)],
+                        vec![(side, Price::Fixed(price), Some(bid_amount.amount),)],
                         None,
                     )))
                     .unwrap(),
@@ -576,7 +576,7 @@ mod create_trigger_tests {
             deps.as_mut(),
             env.clone(),
             info,
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
@@ -663,7 +663,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             message_info(&owner, &[Coin::new(327612u128, "rune")]),
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
@@ -693,7 +693,7 @@ mod execute_trigger_tests {
             owner: Some(Addr::unchecked("owner")),
             pair_address: Addr::unchecked("pair-0"),
             side: side.clone(),
-            price: price.clone(),
+            price,
         };
 
         deps.querier.update_wasm(move |query| {
@@ -760,7 +760,7 @@ mod execute_trigger_tests {
                 SubMsg::reply_never(
                     Contract(Addr::unchecked("pair-0")).call(
                         to_json_binary(&ExecuteMsg::Order((
-                            vec![(side.clone(), Price::Fixed(price.clone()), None)],
+                            vec![(side.clone(), Price::Fixed(price), None)],
                             None,
                         )))
                         .unwrap(),
@@ -816,7 +816,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             create_trigger_info.clone(),
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
@@ -867,7 +867,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             create_trigger_info.clone(),
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
@@ -921,7 +921,7 @@ mod execute_trigger_tests {
             deps.as_mut(),
             env.clone(),
             create_trigger_info.clone(),
-            SchedulerExecuteMsg::Create(create_trigger_msg.clone()),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
         )
         .unwrap();
 
