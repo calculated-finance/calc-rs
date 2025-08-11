@@ -143,11 +143,10 @@ StrategyExecuteMsg::Init(nodes)
 
 - **Authorization:** Self-call only (triggered automatically after instantiation)
 - **Logic:**
-  1. Analyzes all nodes to determine required denominations
-  2. Validates graph structure and prevents cycles
-  3. Initializes each node through the Operation trait
-  4. Saves graph to storage with proper indexing
-  5. Triggers initial execution cycle
+  1. Validates graph structure and prevents cycles
+  2. Initializes each node through the Operation trait
+  3. Saves graph to storage with proper indexing
+  4. Triggers initial execution cycle
 
 ### `Execute`
 
@@ -242,7 +241,6 @@ pub struct StrategyConfig {
     pub manager: Addr,              // Manager contract address
     pub owner: Addr,                // Strategy owner address
     pub nodes: Vec<Node>,           // Complete strategy graph
-    pub denoms: HashSet<String>,    // All denominations used by strategy
 }
 ```
 
@@ -262,7 +260,6 @@ Returns strategy balances across all holdings.
 - **`MANAGER`:** Address of the managing contract
 - **`OWNER`:** Strategy owner address
 - **`AFFILIATES`:** Fee distribution configuration
-- **`DENOMS`:** Set of all denominations used by the strategy
 - **`NODES`:** Map of node index to Node data
 
 ### Node Storage
