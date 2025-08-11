@@ -82,7 +82,7 @@ The strategy contract executes nodes sequentially following the graph edges:
 
 Each node operation follows the Operation trait pattern:
 
-````rust
+```rust
 pub trait Operation<T> {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, T);
@@ -100,7 +100,7 @@ pub trait StatefulOperation<T> {
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
     fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
 }
-``
+```
 
 ### Cycle Prevention
 
@@ -120,7 +120,7 @@ pub struct StrategyInstantiateMsg {
     pub nodes: Vec<Node>,
     pub affiliates: Vec<Affiliate>,
 }
-````
+```
 
 Initializes a new strategy contract instance.
 
