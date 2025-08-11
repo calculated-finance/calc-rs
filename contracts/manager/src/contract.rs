@@ -1,7 +1,4 @@
-use std::{
-    cmp::max,
-    hash::{DefaultHasher, Hasher},
-};
+use std::hash::{DefaultHasher, Hasher};
 
 use calc_rs::{
     constants::{BASE_FEE_BPS, MAX_TOTAL_AFFILIATE_BPS, MIN_FEE_BPS},
@@ -68,6 +65,8 @@ pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
     Ok(Response::default())
 }
 
+const MAX_LABEL_LENGTH: usize = 100;
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
@@ -88,10 +87,10 @@ pub fn execute(
                 return Err(ContractError::generic_err("Invalid owner address"));
             }
 
-            if label.is_empty() || label.len() > 100 {
-                return Err(ContractError::generic_err(
-                    "Strategy label must be between 1 and 100 characters",
-                ));
+            if label.is_empty() || label.len() > MAX_LABEL_LENGTH {
+                return Err(ContractError::generic_err(format!(
+                    "Strategy label must be between 1 and {MAX_LABEL_LENGTH} characters",
+                )));
             }
 
             let total_affiliate_bps = affiliates
@@ -110,10 +109,9 @@ pub fn execute(
                 affiliates,
                 vec![Affiliate {
                     address: config.fee_collector,
-                    bps: max(
-                        BASE_FEE_BPS.saturating_sub(BASE_FEE_BPS.saturating_sub(MIN_FEE_BPS)),
-                        BASE_FEE_BPS.saturating_sub(total_affiliate_bps),
-                    ),
+                    bps: BASE_FEE_BPS
+                        .saturating_sub(total_affiliate_bps)
+                        .max(MIN_FEE_BPS),
                     label: "CALC".to_string(),
                 }],
             ]
@@ -256,10 +254,10 @@ pub fn execute(
             contract_address,
             label,
         } => {
-            if label.is_empty() || label.len() > 100 {
-                return Err(ContractError::generic_err(
-                    "Strategy label must be between 1 and 100 characters",
-                ));
+            if label.is_empty() || label.len() > MAX_LABEL_LENGTH {
+                return Err(ContractError::generic_err(format!(
+                    "Strategy label must be between 1 and {MAX_LABEL_LENGTH} characters",
+                )));
             }
 
             let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
@@ -284,7 +282,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
         ManagerQueryMsg::Config => to_json_binary(&CONFIG.load(deps.storage)?),
         ManagerQueryMsg::Strategy { address } => {
-            to_json_binary(&STRATEGIES.load(deps.storage, address.clone())?)
+            to_json_binary(&STRATEGIES.load(deps.storage, address)?)
         }
         ManagerQueryMsg::Strategies {
             owner,

@@ -43,13 +43,9 @@ pub type ContractResult = Result<Response, ContractError>;
 pub struct Contract(pub Addr);
 
 impl Contract {
-    pub fn addr(&self) -> Addr {
-        self.0.clone()
-    }
-
     pub fn call(&self, msg: Binary, funds: Vec<Coin>) -> CosmosMsg {
         WasmMsg::Execute {
-            contract_addr: self.addr().into(),
+            contract_addr: self.0.clone().into(),
             msg,
             funds,
         }

@@ -10,7 +10,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply, Response,
-    StdError, StdResult, SubMsg, SubMsgResult,
+    StdResult, SubMsg, SubMsgResult,
 };
 use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg};
 
@@ -30,7 +30,7 @@ pub fn instantiate(
 pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
     Ok(Response::default())
 }
 
@@ -41,19 +41,20 @@ pub fn execute(
     info: MessageInfo,
     msg: SchedulerExecuteMsg,
 ) -> ContractResult {
-    let mut sub_messages = vec![];
-
     match msg {
         SchedulerExecuteMsg::Create(create_command) => {
+            let mut sub_messages = Vec::with_capacity(2);
             let trigger_id = create_command.id()?;
 
             if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id) {
                 TRIGGERS.delete(deps.storage, existing_trigger.id.into())?;
 
-                sub_messages.push(SubMsg::reply_never(BankMsg::Send {
-                    to_address: info.sender.to_string(),
-                    amount: existing_trigger.execution_rebate,
-                }));
+                if !existing_trigger.execution_rebate.is_empty() {
+                    sub_messages.push(SubMsg::reply_never(BankMsg::Send {
+                        to_address: info.sender.to_string(),
+                        amount: existing_trigger.execution_rebate,
+                    }));
+                }
             }
 
             let mut execution_rebate = Coins::try_from(info.funds)?;
@@ -63,7 +64,7 @@ pub fn execute(
                 side,
                 price,
                 ..
-            } = create_command.condition.clone()
+            } = &create_command.condition
             {
                 let pair = deps.querier.query_wasm_smart::<ConfigResponse>(
                     pair_address.clone(),
@@ -79,9 +80,9 @@ pub fn execute(
 
                 execution_rebate.sub(bid_amount.clone())?;
 
-                let set_order_msg = SubMsg::reply_never(Contract(pair_address).call(
+                let set_order_msg = SubMsg::reply_never(Contract(pair_address.clone()).call(
                     to_json_binary(&ExecuteMsg::Order((
-                        vec![(side, Price::Fixed(price), Some(bid_amount.amount))],
+                        vec![(side.clone(), Price::Fixed(*price), Some(bid_amount.amount))],
                         None,
                     )))?,
                     vec![bid_amount],
@@ -102,16 +103,17 @@ pub fn execute(
                     jitter: create_command.jitter,
                 },
             )?;
+
+            Ok(Response::default().add_submessages(sub_messages))
         }
         SchedulerExecuteMsg::Execute(ids) => {
+            let mut sub_messages = Vec::with_capacity(ids.len() * 3);
+
             for id in ids {
-                let trigger = TRIGGERS.load(deps.storage, id);
-
-                if trigger.is_err() {
-                    continue;
-                }
-
-                let trigger = trigger.unwrap();
+                let trigger = match TRIGGERS.load(deps.storage, id) {
+                    Ok(trigger) => trigger,
+                    Err(_) => continue,
+                };
 
                 if !trigger.executors.is_empty() && !trigger.executors.contains(&info.sender) {
                     continue;
@@ -183,10 +185,10 @@ pub fn execute(
                     sub_messages.push(rebate_msg);
                 }
             }
-        }
-    };
 
-    Ok(Response::default().add_submessages(sub_messages))
+            Ok(Response::default().add_submessages(sub_messages))
+        }
+    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

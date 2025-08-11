@@ -13,7 +13,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env, MessageInfo, Reply,
-    Response, StdError, StdResult, SubMsg, SubMsgResult,
+    Response, StdResult, SubMsg, SubMsgResult,
 };
 
 use crate::state::{AFFILIATES, MANAGER, NODES, OWNER};
@@ -48,7 +48,7 @@ pub fn instantiate(
 pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, StdError> {
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
     Ok(Response::default())
 }
 
@@ -124,6 +124,10 @@ pub fn execute(
             let mut withdrawals = Coins::default();
 
             for amount in amounts.iter() {
+                if amount.amount.is_zero() {
+                    continue;
+                }
+
                 let balance = deps
                     .querier
                     .query_balance(env.contract.address.clone(), amount.denom.clone())?;
@@ -276,15 +280,16 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
             nodes: NODES.all(deps.storage)?,
         }),
         StrategyQueryMsg::Balances => {
-            let mut balances = Coins::default();
-
-            for node in NODES.all(deps.storage)? {
-                let node_balances = node.balances(deps, &env)?;
-
-                for balance in node_balances {
-                    balances.add(balance)?;
-                }
-            }
+            let balances = NODES.all(deps.storage)?.iter().try_fold(
+                Coins::default(),
+                |mut acc, node| -> StdResult<Coins> {
+                    let node_balances = node.balances(deps, &env)?;
+                    for balance in node_balances {
+                        acc.add(balance)?;
+                    }
+                    Ok(acc)
+                },
+            )?;
 
             to_json_binary(&balances.to_vec())
         }
