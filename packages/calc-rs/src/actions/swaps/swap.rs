@@ -4,10 +4,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
 
 use crate::{
-    actions::{
-        action::Action,
-        swaps::{fin::FinRoute, thor::ThorchainRoute},
-    },
+    actions::swaps::{fin::FinRoute, thor::ThorchainRoute},
     manager::Affiliate,
     operation::Operation,
 };
@@ -157,6 +154,36 @@ pub struct Swap {
 }
 
 impl Swap {
+    pub fn validate(&self, deps: Deps) -> StdResult<()> {
+        if self.swap_amount.amount.is_zero() {
+            return Err(StdError::generic_err("Swap amount cannot be zero"));
+        }
+
+        if self.maximum_slippage_bps > 10_000 {
+            return Err(StdError::generic_err(
+                "Maximum slippage basis points cannot exceed 10,000",
+            ));
+        }
+
+        if self.routes.is_empty() {
+            return Err(StdError::generic_err("No swap routes provided"));
+        }
+
+        for route in &self.routes {
+            SwapQuote {
+                swap_amount: self.swap_amount.clone(),
+                minimum_receive_amount: self.minimum_receive_amount.clone(),
+                maximum_slippage_bps: self.maximum_slippage_bps,
+                adjustment: self.adjustment.clone(),
+                route: route.clone(),
+                state: New,
+            }
+            .validate(deps)?;
+        }
+
+        Ok(())
+    }
+
     pub fn with_affiliates(self) -> Self {
         Swap {
             routes: self
@@ -203,7 +230,7 @@ impl Swap {
         Ok(best_quote)
     }
 
-    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
+    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Swap)> {
         let best_quote = self.best_quote(deps, env)?;
 
         if let Some(quote) = best_quote {
@@ -223,54 +250,29 @@ impl Swap {
 
             Ok((
                 vec![swap_message],
-                Action::Swap(Swap {
+                Swap {
                     // Some routes (i.e. Thorchain) may have relevant state that cannot be
                     // verifiably committed or recreated, so we cache it here.
                     routes: updated_routes,
                     ..self
-                }),
+                },
             ))
         } else {
-            Ok((vec![], Action::Swap(self)))
+            Ok((vec![], self))
         }
     }
 }
 
-impl Operation<Action> for Swap {
-    fn init(self, deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Action> {
-        if self.swap_amount.amount.is_zero() {
-            return Err(StdError::generic_err("Swap amount cannot be zero"));
-        }
-
-        if self.maximum_slippage_bps > 10_000 {
-            return Err(StdError::generic_err(
-                "Maximum slippage basis points cannot exceed 10,000",
-            ));
-        }
-
-        if self.routes.is_empty() {
-            return Err(StdError::generic_err("No swap routes provided"));
-        }
-
-        for route in &self.routes {
-            SwapQuote {
-                swap_amount: self.swap_amount.clone(),
-                minimum_receive_amount: self.minimum_receive_amount.clone(),
-                maximum_slippage_bps: self.maximum_slippage_bps,
-                adjustment: self.adjustment.clone(),
-                route: route.clone(),
-                state: New,
-            }
-            .validate(deps)?;
-        }
-
-        Ok(Action::Swap(self.with_affiliates()))
+impl Operation<Swap> for Swap {
+    fn init(self, deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Swap> {
+        self.validate(deps)?;
+        Ok(self.with_affiliates())
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Swap) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, action)) => (messages, action),
-            Err(_) => (vec![], Action::Swap(self)),
+            Ok((messages, swap)) => (messages, swap),
+            Err(_) => (vec![], self),
         }
     }
 

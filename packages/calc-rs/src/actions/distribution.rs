@@ -6,7 +6,6 @@ use cosmwasm_std::{
     Uint128, WasmMsg,
 };
 
-use crate::actions::action::Action;
 use crate::manager::Affiliate;
 use crate::operation::Operation;
 use crate::thorchain::MsgDeposit;
@@ -68,7 +67,11 @@ impl Distribution {
         })
     }
 
-    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
+    pub fn execute_unsafe(
+        self,
+        deps: Deps,
+        env: &Env,
+    ) -> StdResult<(Vec<CosmosMsg>, Distribution)> {
         let mut balances = Coins::default();
 
         for denom in &self.denoms {
@@ -79,7 +82,7 @@ impl Distribution {
         }
 
         if balances.is_empty() {
-            return Ok((vec![], Action::Distribute(self)));
+            return Ok((vec![], self));
         }
 
         let mut messages = vec![];
@@ -129,12 +132,12 @@ impl Distribution {
             messages.push(distribute_message);
         }
 
-        Ok((messages, Action::Distribute(self)))
+        Ok((messages, self))
     }
 }
 
-impl Operation<Action> for Distribution {
-    fn init(self, deps: Deps, _env: &Env, affiliates: &[Affiliate]) -> StdResult<Action> {
+impl Operation<Distribution> for Distribution {
+    fn init(self, deps: Deps, _env: &Env, affiliates: &[Affiliate]) -> StdResult<Distribution> {
         if self.denoms.is_empty() {
             return Err(StdError::generic_err("Denoms cannot be empty"));
         }
@@ -176,13 +179,13 @@ impl Operation<Action> for Distribution {
             )));
         }
 
-        Ok(Action::Distribute(self.with_affiliates(affiliates)?))
+        Distribution::with_affiliates(self, affiliates)
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Distribution) {
         match self.clone().execute_unsafe(deps, env) {
             Ok((messages, action)) => (messages, action),
-            Err(_) => (vec![], Action::Distribute(self)),
+            Err(_) => (vec![], self),
         }
     }
 

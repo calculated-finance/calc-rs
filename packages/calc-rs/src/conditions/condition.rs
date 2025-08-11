@@ -96,7 +96,7 @@ impl Condition {
             Condition::BalanceAvailable { address, amount } => {
                 let balance = deps.querier.query_balance(
                     address.as_ref().unwrap_or(&env.contract.address),
-                    amount.denom.clone(),
+                    &amount.denom,
                 )?;
                 balance.amount >= amount.amount
             }
@@ -158,7 +158,7 @@ impl Operation<Condition> for Condition {
                 Ok(self)
             }
             Condition::CanSwap(ref swap) => {
-                swap.clone().init(deps, env, affiliates)?;
+                swap.validate(deps)?;
                 Ok(self)
             }
             Condition::StrategyStatus {
@@ -238,9 +238,6 @@ impl Operation<Condition> for Condition {
     }
 }
 
-// 479
-// 541
-
 impl StatefulOperation<Condition> for Condition {
     fn commit(self, deps: Deps, env: &Env) -> StdResult<Condition> {
         match self {
@@ -249,30 +246,21 @@ impl StatefulOperation<Condition> for Condition {
         }
     }
 
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
-        match self {
-            Condition::Schedule(schedule) => schedule.balances(deps, env, denoms),
-            _ => Ok(Coins::default()),
-        }
+    fn balances(&self, _deps: Deps, _env: &Env) -> StdResult<Coins> {
+        Ok(Coins::default())
     }
 
     fn withdraw(
         self,
-        deps: Deps,
-        env: &Env,
-        denoms: &HashSet<String>,
+        _deps: Deps,
+        _env: &Env,
+        _denoms: &HashSet<String>,
     ) -> StdResult<(Vec<CosmosMsg>, Condition)> {
-        match self {
-            Condition::Schedule(schedule) => schedule.withdraw(deps, env, denoms),
-            _ => Ok((vec![], self)),
-        }
+        Ok((vec![], self))
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
-        match self {
-            Condition::Schedule(schedule) => schedule.cancel(deps, env),
-            _ => Ok((vec![], self)),
-        }
+    fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        Ok((vec![], self))
     }
 }
 

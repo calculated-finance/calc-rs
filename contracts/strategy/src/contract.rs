@@ -16,7 +16,7 @@ use cosmwasm_std::{
     Response, StdError, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{AFFILIATES, DENOMS, MANAGER, NODES, OWNER};
+use crate::state::{AFFILIATES, MANAGER, NODES, OWNER};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -277,29 +277,16 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
             manager: MANAGER.load(deps.storage)?,
             owner: OWNER.load(deps.storage)?,
             nodes: NODES.all(deps.storage)?,
-            denoms: DENOMS.load(deps.storage)?,
         }),
-        StrategyQueryMsg::Balances(mut include) => {
-            if include.is_empty() {
-                include = DENOMS.load(deps.storage)?;
-            }
-
+        StrategyQueryMsg::Balances => {
             let mut balances = Coins::default();
 
             for node in NODES.all(deps.storage)? {
-                let node_balances = node.balances(deps, &env, &include)?;
+                let node_balances = node.balances(deps, &env)?;
 
                 for balance in node_balances {
                     balances.add(balance)?;
                 }
-            }
-
-            for denom in include {
-                let balance = deps
-                    .querier
-                    .query_balance(env.contract.address.clone(), denom)?;
-
-                balances.add(balance)?;
             }
 
             to_json_binary(&balances.to_vec())

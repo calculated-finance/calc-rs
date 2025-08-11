@@ -5,12 +5,12 @@ use cw_multi_test::error::AnyResult;
 use crate::{harness::CalcTestApp, strategy_handler::StrategyHandler};
 
 pub struct StrategyBuilder<'a> {
-    app: &'a mut CalcTestApp,
-    owner: Addr,
-    label: String,
-    affiliates: Vec<Affiliate>,
-    nodes: Vec<Node>,
-    keeper: Addr,
+    pub app: &'a mut CalcTestApp,
+    pub owner: Addr,
+    pub label: String,
+    pub affiliates: Vec<Affiliate>,
+    pub nodes: Vec<Node>,
+    pub keeper: Addr,
 }
 
 impl<'a> StrategyBuilder<'a> {

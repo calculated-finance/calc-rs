@@ -10,11 +10,11 @@ mod integration_tests {
         conditions::{condition::Condition, schedule::Schedule},
         constants::BASE_FEE_BPS,
         manager::{Affiliate, StrategyStatus},
-        scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
+        scheduler::{ConditionFilter, CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
     };
 
-    use std::{collections::HashSet, str::FromStr, time::Duration, vec};
+    use std::{str::FromStr, time::Duration, vec};
 
     use calc_rs::{
         actions::{
@@ -127,10 +127,6 @@ mod integration_tests {
                 index: 0,
                 next: None,
             }],
-            denoms: HashSet::from([
-                swap_action.swap_amount.denom.clone(),
-                swap_action.minimum_receive_amount.denom.clone(),
-            ]),
         });
     }
 
@@ -141,6 +137,18 @@ mod integration_tests {
         let swap_action = default_swap_action(&harness);
         let limit_order_action = default_limit_order_action(&harness);
         let distribution_action = default_distribution_action(&harness);
+
+        let scheduler = harness.scheduler_addr.clone();
+        let manager = harness.manager_addr.clone();
+        let fin_pair = harness.fin_addr.clone();
+
+        let other_strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::Swap(swap_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[]);
 
         let nodes = vec![
             Node::Action {
@@ -162,8 +170,8 @@ mod integration_tests {
             },
             Node::Condition {
                 condition: Condition::Schedule(Schedule {
-                    scheduler_address: harness.scheduler_addr.clone(),
-                    manager_address: harness.manager_addr.clone(),
+                    scheduler_address: scheduler,
+                    manager_address: manager.clone(),
                     cadence: Cadence::Blocks {
                         interval: 1,
                         previous: None,
@@ -181,10 +189,10 @@ mod integration_tests {
                 condition: Condition::CanSwap(Swap {
                     swap_amount: Coin::new(1000u128, "rune"),
                     minimum_receive_amount: Coin::new(1u128, "rune"),
-                    maximum_slippage_bps: 100,
+                    maximum_slippage_bps: 200,
                     adjustment: SwapAmountAdjustment::Fixed,
                     routes: vec![SwapRoute::Fin(FinRoute {
-                        pair_address: harness.fin_addr.clone(),
+                        pair_address: fin_pair.clone(),
                     })],
                 }),
                 index: 4,
@@ -194,7 +202,7 @@ mod integration_tests {
             Node::Condition {
                 condition: Condition::FinLimitOrderFilled {
                     owner: None,
-                    pair_address: harness.fin_addr.clone(),
+                    pair_address: fin_pair,
                     side: Side::Base,
                     price: Decimal::percent(100),
                 },
@@ -213,8 +221,8 @@ mod integration_tests {
             },
             Node::Condition {
                 condition: Condition::StrategyStatus {
-                    manager_contract: harness.manager_addr.clone(),
-                    contract_address: Addr::unchecked("strategy"),
+                    manager_contract: manager,
+                    contract_address: other_strategy.strategy_addr,
                     status: StrategyStatus::Active,
                 },
                 index: 7,
@@ -616,7 +624,7 @@ mod integration_tests {
             }])
             .instantiate(&[]);
 
-        strategy.execute().assert_bank_balances(&vec![]);
+        strategy.execute().assert_strategy_balances(&vec![]);
     }
 
     #[test]
@@ -783,12 +791,8 @@ mod integration_tests {
                     index: 0,
                     next: None,
                 }],
-                denoms: HashSet::from([
-                    swap_action.swap_amount.denom.clone(),
-                    swap_action.minimum_receive_amount.denom.clone(),
-                ]),
             })
-            .assert_bank_balances(&vec![Coin::new(
+            .assert_strategy_balances(&vec![Coin::new(
                 swap_action
                     .swap_amount
                     .amount
@@ -824,7 +828,7 @@ mod integration_tests {
 
         strategy
             .execute()
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -847,7 +851,7 @@ mod integration_tests {
 
         strategy
             .execute()
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -873,7 +877,7 @@ mod integration_tests {
 
         strategy
             .execute()
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -889,7 +893,7 @@ mod integration_tests {
             }])
             .instantiate(&[]);
 
-        strategy.execute().assert_bank_balances(&vec![]);
+        strategy.execute().assert_strategy_balances(&vec![]);
     }
 
     #[test]
@@ -910,7 +914,7 @@ mod integration_tests {
             }])
             .instantiate(&[balance.clone()]);
 
-        strategy.execute().assert_bank_balances(&vec![Coin::new(
+        strategy.execute().assert_strategy_balances(&vec![Coin::new(
             balance.amount.mul_floor(Decimal::percent(99)),
             swap_action.minimum_receive_amount.denom.clone(),
         )]);
@@ -942,7 +946,7 @@ mod integration_tests {
             }])
             .instantiate(&[swap_action.swap_amount.clone()]);
 
-        strategy.assert_bank_balances(&vec![
+        strategy.assert_strategy_balances(&vec![
             Coin::new(
                 swap_action.swap_amount.amount - minimum_swap_amount.amount,
                 swap_action.swap_amount.denom.clone(),
@@ -1035,7 +1039,7 @@ mod integration_tests {
                 swap_action.swap_amount.denom.clone(),
             )]);
 
-        strategy.assert_bank_balance(&Coin::new(
+        strategy.assert_strategy_balance(&Coin::new(
             swap_action
                 .swap_amount
                 .amount
@@ -1070,7 +1074,7 @@ mod integration_tests {
                 swap_route.swap_amount.denom.clone(),
             )]);
 
-        strategy.execute().assert_bank_balance(&Coin::new(
+        strategy.execute().assert_strategy_balance(&Coin::new(
             swap_route
                 .swap_amount
                 .amount
@@ -1115,7 +1119,7 @@ mod integration_tests {
                 swap_route.swap_amount.denom.clone(),
             )]);
 
-        strategy.execute().assert_bank_balance(&Coin::new(
+        strategy.execute().assert_strategy_balance(&Coin::new(
             swap_route
                 .swap_amount
                 .amount
@@ -1152,7 +1156,7 @@ mod integration_tests {
 
         strategy
             .execute()
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -1175,7 +1179,7 @@ mod integration_tests {
 
         strategy
             .execute()
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -1201,7 +1205,7 @@ mod integration_tests {
 
         strategy
             .execute()
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -1217,7 +1221,7 @@ mod integration_tests {
             }])
             .instantiate(&[]);
 
-        strategy.execute().assert_bank_balances(&vec![]);
+        strategy.execute().assert_strategy_balances(&vec![]);
     }
 
     #[test]
@@ -1238,7 +1242,7 @@ mod integration_tests {
             }])
             .instantiate(&[balance.clone()]);
 
-        strategy.execute().assert_bank_balances(&vec![Coin::new(
+        strategy.execute().assert_strategy_balances(&vec![Coin::new(
             balance.amount.mul_floor(Decimal::percent(99)),
             swap_action.minimum_receive_amount.denom.clone(),
         )]);
@@ -1270,7 +1274,7 @@ mod integration_tests {
             }])
             .instantiate(&[swap_action.swap_amount.clone()]);
 
-        strategy.assert_bank_balances(&vec![
+        strategy.assert_strategy_balances(&vec![
             Coin::new(
                 swap_action.swap_amount.amount - minimum_swap_amount.amount,
                 swap_action.swap_amount.denom.clone(),
@@ -1340,16 +1344,18 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        strategy.assert_bank_balances(&vec![]).assert_fin_orders(
-            &order_action.pair_address,
-            vec![(
-                order_action.side,
-                Decimal::one(),          // price
-                starting_balance.amount, // offer
-                starting_balance.amount, // remaining
-                Uint128::zero(),         // filled
-            )],
-        );
+        strategy
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side,
+                    Decimal::one(),          // price
+                    starting_balance.amount, // offer
+                    starting_balance.amount, // remaining
+                    Uint128::zero(),         // filled
+                )],
+            );
     }
 
     #[test]
@@ -1376,9 +1382,9 @@ mod integration_tests {
         let remaining_amount = Uint128::new(800_000);
 
         strategy
-            .assert_bank_balances(&[])
+            .assert_strategy_balances(&[])
             .assert_strategy_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()))
-            .assert_fin_orders(
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -1405,8 +1411,8 @@ mod integration_tests {
             .instantiate(&[starting_balance.clone()]);
 
         strategy
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -1417,8 +1423,8 @@ mod integration_tests {
                 )],
             )
             .execute()
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side,
@@ -1454,8 +1460,8 @@ mod integration_tests {
         let remaining_amount = Uint128::new(800_000);
 
         strategy
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -1466,7 +1472,7 @@ mod integration_tests {
                 )],
             )
             .execute()
-            .assert_bank_balance(&filled_amount.clone());
+            .assert_strategy_balance(&filled_amount.clone());
     }
 
     #[test]
@@ -1484,8 +1490,8 @@ mod integration_tests {
             .instantiate(&[starting_balance.clone()]);
 
         strategy
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -1497,8 +1503,8 @@ mod integration_tests {
             )
             .deposit(&[starting_balance.clone()])
             .execute()
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side,
@@ -1508,6 +1514,46 @@ mod integration_tests {
                     Uint128::zero(),                           // filled
                 )],
             );
+    }
+
+    #[test]
+    fn test_execute_limit_order_action_with_empty_bid_denom_balance_sets_no_order() {
+        let mut harness = CalcTestApp::setup();
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(Decimal::from_str("0.1").unwrap()),
+            ..default_limit_order_action(&harness)
+        };
+        let starting_balance = Coin::new(1_000u128, order_action.bid_denom.clone());
+
+        let fin_pair = harness.query_fin_config(&order_action.pair_address);
+        let ask_denom = fin_pair.denoms.ask(&order_action.side);
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[starting_balance.clone()]);
+
+        strategy
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::from_str("0.1").unwrap(), // price
+                    starting_balance.amount,           // offer
+                    Uint128::zero(),                   // remaining
+                    Uint128::new(100),                 // filled
+                )],
+            )
+            .execute()
+            .assert_strategy_balances(&vec![
+                Coin::new(100_u128, ask_denom),
+                Coin::new(0_u128, order_action.bid_denom.clone()),
+            ])
+            .assert_strategy_fin_orders(&order_action.pair_address, vec![]);
     }
 
     #[test]
@@ -1540,16 +1586,18 @@ mod integration_tests {
 
         let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
 
-        strategy.assert_bank_balances(&vec![]).assert_fin_orders(
-            &order_action.pair_address,
-            vec![(
-                order_action.side.clone(),
-                Decimal::from_str("0.891").unwrap(), // price
-                starting_balance.amount,             // offer
-                starting_balance.amount,             // remaining
-                Uint128::zero(),                     // filled
-            )],
-        );
+        strategy
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::from_str("0.891").unwrap(), // price
+                    starting_balance.amount,             // offer
+                    starting_balance.amount,             // remaining
+                    Uint128::zero(),                     // filled
+                )],
+            );
 
         let new_order_amount = Coin::new(1_000_000u128, filled_amount.denom);
 
@@ -1572,8 +1620,8 @@ mod integration_tests {
         strategy
             .deposit(&[starting_balance.clone()])
             .execute()
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side,
@@ -1613,16 +1661,18 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        strategy.assert_bank_balances(&vec![]).assert_fin_orders(
-            &order_action.pair_address,
-            vec![(
-                order_action.side.clone(),
-                Decimal::from_str("0.891").unwrap(), // price
-                starting_balance.amount,             // offer
-                starting_balance.amount,             // remaining
-                Uint128::zero(),                     // filled
-            )],
-        );
+        strategy
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::from_str("0.891").unwrap(), // price
+                    starting_balance.amount,             // offer
+                    starting_balance.amount,             // remaining
+                    Uint128::zero(),                     // filled
+                )],
+            );
 
         let new_order_amount = Coin::new(1_000_000u128, order_action.bid_denom);
 
@@ -1641,10 +1691,10 @@ mod integration_tests {
             .unwrap();
 
         strategy
-            .assert_bank_balances(&vec![])
+            .assert_strategy_balances(&vec![])
             .execute()
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -1652,55 +1702,6 @@ mod integration_tests {
                     starting_balance.amount,             // offer
                     starting_balance.amount,             // remaining
                     Uint128::zero(),                     // filled
-                )],
-            );
-    }
-
-    #[test]
-    fn test_withdraw_limit_order_action_with_unrelated_denoms_does_nothing() {
-        let mut harness = CalcTestApp::setup();
-        let pair = harness.query_fin_config(&harness.fin_addr);
-
-        let price = Decimal::percent(50);
-        let order_action = FinLimitOrder {
-            strategy: PriceStrategy::Fixed(price),
-            ..default_limit_order_action(&harness)
-        };
-        let starting_balance = Coin::new(1000000u128, order_action.bid_denom.clone());
-
-        let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![Node::Action {
-                action: Action::LimitOrder(order_action.clone()),
-                index: 0,
-                next: None,
-            }])
-            .instantiate(&[starting_balance.clone()]);
-
-        let remaining_amount = Uint128::new(800_000);
-        let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
-
-        strategy
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
-                &order_action.pair_address,
-                vec![(
-                    order_action.side.clone(),
-                    price,                   // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
-                )],
-            )
-            .withdraw(vec![Coin::new(100u128, "unrelated_denom".to_string())])
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
-                &order_action.pair_address,
-                vec![(
-                    order_action.side.clone(),
-                    price,                   // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
                 )],
             );
     }
@@ -1729,8 +1730,8 @@ mod integration_tests {
         let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
 
         strategy
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -1741,9 +1742,9 @@ mod integration_tests {
                 )],
             )
             .pause()
-            .assert_fin_orders(&order_action.pair_address, vec![])
-            .assert_bank_balance(&filled_amount)
-            .assert_bank_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()));
+            .assert_strategy_fin_orders(&order_action.pair_address, vec![])
+            .assert_strategy_balance(&filled_amount)
+            .assert_strategy_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()));
     }
 
     #[test]
@@ -1770,8 +1771,8 @@ mod integration_tests {
         let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
 
         strategy
-            .assert_bank_balances(&vec![])
-            .assert_fin_orders(
+            .assert_strategy_balances(&vec![])
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
@@ -1782,11 +1783,11 @@ mod integration_tests {
                 )],
             )
             .pause()
-            .assert_fin_orders(&order_action.pair_address, vec![])
-            .assert_bank_balance(&filled_amount)
-            .assert_bank_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()))
+            .assert_strategy_fin_orders(&order_action.pair_address, vec![])
+            .assert_strategy_balance(&filled_amount)
+            .assert_strategy_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()))
             .resume()
-            .assert_fin_orders(
+            .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side,
@@ -1796,7 +1797,7 @@ mod integration_tests {
                     Uint128::zero(),  // filled
                 )],
             )
-            .assert_bank_balance(&Coin::new(0u128, order_action.bid_denom.clone()));
+            .assert_strategy_balance(&Coin::new(0u128, order_action.bid_denom.clone()));
     }
 
     // Distribution Action tests
@@ -2015,7 +2016,7 @@ mod integration_tests {
             }])
             .instantiate(&starting_balances);
 
-        strategy.assert_bank_balance(&Coin::new(0u128, "x/ruji"));
+        strategy.assert_strategy_balance(&Coin::new(0u128, "x/ruji"));
 
         for destination in [destinations, vec![fee_collector_destination]].concat() {
             let distributed = starting_balances
@@ -2197,7 +2198,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balance(&Coin::new(1u128, swap_action.swap_amount.denom.clone()));
+            .assert_strategy_balance(&Coin::new(1u128, swap_action.swap_amount.denom.clone()));
     }
 
     #[test]
@@ -2238,7 +2239,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds);
+            .assert_strategy_balances(&funds);
     }
 
     #[test]
@@ -2294,7 +2295,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&vec![Coin::new(
+            .assert_strategy_balances(&vec![Coin::new(
                 funds[0].amount - second_swap_action.swap_amount.amount,
                 fin_pair.denoms.base(),
             )]);
@@ -2337,10 +2338,10 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_time(61)
             .execute()
-            .assert_bank_balances(&vec![]);
+            .assert_strategy_balances(&vec![]);
     }
 
     #[test]
@@ -2380,10 +2381,10 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_blocks(61)
             .execute()
-            .assert_bank_balances(&vec![]);
+            .assert_strategy_balances(&vec![]);
     }
 
     #[test]
@@ -2413,7 +2414,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&vec![]);
+            .assert_strategy_balances(&vec![]);
 
         StrategyBuilder::new(&mut harness)
             .with_nodes(vec![
@@ -2433,7 +2434,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -2474,7 +2475,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&vec![]);
+            .assert_strategy_balances(&vec![]);
 
         StrategyBuilder::new(&mut harness)
             .with_nodes(vec![
@@ -2497,7 +2498,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -2546,7 +2547,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&vec![]);
+            .assert_strategy_balances(&vec![]);
 
         StrategyBuilder::new(strategy.harness)
             .with_nodes(vec![
@@ -2567,7 +2568,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&vec![swap_action.swap_amount.clone()]);
+            .assert_strategy_balances(&vec![swap_action.swap_amount.clone()]);
     }
 
     #[test]
@@ -2617,7 +2618,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds);
+            .assert_strategy_balances(&funds);
 
         StrategyBuilder::new(strategy.harness)
             .with_nodes(vec![
@@ -2638,7 +2639,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
 
         StrategyBuilder::new(strategy.harness)
             .with_nodes(vec![
@@ -2659,7 +2660,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds);
+            .assert_strategy_balances(&funds);
 
         StrategyBuilder::new(strategy.harness)
             .with_nodes(vec![
@@ -2680,7 +2681,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -2758,7 +2759,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -2798,10 +2799,10 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_time(61)
             .execute()
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -2841,7 +2842,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -2881,10 +2882,10 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_blocks(61)
             .execute()
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -2924,7 +2925,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -2964,10 +2965,10 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_time(61)
             .execute()
-            .assert_bank_balances(&[]);
+            .assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -3009,7 +3010,7 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds);
+            .assert_strategy_balances(&funds);
     }
 
     #[test]
@@ -3050,13 +3051,13 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_time(60)
             .advance_time(60)
             .advance_time(60)
             .advance_time(60)
             .advance_time(60)
-            .assert_bank_balances(&[Coin::new(
+            .assert_strategy_balances(&[Coin::new(
                 funds[0].amount - swap_action.swap_amount.amount * Uint128::new(5),
                 swap_action.swap_amount.denom.clone(),
             )]);
@@ -3100,16 +3101,136 @@ mod integration_tests {
                 },
             ])
             .instantiate(&funds)
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_blocks(60)
             .advance_blocks(60)
             .advance_blocks(60)
             .advance_blocks(60)
             .advance_blocks(60)
-            .assert_bank_balances(&[Coin::new(
+            .assert_strategy_balances(&[Coin::new(
                 funds[0].amount - swap_action.swap_amount.amount * Uint128::new(5),
                 swap_action.swap_amount.denom.clone(),
             )]);
+    }
+
+    #[test]
+    fn test_crank_limit_order_schedule_sets_and_resets_triggers() {
+        let mut harness = CalcTestApp::setup();
+
+        let pair_address = harness.fin_addr.clone();
+        let pair = harness.query_fin_config(&pair_address);
+
+        let limit_order_schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            manager_address: harness.manager_addr.clone(),
+            cadence: Cadence::LimitOrder {
+                pair_address: pair_address.clone(),
+                side: Side::Base,
+                previous: None,
+                strategy: PriceStrategy::Fixed(Decimal::from_str("0.1").unwrap()),
+            },
+            next: None,
+            execution_rebate: vec![Coin::new(100_u128, pair.denoms.base())],
+            executors: vec![],
+            jitter: None,
+        };
+
+        let starting_balance = Coin::new(1_000u128, pair.denoms.base());
+        let distribution_action = Distribution {
+            denoms: vec![pair.denoms.quote().to_string()],
+            ..default_distribution_action(&harness)
+        };
+
+        let scheduler = harness.scheduler_addr.clone();
+        let builder = StrategyBuilder::new(&mut harness);
+        let keeper = builder.keeper.clone();
+
+        let keeper_balance = builder
+            .app
+            .app
+            .wrap()
+            .query_balance(&keeper, pair.denoms.quote())
+            .unwrap();
+
+        let mut strategy = builder
+            .with_nodes(vec![
+                Node::Condition {
+                    condition: Condition::Schedule(limit_order_schedule.clone()),
+                    index: 0,
+                    on_success: Some(1),
+                    on_failure: None,
+                },
+                Node::Action {
+                    action: Action::Distribute(distribution_action),
+                    index: 1,
+                    next: None,
+                },
+            ])
+            .instantiate(&[starting_balance.clone()]);
+
+        strategy
+            .assert_strategy_balances(&vec![Coin::new(
+                starting_balance.amount - Uint128::new(100),
+                pair.denoms.base(),
+            )])
+            .assert_fin_orders(
+                &scheduler,
+                &pair_address,
+                vec![(
+                    Side::Base,
+                    Decimal::from_str("0.1").unwrap(), // price
+                    Uint128::new(100),                 // offer
+                    Uint128::zero(),                   // remaining
+                    Uint128::new(10),                  // filled
+                )],
+            )
+            .execute_triggers(ConditionFilter::LimitOrder {
+                pair_address: pair_address.clone(),
+                price_range: None,
+                start_after: None,
+            })
+            .execute_triggers(ConditionFilter::LimitOrder {
+                pair_address: pair_address.clone(),
+                price_range: None,
+                start_after: None,
+            })
+            .execute_triggers(ConditionFilter::LimitOrder {
+                pair_address: pair_address.clone(),
+                price_range: None,
+                start_after: None,
+            })
+            .execute_triggers(ConditionFilter::LimitOrder {
+                pair_address: pair_address.clone(),
+                price_range: None,
+                start_after: None,
+            })
+            .execute_triggers(ConditionFilter::LimitOrder {
+                pair_address: pair_address.clone(),
+                price_range: None,
+                start_after: None,
+            })
+            .assert_strategy_balances(&vec![Coin::new(
+                starting_balance.amount - Uint128::new(600),
+                pair.denoms.base(),
+            )])
+            .assert_fin_orders(
+                &scheduler,
+                &pair_address,
+                vec![(
+                    Side::Base,
+                    Decimal::from_str("0.1").unwrap(), // price
+                    Uint128::new(100),                 // offer
+                    Uint128::zero(),                   // remaining
+                    Uint128::new(10),                  // filled
+                )],
+            )
+            .assert_address_balances(
+                &keeper,
+                &vec![Coin::new(
+                    keeper_balance.amount + Uint128::new(50),
+                    pair.denoms.quote(),
+                )],
+            );
     }
 
     #[test]
@@ -3155,13 +3276,13 @@ mod integration_tests {
             .instantiate(&funds);
 
         strategy
-            .assert_bank_balances(&funds)
+            .assert_strategy_balances(&funds)
             .advance_time(60)
             .advance_time(60)
             .advance_time(60)
             .advance_time(60)
             .advance_time(60)
-            .assert_bank_balances(&[
+            .assert_strategy_balances(&[
                 Coin::new(
                     funds[0].amount - swap_action.swap_amount.amount * Uint128::new(5),
                     swap_action.swap_amount.denom.clone(),

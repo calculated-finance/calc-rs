@@ -15,7 +15,6 @@ pub struct StrategyConfig {
     pub manager: Addr,
     pub owner: Addr,
     pub nodes: Vec<Node>,
-    pub denoms: HashSet<String>,
 }
 
 #[cw_serde]
@@ -52,7 +51,7 @@ pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
     Config {},
     #[returns(Vec<Coin>)]
-    Balances(HashSet<String>),
+    Balances,
 }
 
 #[cw_serde]
@@ -201,10 +200,10 @@ impl StatefulOperation<Node> for Node {
         })
     }
 
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+    fn balances(&self, deps: Deps, env: &Env) -> StdResult<Coins> {
         match self {
-            Node::Action { action, .. } => action.balances(deps, env, denoms),
-            Node::Condition { condition, .. } => condition.balances(deps, env, denoms),
+            Node::Action { action, .. } => action.balances(deps, env),
+            Node::Condition { .. } => Ok(Coins::default()),
         }
     }
 

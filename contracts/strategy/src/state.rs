@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use calc_rs::{
     constants::MAX_STRATEGY_SIZE,
     manager::Affiliate,
@@ -12,7 +10,6 @@ use cw_storage_plus::{Item, Map};
 pub const MANAGER: Item<Addr> = Item::new("manager");
 pub const OWNER: Item<Addr> = Item::new("owner");
 pub const AFFILIATES: Item<Vec<Affiliate>> = Item::new("affiliates");
-pub const DENOMS: Item<HashSet<String>> = Item::new("denoms");
 
 pub struct NodeStore {
     store: Map<u16, Node>,
@@ -27,8 +24,6 @@ impl NodeStore {
         let final_index = node_count.saturating_sub(1) as u16;
         let mut in_degrees = vec![0usize; node_count];
         let mut adj_list = vec![Vec::new(); node_count];
-
-        let mut denoms = DENOMS.load(deps.storage).unwrap_or_default();
 
         // Use Kahn's algorithm to ensure no cycles in the strategy
         for (i, node) in nodes.into_iter().enumerate() {
@@ -99,9 +94,6 @@ impl NodeStore {
             let initialised_node = node.init(deps.as_ref(), env, &affiliates)?;
             self.save(deps.storage, &initialised_node)?;
 
-            let node_denoms = initialised_node.denoms(deps.as_ref(), env)?;
-            denoms.extend(node_denoms);
-
             strategy_size += initialised_node.size();
         }
 
@@ -138,8 +130,6 @@ impl NodeStore {
                 "Strategy contains a cycle that could cause infinite recursion",
             ));
         }
-
-        DENOMS.save(deps.storage, &denoms)?;
 
         Ok(())
     }

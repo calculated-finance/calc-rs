@@ -30,34 +30,47 @@ impl Action {
 
 impl Operation<Action> for Action {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<Action> {
-        match self {
-            Action::Swap(action) => action.init(deps, env, affiliates),
-            Action::LimitOrder(action) => action.init(deps, env, affiliates),
-            Action::Distribute(action) => action.init(deps, env, affiliates),
-        }
+        Ok(match self {
+            Action::Swap(swap) => Action::Swap(swap.init(deps, env, affiliates)?),
+            Action::LimitOrder(limit_order) => {
+                Action::LimitOrder(limit_order.init(deps, env, affiliates)?)
+            }
+            Action::Distribute(distribution) => {
+                Action::Distribute(distribution.init(deps, env, affiliates)?)
+            }
+        })
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
         match self {
-            Action::Swap(action) => action.execute(deps, env),
-            Action::LimitOrder(action) => action.execute(deps, env),
-            Action::Distribute(action) => action.execute(deps, env),
+            Action::Swap(swap) => {
+                let (messages, swap) = swap.execute(deps, env);
+                (messages, Action::Swap(swap))
+            }
+            Action::LimitOrder(limit_order) => {
+                let (messages, limit_order) = limit_order.execute(deps, env);
+                (messages, Action::LimitOrder(limit_order))
+            }
+            Action::Distribute(distribution) => {
+                let (messages, distribution) = distribution.execute(deps, env);
+                (messages, Action::Distribute(distribution))
+            }
         }
     }
 
     fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
         match self {
-            Action::Swap(action) => action.denoms(deps, env),
-            Action::LimitOrder(action) => action.denoms(deps, env),
-            Action::Distribute(action) => action.denoms(deps, env),
+            Action::Swap(swap) => swap.denoms(deps, env),
+            Action::LimitOrder(limit_order) => limit_order.denoms(deps, env),
+            Action::Distribute(distribution) => distribution.denoms(deps, env),
         }
     }
 }
 
 impl StatefulOperation<Action> for Action {
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+    fn balances(&self, deps: Deps, env: &Env) -> StdResult<Coins> {
         match self {
-            Action::LimitOrder(action) => action.balances(deps, env, denoms),
+            Action::LimitOrder(limit_order) => limit_order.balances(deps, env),
             _ => Ok(Coins::default()),
         }
     }
@@ -69,21 +82,31 @@ impl StatefulOperation<Action> for Action {
         desired: &HashSet<String>,
     ) -> StdResult<(Vec<CosmosMsg>, Action)> {
         match self {
-            Action::LimitOrder(action) => action.withdraw(deps, env, desired),
+            Action::LimitOrder(limit_order) => {
+                let (messages, limit_order) = limit_order.withdraw(deps, env, desired)?;
+                Ok((messages, Action::LimitOrder(limit_order)))
+            }
+
             _ => Ok((vec![], self)),
         }
     }
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
         match self {
-            Action::LimitOrder(action) => action.cancel(deps, env),
+            Action::LimitOrder(limit_order) => {
+                let (messages, limit_order) = limit_order.cancel(deps, env)?;
+                Ok((messages, Action::LimitOrder(limit_order)))
+            }
             _ => Ok((vec![], self)),
         }
     }
 
     fn commit(self, deps: Deps, env: &Env) -> StdResult<Action> {
         match self {
-            Action::LimitOrder(limit_order) => limit_order.commit(deps, env),
+            Action::LimitOrder(limit_order) => {
+                let limit_order = limit_order.commit(deps, env)?;
+                Ok(Action::LimitOrder(limit_order))
+            }
             _ => Ok(self),
         }
     }

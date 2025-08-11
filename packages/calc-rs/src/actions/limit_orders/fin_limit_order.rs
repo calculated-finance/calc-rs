@@ -9,7 +9,6 @@ use rujira_rs::fin::{
 };
 
 use crate::{
-    actions::action::Action,
     core::Contract,
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
@@ -123,7 +122,7 @@ impl FinLimitOrder {
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
     }
 
-    fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
+    fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
         let mut messages = vec![];
 
         let order = if let Some(existing_order) = self.current_order.clone() {
@@ -150,10 +149,10 @@ impl FinLimitOrder {
 
         Ok((
             messages,
-            Action::LimitOrder(FinLimitOrder {
+            FinLimitOrder {
                 current_order: Some(set_order_state.state.cached()),
                 ..set_order_state.config
-            }),
+            },
         ))
     }
 }
@@ -389,8 +388,8 @@ impl FinLimitOrderState<WithdrawingOrder> {
     }
 }
 
-impl Operation<Action> for FinLimitOrder {
-    fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Action> {
+impl Operation<FinLimitOrder> for FinLimitOrder {
+    fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<FinLimitOrder> {
         if let Some(amount) = self.bid_amount {
             if amount.lt(&Uint128::new(1_000)) {
                 return Err(StdError::generic_err(
@@ -405,13 +404,13 @@ impl Operation<Action> for FinLimitOrder {
             ));
         }
 
-        Ok(Action::LimitOrder(self))
+        Ok(self)
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, FinLimitOrder) {
         match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, action)) => (messages, action),
-            Err(_) => (vec![], Action::LimitOrder(self)),
+            Ok((messages, limit_order)) => (messages, limit_order),
+            Err(_) => (vec![], self),
         }
     }
 
@@ -427,15 +426,11 @@ impl Operation<Action> for FinLimitOrder {
     }
 }
 
-impl StatefulOperation<Action> for FinLimitOrder {
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins> {
+impl StatefulOperation<FinLimitOrder> for FinLimitOrder {
+    fn balances(&self, deps: Deps, env: &Env) -> StdResult<Coins> {
         let pair = deps
             .querier
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
-
-        if !denoms.contains(pair.denoms.base()) && !denoms.contains(pair.denoms.quote()) {
-            return Ok(Coins::default());
-        }
 
         let (remaining, filled) = if let Some(existing_order) = self.current_order.clone() {
             let order_state = existing_order.refresh(deps, env, self)?;
@@ -455,9 +450,9 @@ impl StatefulOperation<Action> for FinLimitOrder {
         deps: Deps,
         env: &Env,
         desired: &HashSet<String>,
-    ) -> StdResult<(Vec<CosmosMsg>, Action)> {
+    ) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
         if !desired.contains(&self.bid_denom) {
-            return Ok((vec![], Action::LimitOrder(self)));
+            return Ok((vec![], self));
         }
 
         if let Some(existing_order) = self.current_order.clone() {
@@ -469,13 +464,13 @@ impl StatefulOperation<Action> for FinLimitOrder {
             let (messages, _) = order_state.withdraw()?.execute();
 
             // We let the confirm stage remove the current order
-            Ok((messages, Action::LimitOrder(self)))
+            Ok((messages, self))
         } else {
-            Ok((vec![], Action::LimitOrder(self)))
+            Ok((vec![], self))
         }
     }
 
-    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
+    fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
         if let Some(existing_order) = self.current_order.clone() {
             let order_state = FinLimitOrderState {
                 config: self.clone(),
@@ -485,24 +480,24 @@ impl StatefulOperation<Action> for FinLimitOrder {
             let (messages, _) = order_state.withdraw()?.execute();
 
             // We let the commit stage remove the current order
-            Ok((messages, Action::LimitOrder(self)))
+            Ok((messages, self))
         } else {
-            Ok((vec![], Action::LimitOrder(self)))
+            Ok((vec![], self))
         }
     }
 
-    fn commit(self, deps: Deps, env: &Env) -> StdResult<Action> {
+    fn commit(self, deps: Deps, env: &Env) -> StdResult<FinLimitOrder> {
         if let Some(existing_order) = self.current_order.clone() {
             match existing_order.refresh(deps, env, &self) {
-                Ok(_) => Ok(Action::LimitOrder(self)),
-                Err(_) => Ok(Action::LimitOrder(FinLimitOrder {
+                Ok(_) => Ok(self),
+                Err(_) => Ok(FinLimitOrder {
                     // Wipe the cached order if it does not exist
                     current_order: None,
                     ..self
-                })),
+                }),
             }
         } else {
-            Ok(Action::LimitOrder(self))
+            Ok(self)
         }
     }
 }

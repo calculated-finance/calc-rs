@@ -156,36 +156,6 @@ impl<'a> StrategyHandler<'a> {
 
     // Assertion helpers
 
-    pub fn assert_bank_balance(&mut self, expected: &Coin) -> &mut Self {
-        println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
-        let balance = self
-            .harness
-            .query_balance(&self.strategy_addr, &expected.denom);
-        assert!(
-            // Allow for rounding discrepancies
-            balance.amount.abs_diff(expected.amount) < Uint128::new(10),
-            "Expected balance not found: {expected:?}\n\nCurrent balance: {balance:#?}",
-        );
-        self
-    }
-
-    pub fn assert_bank_balances(&mut self, expected_balances: &[Coin]) -> &mut Self {
-        println!("[StrategyHandler] Asserting all strategy balances are {expected_balances:#?}");
-        let balances = self.harness.query_balances(&self.strategy_addr);
-        for expected in expected_balances {
-            let actual = balances.iter().find(|c| {
-                // Allow for rounding discrepancies
-                c.denom == expected.denom && c.amount.abs_diff(expected.amount) < Uint128::new(10)
-            });
-
-            assert!(
-                actual.is_some(),
-                "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
-            );
-        }
-        self
-    }
-
     pub fn assert_strategy_balance(&mut self, expected: &Coin) -> &mut Self {
         println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
         let balances = self
@@ -196,6 +166,66 @@ impl<'a> StrategyHandler<'a> {
             balances.iter().any(|b| b.amount.abs_diff(expected.amount) < Uint128::new(10)),
             "Expected strategy balance not found: {expected:?}\n\nCurrent strategy balances: {balances:#?}",
         );
+        self
+    }
+
+    pub fn assert_strategy_balances(&mut self, expected_balances: &[Coin]) -> &mut Self {
+        println!("[StrategyHandler] Asserting all strategy balances are {expected_balances:#?}");
+        let balances = self.harness.query_balances(&self.strategy_addr);
+
+        for expected in expected_balances {
+            let actual = balances.iter().find(|c| {
+                // Allow for rounding discrepancies
+                c.denom == expected.denom && c.amount.abs_diff(expected.amount) < Uint128::new(10)
+            });
+
+            if expected.amount.is_zero() {
+                assert!(
+                    actual.is_none(),
+                    "Expected zero balance for {} but found: {actual:?}",
+                    expected.denom
+                );
+            } else {
+                assert!(
+                    actual.is_some(),
+                    "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
+                );
+            };
+        }
+
+        self
+    }
+
+    pub fn assert_address_balances(
+        &mut self,
+        address: &Addr,
+        expected_balances: &[Coin],
+    ) -> &mut Self {
+        println!(
+            "[StrategyHandler] Asserting all balances for {address} are {expected_balances:#?}"
+        );
+        let balances = self.harness.query_balances(address);
+
+        for expected in expected_balances {
+            let actual = balances.iter().find(|c| {
+                // Allow for rounding discrepancies
+                c.denom == expected.denom && c.amount.abs_diff(expected.amount) < Uint128::new(10)
+            });
+
+            if expected.amount.is_zero() {
+                assert!(
+                    actual.is_none(),
+                    "Expected zero balance for {} but found: {actual:?}",
+                    expected.denom
+                );
+            } else {
+                assert!(
+                    actual.is_some(),
+                    "Expected balance not found: {expected:?}\n\nAll balances: {balances:#?}",
+                );
+            };
+        }
+
         self
     }
 
@@ -223,7 +253,7 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
-    pub fn assert_fin_orders(
+    pub fn assert_strategy_fin_orders(
         &mut self,
         pair_address: &Addr,
         expected_fin_orders: Vec<(Side, Decimal, Uint128, Uint128, Uint128)>,
@@ -241,6 +271,42 @@ impl<'a> StrategyHandler<'a> {
                     .iter()
                     .map(|(side, price, offer, remaining, filled)| OrderResponse {
                         owner: self.strategy_addr.to_string(),
+                        side: side.clone(),
+                        price: Price::Fixed(*price),
+                        rate: *price,
+                        updated_at: self.harness.app.block_info().time,
+                        offer: *offer,
+                        remaining: *remaining,
+                        filled: *filled,
+                    })
+                    .collect()
+            },
+            "Expected fin orders do not match current orders: expected {:#?}, got {:#?}",
+            expected_fin_orders,
+            fin_orders.orders
+        );
+        self
+    }
+
+    pub fn assert_fin_orders(
+        &mut self,
+        owner: &Addr,
+        pair_address: &Addr,
+        expected_fin_orders: Vec<(Side, Decimal, Uint128, Uint128, Uint128)>,
+    ) -> &mut Self {
+        println!(
+            "[StrategyHandler] Asserting fin orders owned by ${owner} on pair {pair_address} are (side, price, offer, remaining, filled): {expected_fin_orders:#?}"
+        );
+        let fin_orders = self
+            .harness
+            .get_fin_orders(pair_address, owner, None, None, None);
+        assert_eq!(
+            fin_orders,
+            OrdersResponse {
+                orders: expected_fin_orders
+                    .iter()
+                    .map(|(side, price, offer, remaining, filled)| OrderResponse {
+                        owner: owner.to_string(),
                         side: side.clone(),
                         price: Price::Fixed(*price),
                         rate: *price,

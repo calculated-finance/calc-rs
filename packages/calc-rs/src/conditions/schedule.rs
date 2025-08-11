@@ -137,7 +137,7 @@ impl StatefulOperation<Condition> for Schedule {
         }
     }
 
-    fn balances(&self, _deps: Deps, _env: &Env, _denoms: &HashSet<String>) -> StdResult<Coins> {
+    fn balances(&self, _deps: Deps, _env: &Env) -> StdResult<Coins> {
         Ok(Coins::default())
     }
 
