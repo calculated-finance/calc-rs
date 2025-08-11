@@ -1,4 +1,4 @@
-use std::{collections::HashSet, mem::discriminant};
+use std::mem::discriminant;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
@@ -274,12 +274,5 @@ impl Operation<Swap> for Swap {
             Ok((messages, swap)) => (messages, swap),
             Err(_) => (vec![], self),
         }
-    }
-
-    fn denoms(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(HashSet::from([
-            self.swap_amount.denom.clone(),
-            self.minimum_receive_amount.denom.clone(),
-        ]))
     }
 }

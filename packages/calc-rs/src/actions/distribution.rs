@@ -1,4 +1,4 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -186,9 +186,5 @@ impl Operation<Distribution> for Distribution {
             Ok((messages, action)) => (messages, action),
             Err(_) => (vec![], self),
         }
-    }
-
-    fn denoms(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(self.denoms.iter().cloned().collect())
     }
 }

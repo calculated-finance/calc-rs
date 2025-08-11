@@ -165,13 +165,6 @@ impl Operation<Node> for Node {
             }
         }
     }
-
-    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        match self {
-            Node::Action { action, .. } => action.denoms(deps, env),
-            Node::Condition { condition, .. } => condition.denoms(deps, env),
-        }
-    }
 }
 
 impl StatefulOperation<Node> for Node {

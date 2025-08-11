@@ -413,17 +413,6 @@ impl Operation<FinLimitOrder> for FinLimitOrder {
             Err(_) => (vec![], self),
         }
     }
-
-    fn denoms(&self, deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        let pair = deps
-            .querier
-            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
-
-        Ok(HashSet::from([
-            pair.denoms.base().to_string(),
-            pair.denoms.quote().to_string(),
-        ]))
-    }
 }
 
 impl StatefulOperation<FinLimitOrder> for FinLimitOrder {

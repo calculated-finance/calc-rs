@@ -86,7 +86,6 @@ Each node operation follows the Operation trait pattern:
 pub trait Operation<T> {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, T);
-    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>>;
 }
 
 pub trait StatefulOperation<T> {
@@ -98,7 +97,7 @@ pub trait StatefulOperation<T> {
         desired: &HashSet<String>,
     ) -> StdResult<(Vec<CosmosMsg>, T)>;
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
-    fn balances(&self, deps: Deps, env: &Env, denoms: &HashSet<String>) -> StdResult<Coins>;
+    fn balances(&self, deps: Deps, env: &Env) -> StdResult<Coins>;
 }
 ```
 

@@ -114,14 +114,6 @@ impl Operation<Condition> for Schedule {
             Err(_) => (vec![], Condition::Schedule(self)),
         }
     }
-
-    fn denoms(&self, _deps: Deps, _env: &Env) -> StdResult<HashSet<String>> {
-        Ok(self
-            .execution_rebate
-            .iter()
-            .map(|coin| coin.denom.clone())
-            .collect())
-    }
 }
 
 impl StatefulOperation<Condition> for Schedule {

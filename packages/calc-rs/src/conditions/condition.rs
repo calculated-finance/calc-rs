@@ -227,13 +227,6 @@ impl Operation<Condition> for Condition {
             _ => (vec![], self),
         }
     }
-
-    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        match self {
-            Condition::Schedule(schedule) => schedule.denoms(deps, env),
-            _ => Ok(HashSet::new()),
-        }
-    }
 }
 
 impl StatefulOperation<Condition> for Condition {

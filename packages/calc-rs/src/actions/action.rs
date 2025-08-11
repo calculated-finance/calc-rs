@@ -57,14 +57,6 @@ impl Operation<Action> for Action {
             }
         }
     }
-
-    fn denoms(&self, deps: Deps, env: &Env) -> StdResult<HashSet<String>> {
-        match self {
-            Action::Swap(swap) => swap.denoms(deps, env),
-            Action::LimitOrder(limit_order) => limit_order.denoms(deps, env),
-            Action::Distribute(distribution) => distribution.denoms(deps, env),
-        }
-    }
 }
 
 impl StatefulOperation<Action> for Action {
