@@ -84,24 +84,44 @@ pub fn execute(
             let owner = owner.unwrap_or(info.sender);
 
             if deps.api.addr_validate(owner.as_str()).is_err() {
-                return Err(ContractError::generic_err("Invalid owner address"));
+                return Err(ContractError::generic_err(format!(
+                    "Invalid owner address: {owner}"
+                )));
             }
 
             if label.is_empty() || label.len() > MAX_LABEL_LENGTH {
                 return Err(ContractError::generic_err(format!(
-                    "Strategy label must be between 1 and {MAX_LABEL_LENGTH} characters",
+                    "Strategy label must be between 1 and {MAX_LABEL_LENGTH} characters: {label}",
                 )));
             }
 
-            let total_affiliate_bps = affiliates
-                .iter()
-                .fold(0, |acc, affiliate| acc + affiliate.bps);
+            let total_affiliate_bps = affiliates.iter().try_fold(0, |acc, affiliate| {
+                if affiliate.label.is_empty() || affiliate.label.len() > MAX_LABEL_LENGTH {
+                    return Err(ContractError::generic_err(format!(
+                        "Affiliate label must be between 1 and {MAX_LABEL_LENGTH} characters: {}",
+                        affiliate.label
+                    )));
+                }
 
-            if total_affiliate_bps > MAX_TOTAL_AFFILIATE_BPS {
-                return Err(ContractError::generic_err(format!(
-                    "Total affiliate bps cannot exceed {MAX_TOTAL_AFFILIATE_BPS}, got {total_affiliate_bps}"
-                )));
-            }
+                deps.api
+                    .addr_validate(affiliate.address.as_str())
+                    .map_err(|_| {
+                        ContractError::generic_err(format!(
+                            "Invalid affiliate address: {}",
+                            affiliate.address
+                        ))
+                    })?;
+
+                let total = acc + affiliate.bps;
+
+                if total > MAX_TOTAL_AFFILIATE_BPS {
+                    return Err(ContractError::generic_err(format!(
+                        "Total affiliate bps cannot exceed {MAX_TOTAL_AFFILIATE_BPS}, got at least {total}",
+                    )));
+                }
+
+                Ok(total)
+            })?;
 
             let config = CONFIG.load(deps.storage)?;
 
