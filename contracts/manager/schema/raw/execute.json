@@ -13,8 +13,7 @@
           "required": [
             "affiliates",
             "label",
-            "nodes",
-            "owner"
+            "nodes"
           ],
           "properties": {
             "affiliates": {
@@ -33,7 +32,14 @@
               }
             },
             "owner": {
-              "$ref": "#/definitions/Addr"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Addr"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": false

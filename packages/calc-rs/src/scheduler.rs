@@ -91,7 +91,6 @@ pub enum ConditionFilter {
     LimitOrder {
         pair_address: Addr,
         price_range: Option<(Decimal, Decimal)>,
-        start_after: Option<u64>,
     },
 }
 

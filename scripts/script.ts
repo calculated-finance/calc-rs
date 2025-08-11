@@ -15,6 +15,7 @@ import { setTimeout } from "timers/promises";
 import {
   Addr,
   Decimal,
+  ManagerExecuteMsg,
   SchedulerQueryMsg,
   Side,
   StrategyExecuteMsg,
@@ -63,6 +64,8 @@ export const upload = async (binaryFilePath: string) => {
     fs.readFileSync(binaryFilePath),
     1.5,
   );
+
+  console.log("Uploaded code id:", codeId);
 
   return codeId;
 };
@@ -159,19 +162,14 @@ export const uploadAndInstantiateManagerContract = async () => {
   );
 };
 
-export const uploadAndMigrateManagerContract = async () => {
+export const uploadAndMigrateManagerContract = async (address: string) => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
-  return uploadAndMigrate(
-    "artifacts/manager.wasm",
-    adminAddress,
-    MANAGER_ADDRESS,
-    {
-      fee_collector: adminAddress,
-      strategy_code_id: await uploadStrategyContract(),
-    },
-  );
+  return uploadAndMigrate("artifacts/manager.wasm", adminAddress, address, {
+    fee_collector: adminAddress,
+    strategy_code_id: await uploadStrategyContract(),
+  });
 };
 
 export const uploadAndMigrateStrategyContract = async () => {
@@ -186,18 +184,13 @@ export const uploadAndMigrateStrategyContract = async () => {
   );
 };
 
-export const uploadAndMigrateSchedulerContract = async () => {
+export const uploadAndMigrateSchedulerContract = async (address: string) => {
   const wallet = await getWalletWithMnemonic();
   const adminAddress = await getAccount(wallet);
 
-  return uploadAndMigrate(
-    "artifacts/scheduler.wasm",
-    adminAddress,
-    SCHEDULER_ADDRESS,
-    {
-      manager: MANAGER_ADDRESS,
-    },
-  );
+  return uploadAndMigrate("artifacts/scheduler.wasm", adminAddress, address, {
+    manager: MANAGER_ADDRESS,
+  });
 };
 
 export const uploadAndInstantiateSchedulerContract = async () => {
@@ -226,9 +219,12 @@ export const uploadAndInstantiateContractSuite = async () => {
   await uploadAndInstantiateSchedulerContract();
 };
 
-export const uploadAndMigrateContractSuite = async () => {
-  await uploadAndMigrateManagerContract();
-  await uploadAndMigrateSchedulerContract();
+export const uploadAndMigrateContractSuite = async (
+  managerAddress: string,
+  schedulerAddress: string,
+) => {
+  await uploadAndMigrateManagerContract(managerAddress);
+  await uploadAndMigrateSchedulerContract(schedulerAddress);
 };
 
 export const uploadPairs = async () => {
@@ -346,10 +342,10 @@ export const executeStrategy = async (address: string) => {
     account,
     MANAGER_ADDRESS,
     {
-      execute_strategy: {
+      execute: {
         contract_address: address,
       },
-    },
+    } as ManagerExecuteMsg,
     "auto",
   );
 
@@ -727,11 +723,11 @@ export const getBlock = async () => {
 
 export const KEEPER_ADDRESS = "sthor17pfp4qvy5vrmtjar7kntachm0cfm9m9azl3jka";
 
-export const MANAGER_ADDRESS =
-  "sthor1a8ufsnukvnh827d35wyknvn6shyqphu3rac0yl9g64hzukx4hk7q527ln5";
+const MANAGER_ADDRESS =
+  "sthor18e35rm2dwpx3h09p7q7xx8qfvwdsxz2ls92fdfd4j7vh6g55h8ash7gkau";
 
-export const SCHEDULER_ADDRESS =
-  "sthor1s4wcpc6mzfe9rvu3x48t6mvmmupg04n7cfecgx3pxvcl5q3h4y3shqqv8a";
+const SCHEDULER_ADDRESS =
+  "sthor14zd6glgu67mg2ze7ekqtce3r7yjuk846l3982en9y5v6nlh2y5es2llpa6";
 
 export const STRATEGY_ADDRESS =
   "sthor1z7y08s5wkp89s9fafvtsas76e6yws5ytdfuq6424lad0rac98xmqg3jmx0";

@@ -3190,27 +3190,22 @@ mod integration_tests {
             .execute_triggers(ConditionFilter::LimitOrder {
                 pair_address: pair_address.clone(),
                 price_range: None,
-                start_after: None,
             })
             .execute_triggers(ConditionFilter::LimitOrder {
                 pair_address: pair_address.clone(),
                 price_range: None,
-                start_after: None,
             })
             .execute_triggers(ConditionFilter::LimitOrder {
                 pair_address: pair_address.clone(),
                 price_range: None,
-                start_after: None,
             })
             .execute_triggers(ConditionFilter::LimitOrder {
                 pair_address: pair_address.clone(),
                 price_range: None,
-                start_after: None,
             })
             .execute_triggers(ConditionFilter::LimitOrder {
                 pair_address: pair_address.clone(),
                 price_range: None,
-                start_after: None,
             })
             .assert_strategy_balances(&[Coin::new(
                 starting_balance.amount - Uint128::new(600),

@@ -43,7 +43,7 @@ export type ManagerExecuteMsg =
         affiliates: Affiliate[];
         label: string;
         nodes: Node[];
-        owner: Addr;
+        owner?: Addr | null;
       };
     }
   | {

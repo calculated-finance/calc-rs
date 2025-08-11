@@ -82,6 +82,8 @@ pub fn execute(
             affiliates,
             nodes,
         } => {
+            let owner = owner.unwrap_or(info.sender);
+
             if deps.api.addr_validate(owner.as_str()).is_err() {
                 return Err(ContractError::generic_err("Invalid owner address"));
             }

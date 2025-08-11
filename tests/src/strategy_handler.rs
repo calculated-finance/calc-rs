@@ -40,7 +40,7 @@ impl<'a> StrategyHandler<'a> {
                 &self.keeper,
                 ConditionFilter::Timestamp {
                     start: None,
-                    end: Some(self.harness.app.block_info().time),
+                    end: None,
                 },
             )
             .unwrap();
@@ -50,7 +50,7 @@ impl<'a> StrategyHandler<'a> {
                 &self.keeper,
                 ConditionFilter::BlockHeight {
                     start: None,
-                    end: Some(self.harness.app.block_info().height),
+                    end: None,
                 },
             )
             .unwrap();
@@ -92,7 +92,6 @@ impl<'a> StrategyHandler<'a> {
                 ConditionFilter::LimitOrder {
                     pair_address: self.harness.fin_addr.clone(),
                     price_range: None,
-                    start_after: None,
                 },
             )
             .unwrap();

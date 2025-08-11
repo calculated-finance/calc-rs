@@ -6,8 +6,6 @@ import {
 } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
 import { config } from "dotenv";
-import { Effect } from "effect/index";
-import { Addr, Affiliate, CreateTriggerMsg, Node } from "../calc";
 import types from "./MsgCompiled";
 
 (BigInt.prototype as any).toJSON = function () {
@@ -32,7 +30,6 @@ export const getSigner = async () => {
   const signer = await SigningCosmWasmClient.connectWithSigner(
     process.env.RPC_URL!,
     await getWalletWithMnemonic(),
-    // await getWalletWithPrivateKey(),
     {
       gasPrice: GasPrice.fromString(process.env.GAS_PRICE || "0.0urune"),
     },
@@ -56,149 +53,4 @@ const SCHEDULER_CONTRACT_ADDRESS =
   "sthor14zd6glgu67mg2ze7ekqtce3r7yjuk846l3982en9y5v6nlh2y5es2llpa6";
 
 const STRATEGY_ADDRESS =
-  "sthor194aywxqfx7jepjgn3p6agsgs9nlwpz7y5dh6nnu6z9tdpfy4fghspj06nd";
-
-const createTrigger = (trigger: { create: CreateTriggerMsg }) =>
-  Effect.gen(function* () {
-    let wallet = yield* Effect.tryPromise(getWalletWithMnemonic);
-    let client = yield* Effect.tryPromise(getSigner);
-
-    const signerAddress = yield* Effect.tryPromise(() => getAccount(wallet));
-    const response = yield* Effect.tryPromise(() =>
-      client.execute(
-        signerAddress,
-        SCHEDULER_CONTRACT_ADDRESS,
-        trigger,
-        "auto",
-      ),
-    );
-
-    console.log("Trigger created:", JSON.stringify(response, null, 2));
-  });
-
-const createStrategy = (strategy: {
-  instantiate: {
-    affiliates: Affiliate[];
-    label: string;
-    nodes: Node[];
-    owner: Addr;
-  };
-}) =>
-  Effect.gen(function* () {
-    let wallet = yield* Effect.tryPromise(getWalletWithMnemonic);
-    let client = yield* Effect.tryPromise(getSigner);
-
-    const signerAddress = yield* Effect.tryPromise(() => getAccount(wallet));
-
-    const response = yield* Effect.tryPromise(() =>
-      client.execute(signerAddress, MANAGER_CONTRACT_ADDRESS, strategy, "auto"),
-    );
-
-    console.log("Strategy created:", JSON.stringify(response, null, 2));
-  });
-
-// Effect.runPromise(
-//   createStrategy({
-//     instantiate: {
-//       affiliates: [],
-//       label: "Test Strategy",
-//       nodes: [
-//         {
-//           condition: {
-//             condition: {
-//               schedule: {
-//                 cadence: {
-//                   blocks: {
-//                     interval: 10,
-//                   },
-//                 },
-//                 contract_address: MANAGER_CONTRACT_ADDRESS,
-//                 execution_rebate: [],
-//                 executors: [],
-//                 scheduler: SCHEDULER_CONTRACT_ADDRESS,
-//               },
-//             },
-//             index: 0,
-//             on_success: 1,
-//             on_failure: 2,
-//           },
-//         },
-//         {
-//           action: {
-//             action: {
-//               swap: {
-//                 adjustment: "fixed",
-//                 maximum_slippage_bps: 9999,
-//                 minimum_receive_amount: {
-//                   amount: "0",
-//                   denom: "x/ruji",
-//                 },
-//                 routes: [
-//                   {
-//                     fin: {
-//                       pair_address:
-//                         "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r",
-//                     },
-//                   },
-//                 ],
-//                 swap_amount: {
-//                   amount: "1000",
-//                   denom: "rune",
-//                 },
-//               },
-//             },
-//             index: 1,
-//             next: 2,
-//           },
-//         },
-//         {
-//           action: {
-//             action: {
-//               swap: {
-//                 adjustment: "fixed",
-//                 maximum_slippage_bps: 9999,
-//                 minimum_receive_amount: {
-//                   amount: "0",
-//                   denom: "rune",
-//                 },
-//                 routes: [
-//                   {
-//                     fin: {
-//                       pair_address:
-//                         "sthor1knzcsjqu3wpgm0ausx6w0th48kvl2wvtqzmvud4hgst4ggutehlseele4r",
-//                     },
-//                   },
-//                 ],
-//                 swap_amount: {
-//                   amount: "1000",
-//                   denom: "x/ruji",
-//                 },
-//               },
-//             },
-//             index: 2,
-//           },
-//         },
-//       ],
-//       owner: SIGNER_ADDRESS,
-//     },
-//   }),
-// );
-
-// Effect.runPromise(
-//   createTrigger({
-//     create: {
-//       condition: {
-//         timestamp_elapsed: "0",
-//       },
-//       contract_address: MANAGER_CONTRACT_ADDRESS,
-//       executors: [],
-//       msg: Buffer.from(
-//         JSON.stringify({
-//           execute: {
-//             contract_address: STRATEGY_ADDRESS,
-//           },
-//         }),
-//       ).toBase64(),
-//     },
-//   }),
-// );
+  "sthor16vaqy5cfkf97p4sfwta0c09epq5tc43p00v3u73esz70x62ghptslcshqq";

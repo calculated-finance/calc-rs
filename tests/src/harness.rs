@@ -231,7 +231,7 @@ impl CalcTestApp {
         funds: &[Coin],
     ) -> AnyResult<Addr> {
         let msg = ManagerExecuteMsg::Instantiate {
-            owner: owner.clone(),
+            owner: Some(owner.clone()),
             label: label.to_string(),
             affiliates,
             nodes,

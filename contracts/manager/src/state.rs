@@ -26,8 +26,8 @@ impl<'a> IndexList<Strategy> for StrategyIndexes<'a> {
 
 pub fn updated_at_cursor(updated_at: u64, contract_address: Option<&Addr>) -> String {
     match contract_address {
-        Some(addr) => format!("{updated_at:030}_{addr}"),
-        None => format!("{updated_at:030}_"),
+        Some(addr) => format!("{updated_at:0>30}_{addr}"),
+        None => format!("{updated_at:0>30}_"),
     }
 }
 

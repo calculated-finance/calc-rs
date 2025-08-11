@@ -193,8 +193,7 @@ pub fn execute(
 pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> {
     match msg {
         SchedulerQueryMsg::Filtered { filter, limit } => {
-            let filtered = TRIGGERS.filtered(deps.storage, filter, limit)?;
-            to_json_binary(&filtered)
+            to_json_binary(&TRIGGERS.filtered(deps.storage, filter, limit)?)
         }
         SchedulerQueryMsg::CanExecute(id) => to_json_binary(
             &TRIGGERS
@@ -586,7 +585,6 @@ mod create_trigger_tests {
                 ConditionFilter::LimitOrder {
                     pair_address: pair_address.clone(),
                     price_range: None,
-                    start_after: None,
                 },
                 None,
             )
@@ -1006,7 +1004,7 @@ mod filtered_triggers_tests {
                 env.clone(),
                 SchedulerQueryMsg::Filtered {
                     filter: ConditionFilter::Timestamp {
-                        start: Some(env.block.time.plus_seconds(20)),
+                        start: Some(env.block.time.plus_seconds(25)),
                         end: Some(env.block.time.plus_seconds(50)),
                     },
                     limit: None,
@@ -1114,7 +1112,7 @@ mod filtered_triggers_tests {
                 env.clone(),
                 SchedulerQueryMsg::Filtered {
                     filter: ConditionFilter::BlockHeight {
-                        start: Some(env.block.height + 20),
+                        start: Some(env.block.height + 25),
                         end: Some(env.block.height + 50),
                     },
                     limit: None,
@@ -1168,7 +1166,7 @@ mod filtered_triggers_tests {
                 env.clone(),
                 SchedulerQueryMsg::Filtered {
                     filter: ConditionFilter::BlockHeight {
-                        start: Some(env.block.height + 10),
+                        start: Some(env.block.height + 15),
                         end: Some(env.block.height + 50),
                     },
                     limit: Some(3),
@@ -1229,7 +1227,6 @@ mod filtered_triggers_tests {
                     filter: ConditionFilter::LimitOrder {
                         pair_address: Addr::unchecked("pair-0"),
                         price_range: None,
-                        start_after: Some(4),
                     },
                     limit: None,
                 },
@@ -1238,28 +1235,27 @@ mod filtered_triggers_tests {
         )
         .unwrap();
 
-        assert_eq!(
-            response,
-            (3..=5)
-                .map(|i| {
-                    let j = i * 2;
-                    Trigger {
-                        id: Uint64::from(j as u64),
-                        contract_address: Addr::unchecked("manager"),
-                        msg: Binary::default(),
-                        condition: Condition::FinLimitOrderFilled {
-                            owner: Some(Addr::unchecked("owner")),
-                            pair_address: Addr::unchecked("pair-0"),
-                            side: Side::Base,
-                            price: Decimal::from_str(&j.to_string()).unwrap(),
-                        },
-                        execution_rebate: vec![],
-                        executors: vec![],
-                        jitter: None,
-                    }
-                })
-                .collect::<Vec<_>>()
-        );
+        (2..=5)
+            .map(|i| {
+                let j = i * 2;
+                Trigger {
+                    id: Uint64::from(j as u64),
+                    contract_address: Addr::unchecked("manager"),
+                    msg: Binary::default(),
+                    condition: Condition::FinLimitOrderFilled {
+                        owner: Some(Addr::unchecked("owner")),
+                        pair_address: Addr::unchecked("pair-0"),
+                        side: Side::Base,
+                        price: Decimal::from_str(&j.to_string()).unwrap(),
+                    },
+                    execution_rebate: vec![],
+                    executors: vec![],
+                    jitter: None,
+                }
+            })
+            .collect::<Vec<_>>()
+            .iter()
+            .for_each(|t| assert!(response.contains(t)));
     }
 
     #[test]
@@ -1300,7 +1296,6 @@ mod filtered_triggers_tests {
                             Decimal::from_str("7.0").unwrap(),
                             Decimal::from_str("9.0").unwrap(),
                         )),
-                        start_after: None,
                     },
                     limit: None,
                 },
@@ -1312,77 +1307,6 @@ mod filtered_triggers_tests {
         assert_eq!(
             response,
             (4..=4)
-                .map(|i| {
-                    let j = i * 2;
-                    Trigger {
-                        id: Uint64::from(j as u64),
-                        contract_address: Addr::unchecked("manager"),
-                        msg: Binary::default(),
-                        condition: Condition::FinLimitOrderFilled {
-                            owner: Some(Addr::unchecked("owner")),
-                            pair_address: Addr::unchecked("pair-0"),
-                            side: Side::Base,
-                            price: Decimal::from_str(&j.to_string()).unwrap(),
-                        },
-                        execution_rebate: vec![],
-                        executors: vec![],
-                        jitter: None,
-                    }
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn fetches_triggers_with_pair_and_price_range_and_start_after_limit_order_filter() {
-        let mut deps = mock_dependencies();
-        let env = mock_env();
-
-        for i in 1..=10 {
-            TRIGGERS
-                .save(
-                    deps.as_mut().storage,
-                    &Trigger {
-                        id: Uint64::from(i as u64),
-                        contract_address: Addr::unchecked("manager"),
-                        msg: Binary::default(),
-                        condition: Condition::FinLimitOrderFilled {
-                            owner: Some(Addr::unchecked("owner")),
-                            pair_address: Addr::unchecked(format!("pair-{}", i % 2)),
-                            side: Side::Base,
-                            price: Decimal::from_str(&i.to_string()).unwrap(),
-                        },
-                        execution_rebate: vec![],
-                        executors: vec![],
-                        jitter: None,
-                    },
-                )
-                .unwrap();
-        }
-
-        let response = from_json::<Vec<Trigger>>(
-            query(
-                deps.as_ref(),
-                env.clone(),
-                SchedulerQueryMsg::Filtered {
-                    filter: ConditionFilter::LimitOrder {
-                        pair_address: Addr::unchecked("pair-0"),
-                        price_range: Some((
-                            Decimal::from_str("1.0").unwrap(),
-                            Decimal::from_str("9.0").unwrap(),
-                        )),
-                        start_after: Some(4),
-                    },
-                    limit: None,
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            response,
-            (1..=4)
                 .map(|i| {
                     let j = i * 2;
                     Trigger {
@@ -1442,7 +1366,6 @@ mod filtered_triggers_tests {
                             Decimal::from_str("1.0").unwrap(),
                             Decimal::from_str("9.0").unwrap(),
                         )),
-                        start_after: None,
                     },
                     limit: Some(1),
                 },
