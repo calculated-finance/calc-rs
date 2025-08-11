@@ -1,4 +1,4 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -239,15 +239,6 @@ impl StatefulOperation<Condition> for Condition {
 
     fn balances(&self, _deps: Deps, _env: &Env) -> StdResult<Coins> {
         Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _denoms: &HashSet<String>,
-    ) -> StdResult<(Vec<CosmosMsg>, Condition)> {
-        Ok((vec![], self))
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {

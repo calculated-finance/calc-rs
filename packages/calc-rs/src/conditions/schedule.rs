@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashSet, str::FromStr, time::Duration};
+use std::{cmp::min, str::FromStr, time::Duration};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, CosmosMsg, Deps, Env, StdResult};
@@ -131,15 +131,6 @@ impl StatefulOperation<Condition> for Schedule {
 
     fn balances(&self, _deps: Deps, _env: &Env) -> StdResult<Coins> {
         Ok(Coins::default())
-    }
-
-    fn withdraw(
-        self,
-        _deps: Deps,
-        _env: &Env,
-        _desired: &HashSet<String>,
-    ) -> StdResult<(Vec<CosmosMsg>, Condition)> {
-        Ok((vec![], Condition::Schedule(self)))
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {

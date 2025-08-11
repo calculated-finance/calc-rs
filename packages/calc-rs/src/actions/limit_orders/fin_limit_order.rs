@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashSet, vec};
+use std::{cmp::min, vec};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -432,31 +432,6 @@ impl StatefulOperation<FinLimitOrder> for FinLimitOrder {
             Coin::new(remaining, self.bid_denom.clone()),
             Coin::new(filled, pair.denoms.ask(&self.side)),
         ])?)
-    }
-
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
-        if !desired.contains(&self.bid_denom) {
-            return Ok((vec![], self));
-        }
-
-        if let Some(existing_order) = self.current_order.clone() {
-            let order_state = FinLimitOrderState {
-                config: self.clone(),
-                state: existing_order.refresh(deps, env, &self)?,
-            };
-
-            let (messages, _) = order_state.withdraw()?.execute();
-
-            // We let the confirm stage remove the current order
-            Ok((messages, self))
-        } else {
-            Ok((vec![], self))
-        }
     }
 
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {

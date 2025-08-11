@@ -26,18 +26,27 @@ pub struct MsgDeposit {
 
 impl MsgDeposit {
     pub fn into_cosmos_msg(self) -> StdResult<CosmosMsg> {
-        let coins: Vec<Anybuf> = self
-            .coins
-            .iter()
-            .map(|c| {
-                let (chain, symbol) = if c.denom.to_ascii_lowercase().contains("rune") {
-                    ("THOR", "RUNE")
-                } else {
-                    c.denom.split_once("-").unwrap_or_else(|| {
-                        panic!("Cannot use native denom {} in deposit msg", c.denom)
-                    })
-                };
+        let mut coins = Vec::with_capacity(self.coins.len());
 
+        for coin in self.coins {
+            let (chain, symbol): (&str, &str);
+
+            if coin.denom.to_ascii_lowercase().contains("rune") {
+                chain = "THOR";
+                symbol = "RUNE";
+            } else {
+                if let Some((c, s)) = coin.denom.split_once("-") {
+                    chain = c;
+                    symbol = s;
+                } else {
+                    return Err(StdError::generic_err(format!(
+                        "Cannot use native denom {} in thorchain deposit msg",
+                        coin.denom
+                    )));
+                }
+            };
+
+            coins.push(
                 Anybuf::new()
                     .append_message(
                         1,
@@ -49,9 +58,9 @@ impl MsgDeposit {
                             .append_bool(5, false)
                             .append_bool(6, chain != "THOR" && symbol != "RUNE"),
                     )
-                    .append_string(2, c.amount.to_string())
-            })
-            .collect();
+                    .append_string(2, coin.amount.to_string()),
+            );
+        }
 
         let value = Anybuf::new()
             .append_repeated_message(1, &coins)

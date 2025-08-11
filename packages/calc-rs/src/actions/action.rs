@@ -1,4 +1,4 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coins, CosmosMsg, Deps, Env, StdResult};
@@ -64,22 +64,6 @@ impl StatefulOperation<Action> for Action {
         match self {
             Action::LimitOrder(limit_order) => limit_order.balances(deps, env),
             _ => Ok(Coins::default()),
-        }
-    }
-
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<(Vec<CosmosMsg>, Action)> {
-        match self {
-            Action::LimitOrder(limit_order) => {
-                let (messages, limit_order) = limit_order.withdraw(deps, env, desired)?;
-                Ok((messages, Action::LimitOrder(limit_order)))
-            }
-
-            _ => Ok((vec![], self)),
         }
     }
 

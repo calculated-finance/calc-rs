@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use cosmwasm_std::{Coins, CosmosMsg, Deps, Env, StdResult};
 
 use crate::manager::Affiliate;
@@ -11,12 +9,6 @@ pub trait Operation<T> {
 
 pub trait StatefulOperation<T> {
     fn commit(self, deps: Deps, env: &Env) -> StdResult<T>;
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<(Vec<CosmosMsg>, T)>;
     fn cancel(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
     fn balances(&self, deps: Deps, env: &Env) -> StdResult<Coins>;
 }

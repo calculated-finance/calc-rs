@@ -1,4 +1,4 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Coin, Coins, CosmosMsg, Deps, Env, StdResult};
@@ -20,7 +20,6 @@ pub struct StrategyConfig {
 #[cw_serde]
 pub enum StrategyOperation {
     Execute,
-    Withdraw(HashSet<String>),
     Cancel,
 }
 
@@ -49,7 +48,7 @@ pub enum StrategyExecuteMsg {
 #[derive(QueryResponses)]
 pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
-    Config {},
+    Config,
     #[returns(Vec<Coin>)]
     Balances,
 }
@@ -197,48 +196,6 @@ impl StatefulOperation<Node> for Node {
         match self {
             Node::Action { action, .. } => action.balances(deps, env),
             Node::Condition { .. } => Ok(Coins::default()),
-        }
-    }
-
-    fn withdraw(
-        self,
-        deps: Deps,
-        env: &Env,
-        desired: &HashSet<String>,
-    ) -> StdResult<(Vec<CosmosMsg>, Node)> {
-        match self {
-            Node::Action {
-                action,
-                index,
-                next,
-            } => {
-                let (messages, action) = action.withdraw(deps, env, desired)?;
-                Ok((
-                    messages,
-                    Node::Action {
-                        action,
-                        index,
-                        next,
-                    },
-                ))
-            }
-            Node::Condition {
-                condition,
-                index,
-                on_success,
-                on_failure,
-            } => {
-                let (messages, condition) = condition.withdraw(deps, env, desired)?;
-                Ok((
-                    messages,
-                    Node::Condition {
-                        condition,
-                        index,
-                        on_success,
-                        on_failure,
-                    },
-                ))
-            }
         }
     }
 
