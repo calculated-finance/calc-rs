@@ -246,11 +246,10 @@ pub struct StrategyConfig {
 }
 ```
 
-### `Balances(HashSet<String>)`
+### `Balances`
 
 Returns strategy balances across all holdings.
 
-- **Parameters:** Set of denominations to query (empty = all tracked denoms)
 - **Returns:** `Vec<Coin>` with complete balance information
 - **Sources:**
   - Direct contract balances
