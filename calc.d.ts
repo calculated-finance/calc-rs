@@ -17,9 +17,7 @@ export interface ManagerInstantiateMsg {
   strategy_code_id: number;
 }
 export type ManagerQueryMsg =
-  | {
-      config: {};
-    }
+  | ("config" | "count")
   | {
       strategy: {
         address: Addr;
@@ -32,9 +30,6 @@ export type ManagerQueryMsg =
         start_after?: number | null;
         status?: StrategyStatus | null;
       };
-    }
-  | {
-      count: {};
     };
 export type Uint64 = number;
 export type ManagerExecuteMsg =
@@ -371,7 +366,6 @@ export type ConditionFilter =
          * @maxItems 2
          */
         price_range?: [Decimal, Decimal] | null;
-        start_after?: number | null;
       };
     };
 export type Threshold = "all" | "any";
@@ -410,11 +404,7 @@ export interface StrategyInstantiateMsg {
   owner: Addr;
 }
 
-export type StrategyQueryMsg =
-  | "balances"
-  | {
-      config: {};
-    };
+export type StrategyQueryMsg = "config" | "balances";
 export type StrategyExecuteMsg =
   | ("execute" | "cancel")
   | {
@@ -432,11 +422,7 @@ export type StrategyExecuteMsg =
         previous?: number | null;
       };
     };
-export type StrategyOperation =
-  | ("execute" | "cancel")
-  | {
-      withdraw: string[];
-    };
+export type StrategyOperation = "execute" | "cancel";
 export type ArrayOf_Coin = Coin[];
 
 export interface StrategyConfig {

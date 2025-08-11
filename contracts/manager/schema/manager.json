@@ -1234,17 +1234,11 @@
     "title": "QueryMsg",
     "oneOf": [
       {
-        "type": "object",
-        "required": [
-          "config"
-        ],
-        "properties": {
-          "config": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
+        "type": "string",
+        "enum": [
+          "config",
+          "count"
+        ]
       },
       {
         "type": "object",
@@ -1313,19 +1307,6 @@
                 ]
               }
             },
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "type": "object",
-        "required": [
-          "count"
-        ],
-        "properties": {
-          "count": {
-            "type": "object",
             "additionalProperties": false
           }
         },

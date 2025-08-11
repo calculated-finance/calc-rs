@@ -147,14 +147,6 @@
                   ],
                   "maxItems": 2,
                   "minItems": 2
-                },
-                "start_after": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "format": "uint64",
-                  "minimum": 0.0
                 }
               },
               "additionalProperties": false

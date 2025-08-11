@@ -240,7 +240,7 @@ pub fn execute(
                             .add_submessages(
                                 messages
                                     .into_iter()
-                                    .map(|m| SubMsg::reply_always(m, 0))
+                                    .map(|message| SubMsg::reply_always(message, 0))
                                     .collect::<Vec<_>>(),
                             )
                             .add_submessage(SubMsg::reply_never(

@@ -906,30 +906,10 @@
       "additionalProperties": false
     },
     "StrategyOperation": {
-      "oneOf": [
-        {
-          "type": "string",
-          "enum": [
-            "execute",
-            "cancel"
-          ]
-        },
-        {
-          "type": "object",
-          "required": [
-            "withdraw"
-          ],
-          "properties": {
-            "withdraw": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            }
-          },
-          "additionalProperties": false
-        }
+      "type": "string",
+      "enum": [
+        "execute",
+        "cancel"
       ]
     },
     "StrategyStatus": {

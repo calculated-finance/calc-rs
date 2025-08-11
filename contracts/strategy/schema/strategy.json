@@ -1993,30 +1993,10 @@
         "additionalProperties": false
       },
       "StrategyOperation": {
-        "oneOf": [
-          {
-            "type": "string",
-            "enum": [
-              "execute",
-              "cancel"
-            ]
-          },
-          {
-            "type": "object",
-            "required": [
-              "withdraw"
-            ],
-            "properties": {
-              "withdraw": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "uniqueItems": true
-              }
-            },
-            "additionalProperties": false
-          }
+        "type": "string",
+        "enum": [
+          "execute",
+          "cancel"
         ]
       },
       "StrategyStatus": {
@@ -2231,26 +2211,10 @@
   "query": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "QueryMsg",
-    "oneOf": [
-      {
-        "type": "string",
-        "enum": [
-          "balances"
-        ]
-      },
-      {
-        "type": "object",
-        "required": [
-          "config"
-        ],
-        "properties": {
-          "config": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      }
+    "type": "string",
+    "enum": [
+      "config",
+      "balances"
     ]
   },
   "migrate": null,
