@@ -26,11 +26,18 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: ManagerConfig,
 ) -> ContractResult {
-    if deps.api.addr_validate(msg.fee_collector.as_str()).is_err() {
-        return Err(ContractError::generic_err("Invalid fee collector address"));
-    }
+    deps.api
+        .addr_validate(msg.fee_collector.as_str())
+        .map_err(|_| ContractError::generic_err("Invalid fee collector address"))?;
 
-    deps.querier.query_wasm_code_info(msg.strategy_code_id)?;
+    deps.querier
+        .query_wasm_code_info(msg.strategy_code_id)
+        .map_err(|_| {
+            ContractError::generic_err(format!(
+                "Invalid strategy code ID: {}",
+                msg.strategy_code_id
+            ))
+        })?;
 
     CONFIG.save(deps.storage, &msg)?;
     STRATEGY_COUNTER.save(deps.storage, &0)?;
@@ -324,7 +331,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
                 },
             };
 
-            let strategies = partition
+            let strategies: Result<Vec<Strategy>, StdError> = partition
                 .range(
                     deps.storage,
                     None,
@@ -333,10 +340,10 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
                     Order::Descending,
                 )
                 .take(limit.unwrap_or(30) as usize)
-                .flat_map(|result| result.map(|(_, strategy)| strategy))
-                .collect::<Vec<Strategy>>();
+                .map(|result| result.map(|(_, strategy)| strategy))
+                .collect();
 
-            to_json_binary(&strategies)
+            to_json_binary(&strategies?)
         }
         ManagerQueryMsg::Count => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
     }
