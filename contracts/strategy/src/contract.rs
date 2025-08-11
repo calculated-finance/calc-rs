@@ -49,7 +49,7 @@ pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
-    Ok(Response::default())
+    Ok(Response::new())
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -59,7 +59,7 @@ pub fn execute(
     info: MessageInfo,
     msg: StrategyExecuteMsg,
 ) -> ContractResult {
-    Ok(match msg {
+    match msg {
         StrategyExecuteMsg::Init(nodes) => {
             if info.sender != env.contract.address {
                 return Err(ContractError::Unauthorized {});
@@ -75,7 +75,7 @@ pub fn execute(
                 vec![],
             );
 
-            Response::new().add_message(execute_actions_msg)
+            Ok(Response::new().add_message(execute_actions_msg))
         }
         StrategyExecuteMsg::Execute => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -90,7 +90,7 @@ pub fn execute(
                 vec![],
             );
 
-            Response::new().add_message(execute_actions_msg)
+            Ok(Response::new().add_message(execute_actions_msg))
         }
         StrategyExecuteMsg::Update(nodes) => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -108,9 +108,9 @@ pub fn execute(
             let init_strategy_msg = Contract(env.contract.address.clone())
                 .call(to_json_binary(&StrategyExecuteMsg::Init(nodes))?, vec![]);
 
-            Response::new()
+            Ok(Response::new()
                 .add_message(cancel_actions_msg)
-                .add_message(init_strategy_msg)
+                .add_message(init_strategy_msg))
         }
         StrategyExecuteMsg::Withdraw(amounts) => {
             if info.sender != OWNER.load(deps.storage)? {
@@ -144,10 +144,11 @@ pub fn execute(
 
             let affiliates = AFFILIATES.load(deps.storage)?;
 
-            let mut affiliate_amounts = affiliates
-                .iter()
-                .map(|a| (a, Coins::default()))
-                .collect::<Vec<_>>();
+            let mut affiliate_amounts = Vec::with_capacity(affiliates.len());
+
+            for affiliate in &affiliates {
+                affiliate_amounts.push((affiliate, Coins::default()));
+            }
 
             let mut final_withdrawals = Coins::default();
 
@@ -185,9 +186,9 @@ pub fn execute(
                 })
                 .collect::<Vec<_>>();
 
-            Response::new()
+            Ok(Response::new()
                 .add_message(withdrawal_msg)
-                .add_messages(fee_msgs)
+                .add_messages(fee_msgs))
         }
         StrategyExecuteMsg::Cancel => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -202,7 +203,7 @@ pub fn execute(
                 vec![],
             );
 
-            Response::new().add_message(cancel_actions_msg)
+            Ok(Response::new().add_message(cancel_actions_msg))
         }
         StrategyExecuteMsg::Process {
             operation,
@@ -226,48 +227,46 @@ pub fn execute(
                 NODES.load(deps.storage, 0).ok()
             };
 
-            loop {
-                if let Some(current_node) = next_node {
-                    let (messages, node) = match operation {
-                        StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
-                        StrategyOperation::Cancel => current_node.cancel(deps.as_ref(), &env)?,
-                    };
+            while let Some(current_node) = next_node {
+                let (messages, node) = match operation {
+                    StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
+                    StrategyOperation::Cancel => current_node.cancel(deps.as_ref(), &env)?,
+                };
 
-                    NODES.save(deps.storage, &node)?;
+                NODES.save(deps.storage, &node)?;
 
-                    if !messages.is_empty() {
-                        break Response::new()
-                            .add_submessages(
-                                messages
-                                    .into_iter()
-                                    .map(|message| SubMsg::reply_always(message, 0))
-                                    .collect::<Vec<_>>(),
-                            )
-                            .add_submessage(SubMsg::reply_never(
-                                Contract(env.contract.address.clone()).call(
-                                    to_json_binary(&StrategyExecuteMsg::Process {
-                                        operation,
-                                        previous: Some(node.index()),
-                                    })?,
-                                    vec![],
-                                ),
-                            ));
-                    }
-
-                    next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
-                } else {
-                    break Response::new();
+                if !messages.is_empty() {
+                    return Ok(Response::new()
+                        .add_submessages(
+                            messages
+                                .into_iter()
+                                .map(|message| SubMsg::reply_always(message, 0))
+                                .collect::<Vec<_>>(),
+                        )
+                        .add_submessage(SubMsg::reply_never(
+                            Contract(env.contract.address.clone()).call(
+                                to_json_binary(&StrategyExecuteMsg::Process {
+                                    operation,
+                                    previous: Some(node.index()),
+                                })?,
+                                vec![],
+                            ),
+                        )));
                 }
+
+                next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
             }
+
+            Ok(Response::new())
         }
-    })
+    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     match reply.result {
-        SubMsgResult::Ok(_) => Ok(Response::default()),
-        SubMsgResult::Err(err) => Ok(Response::default().add_attribute("msg_error", err)),
+        SubMsgResult::Ok(_) => Ok(Response::new()),
+        SubMsgResult::Err(err) => Ok(Response::new().add_attribute("msg_error", err)),
     }
 }
 

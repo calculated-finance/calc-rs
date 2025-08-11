@@ -23,7 +23,7 @@ pub fn instantiate(
     _info: MessageInfo,
     _msg: SchedulerInstantiateMsg,
 ) -> ContractResult {
-    Ok(Response::default())
+    Ok(Response::new())
 }
 
 #[cw_serde]
@@ -31,8 +31,10 @@ pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
-    Ok(Response::default())
+    Ok(Response::new())
 }
+
+const MAX_EXECUTORS: usize = 10;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
@@ -43,6 +45,24 @@ pub fn execute(
 ) -> ContractResult {
     match msg {
         SchedulerExecuteMsg::Create(create_command) => {
+            if create_command.executors.len() > MAX_EXECUTORS {
+                return Err(ContractError::generic_err(format!(
+                    "Cannot specify more than {MAX_EXECUTORS} executors"
+                )));
+            }
+
+            match create_command.condition {
+                Condition::BlocksCompleted(_)
+                | Condition::TimestampElapsed(_)
+                | Condition::FinLimitOrderFilled { .. } => {}
+                _ => {
+                    return Err(ContractError::generic_err(format!(
+                        "Unsupported condition type for trigger: {:#?}",
+                        create_command.condition
+                    )));
+                }
+            }
+
             let mut sub_messages = Vec::with_capacity(2);
             let trigger_id = create_command.id()?;
 
@@ -104,7 +124,7 @@ pub fn execute(
                 },
             )?;
 
-            Ok(Response::default().add_submessages(sub_messages))
+            Ok(Response::new().add_submessages(sub_messages))
         }
         SchedulerExecuteMsg::Execute(ids) => {
             let mut sub_messages = Vec::with_capacity(ids.len() * 3);
@@ -186,7 +206,7 @@ pub fn execute(
                 }
             }
 
-            Ok(Response::default().add_submessages(sub_messages))
+            Ok(Response::new().add_submessages(sub_messages))
         }
     }
 }
@@ -209,8 +229,8 @@ pub fn query(deps: Deps, env: Env, msg: SchedulerQueryMsg) -> StdResult<Binary> 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     match reply.result {
-        SubMsgResult::Ok(_) => Ok(Response::default()),
-        SubMsgResult::Err(err) => Ok(Response::default().add_attribute("msg_error", err)),
+        SubMsgResult::Ok(_) => Ok(Response::new()),
+        SubMsgResult::Err(err) => Ok(Response::new().add_attribute("msg_error", err)),
     }
 }
 

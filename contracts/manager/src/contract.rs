@@ -42,7 +42,7 @@ pub fn instantiate(
     CONFIG.save(deps.storage, &msg)?;
     STRATEGY_COUNTER.save(deps.storage, &0)?;
 
-    Ok(Response::default())
+    Ok(Response::new())
 }
 
 #[cw_serde]
@@ -50,7 +50,7 @@ pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
-    Ok(Response::default())
+    Ok(Response::new())
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -69,7 +69,7 @@ pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
         })?;
 
     CONFIG.save(deps.storage, &msg)?;
-    Ok(Response::default())
+    Ok(Response::new())
 }
 
 const MAX_LABEL_LENGTH: usize = 100;
@@ -81,7 +81,7 @@ pub fn execute(
     info: MessageInfo,
     msg: ManagerExecuteMsg,
 ) -> ContractResult {
-    Ok(match msg {
+    match msg {
         ManagerExecuteMsg::Instantiate {
             owner,
             label,
@@ -133,7 +133,6 @@ pub fn execute(
             let config = CONFIG.load(deps.storage)?;
 
             let affiliates = [
-                affiliates,
                 vec![Affiliate {
                     address: config.fee_collector,
                     bps: BASE_FEE_BPS
@@ -141,6 +140,7 @@ pub fn execute(
                         .max(MIN_FEE_BPS),
                     label: "CALC".to_string(),
                 }],
+                affiliates,
             ]
             .concat();
 
@@ -198,7 +198,7 @@ pub fn execute(
                 funds: info.funds,
             };
 
-            Response::default().add_message(init_message)
+            Ok(Response::new().add_message(init_message))
         }
         ManagerExecuteMsg::Execute { contract_address } => {
             let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
@@ -217,9 +217,9 @@ pub fn execute(
             )?;
 
             let execute_msg = Contract(contract_address.clone())
-                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds);
+                .call(to_json_binary(&StrategyExecuteMsg::Execute)?, info.funds);
 
-            Response::default().add_message(execute_msg)
+            Ok(Response::new().add_message(execute_msg))
         }
         ManagerExecuteMsg::Update {
             contract_address,
@@ -245,7 +245,7 @@ pub fn execute(
                 info.funds,
             );
 
-            Response::default().add_message(update_msg)
+            Ok(Response::new().add_message(update_msg))
         }
         ManagerExecuteMsg::UpdateStatus {
             contract_address,
@@ -275,7 +275,7 @@ pub fn execute(
                 info.funds,
             );
 
-            Response::default().add_message(strategy_msg)
+            Ok(Response::new().add_message(strategy_msg))
         }
         ManagerExecuteMsg::UpdateLabel {
             contract_address,
@@ -299,9 +299,9 @@ pub fn execute(
                 &Strategy { label, ..strategy },
             )?;
 
-            Response::default()
+            Ok(Response::new())
         }
-    })
+    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
