@@ -11,6 +11,7 @@ use crate::conditions::condition::Condition;
 #[cw_serde]
 pub struct Trigger {
     pub id: Uint64,
+    pub owner: Addr,
     pub condition: Condition,
     pub msg: Binary,
     pub contract_address: Addr,
@@ -32,8 +33,10 @@ pub struct CreateTriggerMsg {
 }
 
 impl CreateTriggerMsg {
-    pub fn id(&self) -> StdResult<Uint64> {
+    pub fn id(&self, owner: &Addr) -> StdResult<Uint64> {
         let mut hasher = DefaultHasher::new();
+
+        hasher.write(owner.as_bytes());
 
         match &self.condition {
             Condition::TimestampElapsed(timestamp) => {

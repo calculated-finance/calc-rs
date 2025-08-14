@@ -157,9 +157,11 @@ mod tests {
     #[test]
     fn test_block_height_filter() {
         let storage = &mut MockStorage::default();
+        let owner = Addr::unchecked("creator");
 
         let trigger_1 = Trigger {
             id: Uint64::from(1u64),
+            owner: owner.clone(),
             condition: Condition::BlocksCompleted(100),
             msg: Binary::default(),
             contract_address: Addr::unchecked("contract1"),
@@ -170,6 +172,7 @@ mod tests {
 
         let trigger_2 = Trigger {
             id: Uint64::from(2u64),
+            owner,
             condition: Condition::BlocksCompleted(200),
             msg: Binary::default(),
             contract_address: Addr::unchecked("contract1"),
@@ -255,9 +258,11 @@ mod tests {
     #[test]
     fn test_timestamp_filter() {
         let storage = &mut MockStorage::default();
+        let owner = Addr::unchecked("creator");
 
         let trigger_1 = Trigger {
             id: Uint64::from(1u64),
+            owner: owner.clone(),
             condition: Condition::TimestampElapsed(Timestamp::from_seconds(100)),
             msg: Binary::default(),
             contract_address: Addr::unchecked("contract1"),
@@ -268,6 +273,7 @@ mod tests {
 
         let trigger_2 = Trigger {
             id: Uint64::from(2u64),
+            owner,
             condition: Condition::TimestampElapsed(Timestamp::from_seconds(200)),
             msg: Binary::default(),
             contract_address: Addr::unchecked("contract1"),
@@ -353,9 +359,11 @@ mod tests {
     #[test]
     fn test_limit_order_filter() {
         let storage = &mut MockStorage::default();
+        let owner = Addr::unchecked("creator");
 
         let trigger_1 = Trigger {
             id: Uint64::from(1u64),
+            owner: owner.clone(),
             condition: Condition::FinLimitOrderFilled {
                 owner: None,
                 pair_address: Addr::unchecked("pair"),
@@ -371,6 +379,7 @@ mod tests {
 
         let trigger_2 = Trigger {
             id: Uint64::from(2u64),
+            owner,
             condition: Condition::FinLimitOrderFilled {
                 owner: None,
                 pair_address: Addr::unchecked("pair"),
