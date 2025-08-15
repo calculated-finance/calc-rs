@@ -19,3 +19,6 @@ cw-storage-plus = { workspace = true }
 prost = { workspace = true }
 rujira-rs = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+calc-rs-test = { workspace = true }
