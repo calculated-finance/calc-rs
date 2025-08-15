@@ -257,6 +257,7 @@ name = "calc-rs"
 version = "0.0.1"
 dependencies = [
  "anybuf 1.0.0",
+ "calc-rs-test",
  "chrono",
  "cosmwasm-schema",
  "cosmwasm-std",

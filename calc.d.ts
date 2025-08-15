@@ -209,6 +209,9 @@ export type Condition =
         direction: Direction;
         price: Decimal;
       };
+    }
+  | {
+      asset_value_ratio: AssetValueRatio;
     };
 /**
  * A point in time in nanosecond precision.
@@ -247,6 +250,13 @@ export type Cadence =
         previous?: Decimal | null;
         side: Side;
         strategy: PriceStrategy;
+      };
+    };
+export type PriceSource =
+  | "thorchain"
+  | {
+      fin: {
+        address: Addr;
       };
     };
 
@@ -316,6 +326,13 @@ export interface Duration {
   nanos: number;
   secs: number;
 }
+export interface AssetValueRatio {
+  denominator: string;
+  numerator: string;
+  oracle: PriceSource;
+  ratio: Decimal;
+  tolerance: Decimal;
+}
 
 export interface ManagerConfig {
   fee_collector: Addr;
@@ -332,6 +349,7 @@ export interface Trigger {
   id: Uint64;
   jitter?: Duration | null;
   msg: Binary;
+  owner: Addr;
 }
 
 export interface SchedulerInstantiateMsg {}

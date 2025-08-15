@@ -1,4 +1,3 @@
-use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, Binary, CheckedFromRatioError, CheckedMultiplyRatioError, Coin, CoinsError, CosmosMsg,
     Instantiate2AddressError, OverflowError, Response, StdError, WasmMsg,
@@ -51,10 +50,4 @@ impl Contract {
         }
         .into()
     }
-}
-
-#[cw_serde]
-pub enum Threshold {
-    All,
-    Any,
 }
