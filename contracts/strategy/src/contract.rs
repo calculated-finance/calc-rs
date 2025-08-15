@@ -227,7 +227,23 @@ pub fn execute(
                 NODES.load(deps.storage, 0).ok()
             };
 
+            let mut response = Response::new();
+
+            if previous.is_none() {
+                response = response.add_attribute(
+                    "process_operation",
+                    match operation {
+                        StrategyOperation::Execute => "execute",
+                        StrategyOperation::Cancel => "cancel",
+                    },
+                );
+            }
+
             while let Some(current_node) = next_node {
+                let index = current_node.index();
+
+                response = response.add_attribute("process_node", index.to_string());
+
                 let (messages, node) = match operation {
                     StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
                     StrategyOperation::Cancel => current_node.cancel(deps.as_ref(), &env)?,
@@ -236,11 +252,11 @@ pub fn execute(
                 NODES.save(deps.storage, &node)?;
 
                 if !messages.is_empty() {
-                    return Ok(Response::new()
+                    return Ok(response
                         .add_submessages(
                             messages
                                 .into_iter()
-                                .map(|message| SubMsg::reply_always(message, 0))
+                                .map(|message| SubMsg::reply_always(message, index.into()))
                                 .collect::<Vec<_>>(),
                         )
                         .add_submessage(SubMsg::reply_never(
@@ -257,17 +273,24 @@ pub fn execute(
                 next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
             }
 
-            Ok(Response::new())
+            Ok(response)
         }
     }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
-    match reply.result {
-        SubMsgResult::Ok(_) => Ok(Response::new()),
-        SubMsgResult::Err(err) => Ok(Response::new().add_attribute("msg_error", err)),
-    }
+    let response = Response::new()
+        .add_attribute("node_index", reply.id.to_string())
+        .add_attribute(
+            "message_outcome",
+            match reply.result {
+                SubMsgResult::Ok(_) => "success".to_string(),
+                SubMsgResult::Err(err) => format!("failure: {err}"),
+            },
+        );
+
+    Ok(response)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
