@@ -7,7 +7,11 @@ mod integration_tests {
             swaps::{fin::FinRoute, thor::ThorchainRoute},
         },
         cadence::Cadence,
-        conditions::{condition::Condition, schedule::Schedule},
+        conditions::{
+            asset_value_ratio::{AssetValueRatio, PriceSource},
+            condition::Condition,
+            schedule::Schedule,
+        },
         constants::BASE_FEE_BPS,
         manager::{Affiliate, StrategyStatus},
         scheduler::{ConditionFilter, CreateTriggerMsg, SchedulerExecuteMsg},
@@ -3000,6 +3004,160 @@ mod integration_tests {
             ])
             .instantiate(&funds)
             .assert_strategy_balances(&[]);
+    }
+
+    #[test]
+    fn test_execute_condition_node_respects_asset_value_ratio_condition() {
+        let mut harness = CalcTestApp::setup();
+        let pair_address = harness.fin_addr.clone();
+        let fin_pair = harness.query_fin_config(&pair_address);
+
+        let swap_action = Swap {
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+            routes: vec![SwapRoute::Fin(FinRoute {
+                pair_address: harness.fin_addr.clone(),
+            })],
+        };
+
+        let funds = vec![
+            Coin::new(swap_action.swap_amount.amount, fin_pair.denoms.base()),
+            Coin::new(swap_action.swap_amount.amount, fin_pair.denoms.quote()),
+        ];
+
+        let swap_action = default_swap_action(&harness);
+
+        let strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![])
+            .instantiate(&[Coin::new(100_000u128, "x/ruji")]);
+
+        StrategyBuilder::new(strategy.harness)
+            .with_nodes(vec![
+                Node::Condition {
+                    condition: Condition::AssetValueRatio(AssetValueRatio {
+                        numerator: fin_pair.denoms.base().to_string(),
+                        denominator: fin_pair.denoms.quote().to_string(),
+                        ratio: Decimal::from_str("1.15").unwrap(),
+                        tolerance: Decimal::percent(10),
+                        oracle: PriceSource::Fin {
+                            address: pair_address.clone(),
+                        },
+                    }),
+                    index: 0,
+                    on_success: Some(1),
+                    on_failure: None,
+                },
+                Node::Action {
+                    action: Action::Swap(swap_action.clone()),
+                    index: 1,
+                    next: None,
+                },
+            ])
+            .instantiate(&funds)
+            .assert_strategy_balances(&funds);
+
+        StrategyBuilder::new(strategy.harness)
+            .with_nodes(vec![
+                Node::Condition {
+                    condition: Condition::AssetValueRatio(AssetValueRatio {
+                        numerator: fin_pair.denoms.base().to_string(),
+                        denominator: fin_pair.denoms.quote().to_string(),
+                        ratio: Decimal::from_str("1.05").unwrap(),
+                        tolerance: Decimal::percent(10),
+                        oracle: PriceSource::Fin {
+                            address: pair_address.clone(),
+                        },
+                    }),
+                    index: 0,
+                    on_success: Some(1),
+                    on_failure: None,
+                },
+                Node::Action {
+                    action: Action::Swap(swap_action.clone()),
+                    index: 1,
+                    next: None,
+                },
+            ])
+            .instantiate(&funds)
+            .assert_strategy_balances(&[Coin::new(
+                swap_action
+                    .swap_amount
+                    .amount
+                    .mul_floor(Decimal::percent(99))
+                    + swap_action.swap_amount.amount,
+                swap_action.minimum_receive_amount.denom.clone(),
+            )]);
+
+        let usdc = "ETH-USDC".to_string();
+        let btc = "BTC-BTC".to_string();
+
+        let funds = vec![
+            Coin::new(swap_action.swap_amount.amount, fin_pair.denoms.base()),
+            Coin::new(swap_action.swap_amount.amount, fin_pair.denoms.quote()),
+            Coin::new(100_100_u128, &usdc),
+            Coin::new(1_u128, &btc),
+        ];
+
+        // BTC-BTC oracle price stubbed at $100,100.00
+
+        StrategyBuilder::new(strategy.harness)
+            .with_nodes(vec![
+                Node::Condition {
+                    condition: Condition::AssetValueRatio(AssetValueRatio {
+                        numerator: usdc.clone(),
+                        denominator: btc.clone(),
+                        ratio: Decimal::from_str("1.15").unwrap(),
+                        tolerance: Decimal::percent(10),
+                        oracle: PriceSource::Thorchain,
+                    }),
+                    index: 0,
+                    on_success: Some(1),
+                    on_failure: None,
+                },
+                Node::Action {
+                    action: Action::Swap(swap_action.clone()),
+                    index: 1,
+                    next: None,
+                },
+            ])
+            .instantiate(&funds)
+            .assert_strategy_balances(&funds);
+
+        StrategyBuilder::new(strategy.harness)
+            .with_nodes(vec![
+                Node::Condition {
+                    condition: Condition::AssetValueRatio(AssetValueRatio {
+                        numerator: usdc.clone(),
+                        denominator: btc.clone(),
+                        ratio: Decimal::from_str("1.05").unwrap(),
+                        tolerance: Decimal::percent(10),
+                        oracle: PriceSource::Thorchain,
+                    }),
+                    index: 0,
+                    on_success: Some(1),
+                    on_failure: None,
+                },
+                Node::Action {
+                    action: Action::Swap(swap_action.clone()),
+                    index: 1,
+                    next: None,
+                },
+            ])
+            .instantiate(&funds)
+            .assert_strategy_balances(&[
+                Coin::new(100_100_u128, &usdc),
+                Coin::new(1_u128, &btc),
+                Coin::new(
+                    swap_action
+                        .swap_amount
+                        .amount
+                        .mul_floor(Decimal::percent(99))
+                        + swap_action.swap_amount.amount,
+                    swap_action.minimum_receive_amount.denom.clone(),
+                ),
+            ]);
     }
 
     #[test]

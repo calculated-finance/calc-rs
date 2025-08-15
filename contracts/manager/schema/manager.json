@@ -244,6 +244,34 @@
         },
         "additionalProperties": false
       },
+      "AssetValueRatio": {
+        "type": "object",
+        "required": [
+          "denominator",
+          "numerator",
+          "oracle",
+          "ratio",
+          "tolerance"
+        ],
+        "properties": {
+          "denominator": {
+            "type": "string"
+          },
+          "numerator": {
+            "type": "string"
+          },
+          "oracle": {
+            "$ref": "#/definitions/PriceSource"
+          },
+          "ratio": {
+            "$ref": "#/definitions/Decimal"
+          },
+          "tolerance": {
+            "$ref": "#/definitions/Decimal"
+          }
+        },
+        "additionalProperties": false
+      },
       "Binary": {
         "description": "Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.\n\nThis is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>. See also <https://github.com/CosmWasm/cosmwasm/blob/main/docs/MESSAGE_TYPES.md>.",
         "type": "string"
@@ -579,6 +607,18 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "asset_value_ratio"
+            ],
+            "properties": {
+              "asset_value_ratio": {
+                "$ref": "#/definitions/AssetValueRatio"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -819,6 +859,37 @@
                 "type": "integer",
                 "format": "uint64",
                 "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "PriceSource": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "thorchain"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "fin"
+            ],
+            "properties": {
+              "fin": {
+                "type": "object",
+                "required": [
+                  "address"
+                ],
+                "properties": {
+                  "address": {
+                    "$ref": "#/definitions/Addr"
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false

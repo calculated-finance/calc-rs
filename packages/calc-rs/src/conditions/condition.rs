@@ -16,7 +16,7 @@ use crate::{
         swaps::swap::Swap,
     },
     cadence::Cadence,
-    conditions::schedule::Schedule,
+    conditions::{asset_value_ratio::AssetValueRatio, schedule::Schedule},
     manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
     operation::{Operation, StatefulOperation},
 };
@@ -47,6 +47,7 @@ pub enum Condition {
         direction: Direction,
         price: Decimal,
     },
+    AssetValueRatio(AssetValueRatio),
 }
 
 impl Condition {
@@ -63,6 +64,7 @@ impl Condition {
             Condition::BalanceAvailable { .. } => 1,
             Condition::StrategyStatus { .. } => 2,
             Condition::OraclePrice { .. } => 2,
+            Condition::AssetValueRatio(_) => 2,
         }
     }
 
@@ -136,6 +138,9 @@ impl Condition {
                     Direction::Above => oracle_price > *price,
                     Direction::Below => oracle_price < *price,
                 }
+            }
+            Condition::AssetValueRatio(asset_value_ratio) => {
+                asset_value_ratio.is_satisfied(deps, env)?
             }
         })
     }
@@ -216,6 +221,10 @@ impl Operation<Condition> for Condition {
                     ))
                 })?;
 
+                Ok(self)
+            }
+            Condition::AssetValueRatio(ref asset_value_ratio) => {
+                asset_value_ratio.validate(deps)?;
                 Ok(self)
             }
             Condition::BlocksCompleted(_) | Condition::TimestampElapsed(_) => Ok(self),

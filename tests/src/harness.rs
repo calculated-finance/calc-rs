@@ -122,6 +122,8 @@ impl CalcTestApp {
                         Coin::new(1_000_000_000u128, base_denom),
                         Coin::new(1_000_000_000u128, quote_denom),
                         Coin::new(1_000_000_000u128, "x/ruji"),
+                        Coin::new(1_000_000_000u128, "ETH-USDC"),
+                        Coin::new(1_000_000_000u128, "BTC-BTC"),
                     ],
                 )
                 .unwrap();
