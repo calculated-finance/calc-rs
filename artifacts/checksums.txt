@@ -1,3 +1,9 @@
+<<<<<<< HEAD
 3fede25ba1890ed1df186a3bbb24bba9bbc373358cba4efe2dc49a81a8fb630a  calc_manager.wasm
 24b9e3259b49432aba5380b48d8f86126f0702e980919b325960ce0f12d0b3f7  calc_scheduler.wasm
 388acdc58d10892ca179b2aa175193c02e86c83d0340a235be20d47f34826987  calc_strategy.wasm
+=======
+6dda165948c467258cd6b55579e9cdb1a09e4b1b0edc517440b4480e8eec284b  manager.wasm
+127a46a66d33d0e5959ad7e95b384a85303528f8ccf3b32e571e0b992e029643  scheduler.wasm
+d3193348f74f15d465579f5707ba66d3ed6014dcf9a76d1cb6bab32ed2ded3ef  strategy.wasm
+>>>>>>> 39df0d2 (compile contracts)
