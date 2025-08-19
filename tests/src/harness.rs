@@ -15,7 +15,7 @@ use rujira_rs::fin::{
 
 use calc_rs::manager::StrategyStatus;
 
-use strategy::contract::{execute, instantiate, query, reply};
+use calc_strategy::contract::{execute, instantiate, query, reply};
 
 use calc_rs_test::stargate::{RujiraApp, RujiraStargate};
 
@@ -42,9 +42,9 @@ impl CalcTestApp {
         )));
 
         let manager_code_id = app.store_code(Box::new(ContractWrapper::new(
-            manager::contract::execute,
-            manager::contract::instantiate,
-            manager::contract::query,
+            calc_manager::contract::execute,
+            calc_manager::contract::instantiate,
+            calc_manager::contract::query,
         )));
 
         let strategy_code_id = app.store_code(Box::new(
@@ -53,9 +53,9 @@ impl CalcTestApp {
 
         let scheduler_code_id = app.store_code(Box::new(
             ContractWrapper::new(
-                scheduler::contract::execute,
-                scheduler::contract::instantiate,
-                scheduler::contract::query,
+                calc_scheduler::contract::execute,
+                calc_scheduler::contract::instantiate,
+                calc_scheduler::contract::query,
             )
             .with_reply(reply),
         ));

@@ -12,11 +12,11 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env, MessageInfo, Reply,
-    Response, StdResult, SubMsg, SubMsgResult,
+    to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env, Event, MessageInfo,
+    Reply, Response, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{AFFILIATES, MANAGER, NODES, OWNER};
+use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -75,7 +75,9 @@ pub fn execute(
                 vec![],
             );
 
-            Ok(Response::new().add_message(execute_actions_msg))
+            Ok(Response::new()
+                .add_message(execute_actions_msg)
+                .add_event(Event::new(format!("{}/init", env!("CARGO_PKG_NAME")))))
         }
         StrategyExecuteMsg::Execute => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -90,7 +92,9 @@ pub fn execute(
                 vec![],
             );
 
-            Ok(Response::new().add_message(execute_actions_msg))
+            Ok(Response::new()
+                .add_message(execute_actions_msg)
+                .add_event(Event::new(format!("{}/execute", env!("CARGO_PKG_NAME")))))
         }
         StrategyExecuteMsg::Update(nodes) => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -110,7 +114,8 @@ pub fn execute(
 
             Ok(Response::new()
                 .add_message(cancel_actions_msg)
-                .add_message(init_strategy_msg))
+                .add_message(init_strategy_msg)
+                .add_event(Event::new(format!("{}/update", env!("CARGO_PKG_NAME")))))
         }
         StrategyExecuteMsg::Withdraw(amounts) => {
             if info.sender != OWNER.load(deps.storage)? {
@@ -188,7 +193,11 @@ pub fn execute(
 
             Ok(Response::new()
                 .add_message(withdrawal_msg)
-                .add_messages(fee_msgs))
+                .add_messages(fee_msgs)
+                .add_event(Event::new(format!(
+                    "{}/strategy.withdraw",
+                    env!("CARGO_PKG_NAME")
+                ))))
         }
         StrategyExecuteMsg::Cancel => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -203,7 +212,9 @@ pub fn execute(
                 vec![],
             );
 
-            Ok(Response::new().add_message(cancel_actions_msg))
+            Ok(Response::new()
+                .add_message(cancel_actions_msg)
+                .add_event(Event::new(format!("{}/cancel", env!("CARGO_PKG_NAME")))))
         }
         StrategyExecuteMsg::Process {
             operation,
@@ -227,7 +238,16 @@ pub fn execute(
                 NODES.load(deps.storage, 0).ok()
             };
 
+            let mut path = if previous.is_some() {
+                PATH.load(deps.storage)?
+            } else {
+                vec![]
+            };
+
             while let Some(current_node) = next_node {
+                let index = current_node.index();
+                path.push(index.to_string());
+
                 let (messages, node) = match operation {
                     StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
                     StrategyOperation::Cancel => current_node.cancel(deps.as_ref(), &env)?,
@@ -236,11 +256,13 @@ pub fn execute(
                 NODES.save(deps.storage, &node)?;
 
                 if !messages.is_empty() {
+                    PATH.save(deps.storage, &path)?;
+
                     return Ok(Response::new()
                         .add_submessages(
                             messages
                                 .into_iter()
-                                .map(|message| SubMsg::reply_always(message, 0))
+                                .map(|message| SubMsg::reply_always(message, index.into()))
                                 .collect::<Vec<_>>(),
                         )
                         .add_submessage(SubMsg::reply_never(
@@ -257,16 +279,30 @@ pub fn execute(
                 next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
             }
 
-            Ok(Response::new())
+            Ok(Response::new().add_event(
+                Event::new(format!("{}/process", env!("CARGO_PKG_NAME")))
+                    .add_attribute("operation", operation.as_str())
+                    .add_attribute("path", path.join(",")),
+            ))
         }
     }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
+    let event = Event::new(format!("{}/process.reply", env!("CARGO_PKG_NAME")))
+        .add_attribute("reply_id", reply.id.to_string())
+        .add_attribute("node_index", reply.id.to_string());
+
     match reply.result {
-        SubMsgResult::Ok(_) => Ok(Response::new()),
-        SubMsgResult::Err(err) => Ok(Response::new().add_attribute("msg_error", err)),
+        SubMsgResult::Ok(_) => {
+            Ok(Response::new().add_event(event.add_attribute("status", "success")))
+        }
+        SubMsgResult::Err(err) => Ok(Response::new().add_event(
+            event
+                .add_attribute("status", "error")
+                .add_attribute("error", err),
+        )),
     }
 }
 

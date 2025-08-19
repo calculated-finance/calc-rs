@@ -5,3 +5,4 @@ export.json
 .env
 node_modules/
 GEMINI.md
+*.ts

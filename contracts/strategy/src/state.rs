@@ -171,3 +171,5 @@ impl NodeStore {
 pub const NODES: NodeStore = NodeStore {
     store: Map::new("nodes"),
 };
+
+pub const PATH: Item<Vec<String>> = Item::new("path");
