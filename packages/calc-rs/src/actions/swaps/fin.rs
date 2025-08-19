@@ -1,10 +1,7 @@
-use std::{
-    cmp::{max, min},
-    vec,
-};
+use std::{cmp::max, vec};
 
 use crate::{
-    actions::swaps::swap::{Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote},
+    actions::swaps::swap::{Adjusted, Executable, New, SwapQuote},
     core::Contract,
 };
 use cosmwasm_schema::cw_serde;
@@ -20,8 +17,8 @@ pub struct FinRoute {
     pub pair_address: Addr,
 }
 
-impl Quotable for FinRoute {
-    fn validate(&self, deps: Deps, route: &SwapQuote<New>) -> StdResult<()> {
+impl FinRoute {
+    pub fn validate(&self, deps: Deps, route: &SwapQuote<New>) -> StdResult<()> {
         let pair = deps
             .querier
             .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
@@ -45,116 +42,21 @@ impl Quotable for FinRoute {
         Ok(())
     }
 
-    fn adjust(
+    pub fn get_expected_amount_out(
         &self,
         deps: Deps,
-        env: &Env,
-        quote: SwapQuote<New>,
-    ) -> StdResult<SwapQuote<Adjusted>> {
-        let (new_swap_amount, new_minimum_receive_amount) = match quote.adjustment.clone() {
-            SwapAmountAdjustment::Fixed => {
-                let swap_balance = deps.querier.query_balance(
-                    env.contract.address.clone(),
-                    quote.swap_amount.denom.clone(),
-                )?;
+        quote: &SwapQuote<New>,
+    ) -> StdResult<Uint128> {
+        let simulation = deps.querier.query_wasm_smart::<SimulationResponse>(
+            &self.pair_address,
+            &QueryMsg::Simulate(quote.swap_amount.clone()),
+        )?;
 
-                let new_swap_amount = Coin::new(
-                    min(swap_balance.amount, quote.swap_amount.amount),
-                    quote.swap_amount.denom.clone(),
-                );
-
-                let new_minimum_receive_amount =
-                    quote
-                        .minimum_receive_amount
-                        .amount
-                        .mul_floor(Decimal::from_ratio(
-                            new_swap_amount.amount,
-                            quote.swap_amount.amount,
-                        ));
-
-                (new_swap_amount, new_minimum_receive_amount)
-            }
-            SwapAmountAdjustment::LinearScalar {
-                base_receive_amount,
-                minimum_swap_amount,
-                scalar,
-            } => {
-                let swap_balance = deps.querier.query_balance(
-                    env.contract.address.clone(),
-                    quote.swap_amount.denom.clone(),
-                )?;
-
-                let new_swap_amount = Coin::new(
-                    min(swap_balance.amount, quote.swap_amount.amount),
-                    quote.swap_amount.denom.clone(),
-                );
-
-                let simulation = deps.querier.query_wasm_smart::<SimulationResponse>(
-                    self.pair_address.clone(),
-                    &QueryMsg::Simulate(new_swap_amount.clone()),
-                )?;
-
-                let expected_receive_amount =
-                    Coin::new(simulation.returned, quote.swap_amount.denom.clone());
-
-                let base_price =
-                    Decimal::from_ratio(base_receive_amount.amount, quote.swap_amount.amount);
-
-                let current_price =
-                    Decimal::from_ratio(quote.swap_amount.amount, expected_receive_amount.amount);
-
-                let price_delta = base_price.abs_diff(current_price) / base_price;
-                let scaled_price_delta = price_delta * scalar;
-
-                let scaled_swap_amount = if current_price < base_price {
-                    new_swap_amount
-                        .amount
-                        .mul_floor(Decimal::one().saturating_add(scaled_price_delta))
-                } else {
-                    new_swap_amount
-                        .amount
-                        .mul_floor(Decimal::one().saturating_sub(scaled_price_delta))
-                };
-
-                let new_swap_amount = Coin::new(
-                    max(
-                        scaled_swap_amount,
-                        minimum_swap_amount
-                            .clone()
-                            .unwrap_or(Coin::new(0u128, quote.swap_amount.denom.clone()))
-                            .amount,
-                    ),
-                    quote.swap_amount.denom.clone(),
-                );
-
-                let new_minimum_receive_amount =
-                    quote
-                        .minimum_receive_amount
-                        .amount
-                        .mul_ceil(Decimal::from_ratio(
-                            new_swap_amount.amount,
-                            quote.swap_amount.amount,
-                        ));
-
-                (new_swap_amount, new_minimum_receive_amount)
-            }
-        };
-
-        Ok(SwapQuote {
-            swap_amount: new_swap_amount,
-            minimum_receive_amount: Coin::new(
-                new_minimum_receive_amount,
-                quote.minimum_receive_amount.denom,
-            ),
-            maximum_slippage_bps: quote.maximum_slippage_bps,
-            adjustment: quote.adjustment,
-            route: quote.route,
-            state: Adjusted,
-        })
+        Ok(simulation.returned)
     }
 
-    fn validate_adjusted(
-        &self,
+    pub fn validate_adjusted(
+        self,
         deps: Deps,
         _env: &Env,
         route: SwapQuote<Adjusted>,
@@ -166,7 +68,7 @@ impl Quotable for FinRoute {
         }
 
         let simulation_response = deps.querier.query_wasm_smart::<SimulationResponse>(
-            self.pair_address.clone(),
+            &self.pair_address,
             &QueryMsg::Simulate(route.swap_amount.clone()),
         )?;
 
@@ -185,7 +87,7 @@ impl Quotable for FinRoute {
         }
 
         let book_response = deps.querier.query_wasm_smart::<BookResponse>(
-            self.pair_address.clone(),
+            &self.pair_address,
             &QueryMsg::Book {
                 limit: Some(1),
                 offset: None,
@@ -197,7 +99,7 @@ impl Quotable for FinRoute {
 
         let pair = deps
             .querier
-            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
+            .query_wasm_smart::<ConfigResponse>(&self.pair_address, &QueryMsg::Config {})?;
 
         let spot_price = if route.swap_amount.denom == pair.denoms.base() {
             Decimal::one() / mid_price
@@ -241,12 +143,12 @@ impl Quotable for FinRoute {
         })
     }
 
-    fn execute(
+    pub fn execute(
         &self,
         _deps: Deps,
         _env: &Env,
-        swap_amount: Coin,
-        minimum_receive_amount: Coin,
+        swap_amount: &Coin,
+        minimum_receive_amount: &Coin,
     ) -> StdResult<CosmosMsg> {
         let swap_msg = Contract(self.pair_address.clone()).call(
             to_json_binary(&ExecuteMsg::Swap(SwapRequest {
