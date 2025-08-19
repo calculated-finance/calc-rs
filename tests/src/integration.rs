@@ -1932,7 +1932,54 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_instantiate_distribution_with_native_denom_and_deposit_destination_failures() {
+    fn test_instantiate_distribution_with_duplicate_denoms_saves_unique_denoms() {
+        let mut harness = CalcTestApp::setup();
+
+        let mut distribution_action = Distribution {
+            destinations: vec![Destination {
+                recipient: Recipient::Contract {
+                    address: harness.app.api().addr_make("test"),
+                    msg: Binary::default(),
+                },
+                shares: Uint128::new(10_000),
+                label: None,
+            }],
+            denoms: vec!["x/ruji".to_string(), "x/ruji".to_string()],
+        };
+
+        let fee_collector = harness.fee_collector_addr.clone();
+
+        let strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::Distribute(distribution_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[]);
+
+        distribution_action.destinations.push(Destination {
+            recipient: Recipient::Bank {
+                address: fee_collector,
+            },
+            shares: Uint128::new(25),
+            label: Some("CALC".to_string()),
+        });
+
+        assert_eq!(
+            strategy.config().nodes[0],
+            Node::Action {
+                action: Action::Distribute(Distribution {
+                    denoms: vec!["x/ruji".to_string()],
+                    destinations: distribution_action.destinations,
+                }),
+                index: 0,
+                next: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_instantiate_distribution_with_native_denom_and_deposit_destination_fails() {
         let mut harness = CalcTestApp::setup();
         let distribution_action = Distribution {
             destinations: vec![Destination {
