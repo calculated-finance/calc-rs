@@ -194,10 +194,7 @@ pub fn execute(
             Ok(Response::new()
                 .add_message(withdrawal_msg)
                 .add_messages(fee_msgs)
-                .add_event(Event::new(format!(
-                    "{}/strategy.withdraw",
-                    env!("CARGO_PKG_NAME")
-                ))))
+                .add_event(Event::new(format!("{}/withdraw", env!("CARGO_PKG_NAME")))))
         }
         StrategyExecuteMsg::Cancel => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -291,7 +288,6 @@ pub fn execute(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
     let event = Event::new(format!("{}/process.reply", env!("CARGO_PKG_NAME")))
-        .add_attribute("reply_id", reply.id.to_string())
         .add_attribute("node_index", reply.id.to_string());
 
     match reply.result {
