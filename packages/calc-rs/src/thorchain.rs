@@ -17,6 +17,10 @@ use rujira_rs::proto::types::{
 };
 use thiserror::Error;
 
+pub fn is_secured_asset(denom: &str) -> bool {
+    denom.to_lowercase() == "rune" || denom.contains("-")
+}
+
 #[cw_serde]
 pub struct MsgDeposit {
     pub memo: String,

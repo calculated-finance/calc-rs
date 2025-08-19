@@ -7,7 +7,7 @@ use crate::{
     actions::swaps::swap::{
         Adjusted, Executable, New, Quotable, SwapAmountAdjustment, SwapQuote, SwapRoute,
     },
-    thorchain::{MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
+    thorchain::{is_secured_asset, MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
@@ -28,10 +28,6 @@ pub struct ThorchainRoute {
     pub affiliate_code: Option<String>,
     pub affiliate_bps: Option<u64>,
     pub latest_swap: Option<StreamingSwap>,
-}
-
-fn is_secured_asset(denom: &str) -> bool {
-    denom.to_lowercase() == "rune" || denom.contains("-")
 }
 
 impl Quotable for ThorchainRoute {

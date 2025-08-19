@@ -2062,8 +2062,6 @@ mod integration_tests {
             .query_balance(scheduler.clone(), "eth-usdc")
             .unwrap();
 
-        println!("Existing scheduler balance: {}", existing_scheduler_balance,);
-
         let destinations = vec![
             Destination {
                 recipient: Recipient::Deposit {
@@ -2126,6 +2124,112 @@ mod integration_tests {
 
         // TODO: Enable when MsgDeposit mock handler moves bank funds
         // strategy.assert_bank_balance(&Coin::new(0u128, "eth-usdc"));
+
+        for destination in [destinations, vec![fee_collector_destination]].concat() {
+            let distributed = starting_balances
+                .iter()
+                .map(|b| {
+                    Coin::new(
+                        b.amount.mul_floor(Decimal::from_ratio(
+                            destination.shares,
+                            total_shares_with_fees,
+                        )),
+                        b.denom.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            match destination.recipient {
+                Recipient::Bank { address } => {
+                    harness.assert_address_balances(&address, &distributed);
+                }
+                Recipient::Contract { address, .. } => {
+                    let mut total_balance = Coins::try_from(distributed).unwrap();
+
+                    total_balance
+                        .add(existing_scheduler_balance.clone())
+                        .unwrap();
+
+                    harness.assert_address_balances(&address, &total_balance.to_vec());
+                }
+                _ => {
+                    // TODO: Enable when MsgDeposit mock handler moves bank funds
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_instantiate_distribution_with_rune_and_all_recipient_types_succeeds() {
+        let mut harness = CalcTestApp::setup();
+        let scheduler = harness.scheduler_addr.clone();
+        let fee_collector = harness.fee_collector_addr.clone();
+
+        let existing_scheduler_balance = harness
+            .app
+            .wrap()
+            .query_balance(scheduler.clone(), "rune")
+            .unwrap();
+
+        let destinations = vec![
+            Destination {
+                recipient: Recipient::Deposit {
+                    memo: "-secure:thor-rune".to_string(),
+                },
+                shares: Uint128::new(10_000),
+                label: None,
+            },
+            Destination {
+                recipient: Recipient::Bank {
+                    address: harness.app.api().addr_make("test1"),
+                },
+                shares: Uint128::new(10_000),
+                label: None,
+            },
+            Destination {
+                recipient: Recipient::Contract {
+                    address: scheduler,
+                    msg: to_json_binary(&SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
+                        condition: Condition::BlocksCompleted(100),
+                        msg: Binary::default(),
+                        contract_address: Addr::unchecked("test_contract"),
+                        executors: vec![],
+                        jitter: None,
+                    })))
+                    .unwrap(),
+                },
+                shares: Uint128::new(5_000),
+                label: None,
+            },
+        ];
+
+        let total_shares_with_fees = destinations
+            .iter()
+            .fold(Uint128::zero(), |acc, d| acc + d.shares)
+            .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
+
+        let fee_collector_destination = Destination {
+            recipient: Recipient::Bank {
+                address: fee_collector.clone(),
+            },
+            shares: total_shares_with_fees.mul_ceil(Decimal::bps(BASE_FEE_BPS)),
+            label: None,
+        };
+
+        let distribution_action = Distribution {
+            denoms: vec!["rune".to_string()],
+            destinations: destinations.clone(),
+        };
+
+        let starting_balances = vec![Coin::new(100_000u128, "rune")];
+
+        StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::Distribute(distribution_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&starting_balances);
 
         for destination in [destinations, vec![fee_collector_destination]].concat() {
             let distributed = starting_balances
