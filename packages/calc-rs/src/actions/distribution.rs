@@ -8,7 +8,7 @@ use cosmwasm_std::{
 
 use crate::manager::Affiliate;
 use crate::operation::Operation;
-use crate::thorchain::MsgDeposit;
+use crate::thorchain::{is_secured_asset, MsgDeposit};
 
 const MINIMUM_TOTAL_SHARES: Uint128 = Uint128::new(10_000);
 
@@ -146,7 +146,7 @@ impl Operation<Distribution> for Distribution {
             return Err(StdError::generic_err("Destinations cannot be empty"));
         }
 
-        let has_native_denoms = self.denoms.iter().any(|d| !d.contains('-'));
+        let has_native_denoms = self.denoms.iter().any(|d| !is_secured_asset(d));
         let mut total_shares = Uint128::zero();
 
         for destination in self.destinations.iter() {
