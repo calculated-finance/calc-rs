@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::vec;
 
 use cosmwasm_schema::cw_serde;
@@ -146,7 +147,11 @@ impl Operation<Distribution> for Distribution {
             return Err(StdError::generic_err("Destinations cannot be empty"));
         }
 
-        let has_native_denoms = self.denoms.iter().any(|d| !is_secured_asset(d));
+        let denoms = HashSet::<String>::from_iter(self.denoms.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        let has_native_denoms = denoms.iter().any(|d| !is_secured_asset(d));
         let mut total_shares = Uint128::zero();
 
         for destination in self.destinations.iter() {
@@ -178,7 +183,10 @@ impl Operation<Distribution> for Distribution {
             )));
         }
 
-        Distribution::with_affiliates(self, affiliates)
+        Ok(Distribution {
+            denoms,
+            ..Distribution::with_affiliates(self, affiliates)?
+        })
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Distribution) {
