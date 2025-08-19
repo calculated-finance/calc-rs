@@ -6,3 +6,5 @@ export.json
 node_modules/
 GEMINI.md
 *.ts
+*.js
+query.proto
