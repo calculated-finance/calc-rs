@@ -16,7 +16,7 @@ use cosmwasm_std::{
     Response, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{AFFILIATES, MANAGER, NODES, OWNER};
+use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -235,6 +235,11 @@ pub fn execute(
 
                 NODES.save(deps.storage, &node)?;
 
+                let mut path = PATH.load(deps.storage).unwrap_or_default();
+                path.push(node.index());
+
+                PATH.save(deps.storage, &path)?;
+
                 if !messages.is_empty() {
                     return Ok(Response::new()
                         .add_submessages(
@@ -257,7 +262,10 @@ pub fn execute(
                 next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
             }
 
-            Ok(Response::new())
+            let path = PATH.load(deps.storage).unwrap_or_default();
+            PATH.remove(deps.storage);
+
+            Ok(Response::new().add_attribute("execution_path", format!("{path:?}")))
         }
     }
 }

@@ -24,6 +24,10 @@ pub struct MsgDeposit {
     pub signer: CanonicalAddr,
 }
 
+pub fn is_secured_asset(denom: &str) -> bool {
+    denom.to_lowercase() == "rune" || denom.contains("-")
+}
+
 impl MsgDeposit {
     pub fn into_cosmos_msg(self) -> StdResult<CosmosMsg> {
         let mut coins = Vec::with_capacity(self.coins.len());
@@ -34,16 +38,14 @@ impl MsgDeposit {
             if coin.denom.to_ascii_lowercase().contains("rune") {
                 chain = "THOR";
                 symbol = "RUNE";
+            } else if let Some((c, s)) = coin.denom.split_once("-") {
+                chain = c;
+                symbol = s;
             } else {
-                if let Some((c, s)) = coin.denom.split_once("-") {
-                    chain = c;
-                    symbol = s;
-                } else {
-                    return Err(StdError::generic_err(format!(
-                        "Cannot use native denom {} in thorchain deposit msg",
-                        coin.denom
-                    )));
-                }
+                return Err(StdError::generic_err(format!(
+                    "Cannot use native denom {} in thorchain deposit msg",
+                    coin.denom
+                )));
             };
 
             coins.push(

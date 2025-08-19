@@ -39,7 +39,7 @@ pub fn price_cursor(price: Decimal) -> String {
     } else {
         s.push_str(&"0".repeat(18));
     }
-    format!("{:0>39}", s)
+    format!("{s:0>39}")
 }
 
 impl TriggerStore<'_> {
@@ -112,23 +112,23 @@ impl TriggerStore<'_> {
 
 pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
     triggers: IndexedMap::new(
-        "triggers_v1",
+        "triggers",
         TriggerIndexes {
             timestamp: MultiIndex::new(
                 |_, t| match t.condition {
                     Condition::TimestampElapsed(timestamp) => timestamp.seconds(),
                     _ => u64::MAX,
                 },
-                "triggers_v1",
-                "triggers_v1__timestamp",
+                "triggers",
+                "triggers__timestamp",
             ),
             block_height: MultiIndex::new(
                 |_, t| match t.condition {
                     Condition::BlocksCompleted(height) => height,
                     _ => u64::MAX,
                 },
-                "triggers_v1",
-                "triggers_v1__block_height",
+                "triggers",
+                "triggers__block_height",
             ),
             limit_order_pair_price: MultiIndex::new(
                 |_, t| match t.condition.clone() {
@@ -139,8 +139,8 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
                     } => (pair_address, price_cursor(price)),
                     _ => (Addr::unchecked(""), Decimal::MAX.to_string()),
                 },
-                "triggers_v1",
-                "triggers_v1__limit_order_pair_price",
+                "triggers",
+                "triggers__limit_order_pair_price",
             ),
         },
     ),

@@ -7,7 +7,7 @@ import {
 import { GasPrice } from "@cosmjs/stargate";
 import { config } from "dotenv";
 import types from "./MsgCompiled";
-import { getConfig } from "./script";
+import { uploadAndMigrateContractSuite } from "./script";
 
 (BigInt.prototype as any).toJSON = function () {
   return this.toString();
@@ -56,6 +56,11 @@ const SCHEDULER_CONTRACT_ADDRESS =
 const STRATEGY_ADDRESS =
   "sthor16vaqy5cfkf97p4sfwta0c09epq5tc43p00v3u73esz70x62ghptslcshqq";
 
-getConfig(
-  "sthor1xqcawxnfvck4n7qgkstuvxmjeexnnyr9p25544xaxlxcpdlz3teqrq09r6",
-).then((c) => console.log(JSON.stringify(c, null, 2)));
+// getConfig(
+//   "sthor1xqcawxnfvck4n7qgkstuvxmjeexnnyr9p25544xaxlxcpdlz3teqrq09r6",
+// ).then((c) => console.log(JSON.stringify(c, null, 2)));
+
+uploadAndMigrateContractSuite(
+  MANAGER_CONTRACT_ADDRESS,
+  SCHEDULER_CONTRACT_ADDRESS,
+).then((r) => console.log(JSON.stringify(r, null, 2)));

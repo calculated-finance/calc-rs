@@ -97,7 +97,7 @@ pub fn execute(
                     &QueryMsg::Config {},
                 )?;
 
-                let bid_denom = pair.denoms.bid(&side);
+                let bid_denom = pair.denoms.bid(side);
                 let bid_amount = Coin::new(execution_rebate.amount_of(bid_denom), bid_denom);
 
                 if bid_amount.amount.is_zero() {
@@ -511,7 +511,7 @@ mod create_trigger_tests {
             owner: Some(Addr::unchecked("owner")),
             pair_address: pair_address.clone(),
             side: side.clone(),
-            price: price,
+            price,
         };
 
         deps.querier.update_wasm(|_| {
@@ -666,7 +666,7 @@ mod create_trigger_tests {
                     condition: create_trigger_msg.condition.clone(),
                     execution_rebate: vec![],
                     executors: create_trigger_msg.executors.clone(),
-                    jitter: create_trigger_msg.jitter.clone(),
+                    jitter: create_trigger_msg.jitter,
                 },
             )
             .unwrap();

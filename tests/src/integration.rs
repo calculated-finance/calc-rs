@@ -2066,8 +2066,6 @@ mod integration_tests {
             .query_balance(scheduler.clone(), "eth-usdc")
             .unwrap();
 
-        println!("Existing scheduler balance: {}", existing_scheduler_balance,);
-
         let destinations = vec![
             Destination {
                 recipient: Recipient::Deposit {

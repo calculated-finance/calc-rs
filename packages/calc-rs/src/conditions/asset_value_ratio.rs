@@ -27,7 +27,7 @@ impl AssetValueRatio {
             PriceSource::Fin { ref address } => {
                 let pair = deps
                     .querier
-                    .query_wasm_smart::<ConfigResponse>(address.clone(), &QueryMsg::Config {})?;
+                    .query_wasm_smart::<ConfigResponse>(address, &QueryMsg::Config {})?;
 
                 let denoms = [pair.denoms.base(), pair.denoms.quote()];
 
@@ -120,7 +120,7 @@ impl AssetValueRatio {
 
 fn fetch_l1_asset_price(deps: Deps, asset: &str) -> StdResult<Decimal> {
     let layer_1_asset = Layer1Asset::from_native(asset.to_string())
-        .map_err(|e| StdError::generic_err(format!("'{}' is not a secured asset: {e}", asset)))?;
+        .map_err(|e| StdError::generic_err(format!("'{asset}' is not a secured asset: {e}")))?;
 
     Pool::load(deps.querier, &layer_1_asset)
         .map_err(|e| {
