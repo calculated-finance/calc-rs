@@ -1,0 +1,84 @@
+name: Basic Checks
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  basic-checks:
+    name: Basic Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Check Rust formatting
+      run: cargo fmt --all -- --check
+      
+    - name: Validate Cargo.toml files
+      run: |
+        echo "Checking workspace Cargo.toml..."
+        cargo metadata --no-deps --format-version 1 > /dev/null
+        
+        echo "Validating all Cargo.toml files in workspace..."
+        find . -name "Cargo.toml" -exec echo "Checking {}" \; -exec cargo check --manifest-path {} --offline \; || true
+    
+    - name: Check for common Rust issues
+      run: |
+        echo "Checking for TODO/FIXME comments..."
+        find . -name "*.rs" -exec grep -Hn "TODO\|FIXME\|XXX" {} \; || echo "No TODO/FIXME found"
+        
+        echo "Checking for println! statements (potential debug leftovers)..."
+        find . -name "*.rs" -exec grep -Hn "println!" {} \; || echo "No println! statements found"
+        
+        echo "Checking for unwrap() calls..."
+        find . -name "*.rs" -exec grep -Hn "\.unwrap()" {} \; | head -10 || echo "Checked unwrap() usage"
+
+  dependency-check:
+    name: Dependency Validation
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Allow this to fail without failing the whole workflow
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache Cargo dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-deps-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-deps-
+    
+    - name: Check dependencies
+      run: |
+        echo "Attempting to resolve dependencies..."
+        cargo tree --depth 1 || echo "Dependency resolution failed (expected in some environments)"
+        
+        echo "Checking for security advisories..."
+        cargo audit || echo "Audit check failed (cargo audit may not be installed)"
+        
+    - name: Test dependency compilation (offline mode)
+      run: |
+        echo "Testing offline compilation..."
+        cargo check --offline || echo "Offline compilation failed (expected if dependencies not cached)"

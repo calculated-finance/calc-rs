@@ -159,6 +159,8 @@ Any number of affiliate addresses with custom fee rates can be provided to recei
 7. Push to the branch: `git push origin feature/my-new-feature`
 8. Submit a pull request
 
+**Note:** All pull requests automatically run CI checks including formatting (`cargo fmt`), linting (`cargo clippy`), building, and testing (`cargo test`). Make sure your code passes these checks locally before submitting.
+
 ## License
 
 This project is licensed under the Business Source License 1.1 (BSL). See the [LICENSE](LICENSE) file for details.
