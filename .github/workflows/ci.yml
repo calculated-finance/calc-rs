@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  formatting:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    
+    - name: Cache Cargo dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-clippy-
+    
+    - name: Configure Git and Cargo
+      run: |
+        git config --global url."https://gitlab.com/".insteadOf "git@gitlab.com:"
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
+        git config --global http.postBuffer 524288000
+        mkdir -p ~/.cargo
+        cat >> ~/.cargo/config.toml << 'EOF'
+        [net]
+        retry = 10
+        git-fetch-with-cli = true
+        
+        [http]
+        timeout = 60
+        EOF
+    
+    - name: Run Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust ${{ matrix.rust }}
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+    
+    - name: Cache Cargo dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.rust }}-cargo-
+    
+    - name: Configure Git and Cargo
+      run: |
+        git config --global url."https://gitlab.com/".insteadOf "git@gitlab.com:"
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
+        git config --global http.postBuffer 524288000
+        git config --global http.maxRequestBuffer 100M
+        mkdir -p ~/.cargo
+        cat >> ~/.cargo/config.toml << 'EOF'
+        [net]
+        retry = 10
+        git-fetch-with-cli = true
+        
+        [http]
+        timeout = 60
+        multiplexing = false
+        EOF
+    
+    - name: Build
+      run: cargo build --verbose --all-targets
+    
+    - name: Run tests
+      run: cargo test --verbose --all
