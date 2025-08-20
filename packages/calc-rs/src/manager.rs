@@ -16,6 +16,15 @@ pub enum StrategyStatus {
     Paused,
 }
 
+impl StrategyStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            StrategyStatus::Active => "active",
+            StrategyStatus::Paused => "paused",
+        }
+    }
+}
+
 impl<'a> Prefixer<'a> for StrategyStatus {
     fn prefix(&self) -> Vec<Key> {
         vec![Key::Val8([self.clone() as u8])]

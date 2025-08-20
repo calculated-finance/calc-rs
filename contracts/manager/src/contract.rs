@@ -12,8 +12,8 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response,
-    StdError, StdResult, WasmMsg,
+    instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, Event, MessageInfo, Order,
+    Response, StdError, StdResult, WasmMsg,
 };
 use cw_storage_plus::Bound;
 
@@ -190,15 +190,19 @@ pub fn execute(
                 label,
                 salt: salt.into(),
                 msg: to_json_binary(&StrategyInstantiateMsg {
-                    contract_address,
-                    owner,
+                    contract_address: contract_address.clone(),
+                    owner: owner.clone(),
                     affiliates,
                     nodes,
                 })?,
                 funds: info.funds,
             };
 
-            Ok(Response::new().add_message(init_message))
+            Ok(Response::new().add_message(init_message).add_event(
+                Event::new(format!("{}/strategy.create", env!("CARGO_PKG_NAME")))
+                    .add_attribute("owner", owner.as_str())
+                    .add_attribute("strategy_address", contract_address.as_str()),
+            ))
         }
         ManagerExecuteMsg::Execute { contract_address } => {
             let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
@@ -219,7 +223,11 @@ pub fn execute(
             let execute_msg = Contract(contract_address.clone())
                 .call(to_json_binary(&StrategyExecuteMsg::Execute)?, info.funds);
 
-            Ok(Response::new().add_message(execute_msg))
+            Ok(Response::new().add_message(execute_msg).add_event(
+                Event::new(format!("{}/strategy.execute", env!("CARGO_PKG_NAME")))
+                    .add_attribute("executor", info.sender)
+                    .add_attribute("strategy_address", contract_address.as_str()),
+            ))
         }
         ManagerExecuteMsg::Update {
             contract_address,
@@ -240,12 +248,15 @@ pub fn execute(
                 },
             )?;
 
-            let update_msg = Contract(contract_address).call(
+            let update_msg = Contract(contract_address.clone()).call(
                 to_json_binary(&StrategyExecuteMsg::Update(nodes))?,
                 info.funds,
             );
 
-            Ok(Response::new().add_message(update_msg))
+            Ok(Response::new().add_message(update_msg).add_event(
+                Event::new(format!("{}/strategy.update", env!("CARGO_PKG_NAME")))
+                    .add_attribute("strategy_address", contract_address.as_str()),
+            ))
         }
         ManagerExecuteMsg::UpdateStatus {
             contract_address,
@@ -267,7 +278,7 @@ pub fn execute(
                 },
             )?;
 
-            let strategy_msg = Contract(contract_address).call(
+            let strategy_msg = Contract(contract_address.clone()).call(
                 to_json_binary(&match status {
                     StrategyStatus::Active => StrategyExecuteMsg::Execute,
                     StrategyStatus::Paused => StrategyExecuteMsg::Cancel,
@@ -275,7 +286,11 @@ pub fn execute(
                 info.funds,
             );
 
-            Ok(Response::new().add_message(strategy_msg))
+            Ok(Response::new().add_message(strategy_msg).add_event(
+                Event::new(format!("{}/strategy.update-status", env!("CARGO_PKG_NAME")))
+                    .add_attribute("status", status.as_str())
+                    .add_attribute("strategy_address", contract_address.as_str()),
+            ))
         }
         ManagerExecuteMsg::UpdateLabel {
             contract_address,
@@ -296,10 +311,17 @@ pub fn execute(
             STRATEGIES.save(
                 deps.storage,
                 contract_address.clone(),
-                &Strategy { label, ..strategy },
+                &Strategy {
+                    label: label.clone(),
+                    ..strategy
+                },
             )?;
 
-            Ok(Response::new())
+            Ok(Response::new().add_event(
+                Event::new(format!("{}/strategy.update-label", env!("CARGO_PKG_NAME")))
+                    .add_attribute("label", label)
+                    .add_attribute("strategy_address", contract_address.as_str()),
+            ))
         }
     }
 }

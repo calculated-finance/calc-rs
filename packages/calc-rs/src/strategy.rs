@@ -23,6 +23,15 @@ pub enum StrategyOperation {
     Cancel,
 }
 
+impl StrategyOperation {
+    pub fn as_str(&self) -> &str {
+        match self {
+            StrategyOperation::Execute => "execute",
+            StrategyOperation::Cancel => "cancel",
+        }
+    }
+}
+
 #[cw_serde]
 pub struct StrategyInstantiateMsg {
     pub contract_address: Addr,

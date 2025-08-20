@@ -253,6 +253,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "calc-manager"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+]
+
+[[package]]
 name = "calc-rs"
 version = "0.0.1"
 dependencies = [
@@ -279,6 +289,27 @@ dependencies = [
  "prost",
  "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
  "serde",
+]
+
+[[package]]
+name = "calc-scheduler"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
+]
+
+[[package]]
+name = "calc-strategy"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
 ]
 
 [[package]]
@@ -861,15 +892,15 @@ dependencies = [
 name = "integration"
 version = "0.0.1"
 dependencies = [
+ "calc-manager",
  "calc-rs",
  "calc-rs-test",
+ "calc-scheduler",
+ "calc-strategy",
  "cosmwasm-std",
  "cw-multi-test",
- "manager",
  "rujira-fin",
  "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
- "scheduler",
- "strategy",
 ]
 
 [[package]]
@@ -939,16 +970,6 @@ name = "log"
 version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
-
-[[package]]
-name = "manager"
-version = "0.1.0"
-dependencies = [
- "calc-rs",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
-]
 
 [[package]]
 name = "memchr"
@@ -1298,17 +1319,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
-name = "scheduler"
-version = "0.1.0"
-dependencies = [
- "calc-rs",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
-]
-
-[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1465,16 +1475,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "strategy"
-version = "0.1.0"
-dependencies = [
- "calc-rs",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
-]
 
 [[package]]
 name = "subtle"
