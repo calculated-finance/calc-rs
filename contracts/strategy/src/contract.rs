@@ -76,8 +76,8 @@ pub fn execute(
             );
 
             Ok(Response::new()
-                .add_message(execute_actions_msg)
-                .add_event(Event::new(format!("{}/init", env!("CARGO_PKG_NAME")))))
+                .add_event(Event::new(format!("{}/init", env!("CARGO_PKG_NAME"))))
+                .add_message(execute_actions_msg))
         }
         StrategyExecuteMsg::Execute => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -93,8 +93,8 @@ pub fn execute(
             );
 
             Ok(Response::new()
-                .add_message(execute_actions_msg)
-                .add_event(Event::new(format!("{}/execute", env!("CARGO_PKG_NAME")))))
+                .add_event(Event::new(format!("{}/execute", env!("CARGO_PKG_NAME"))))
+                .add_message(execute_actions_msg))
         }
         StrategyExecuteMsg::Update(nodes) => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -113,9 +113,9 @@ pub fn execute(
                 .call(to_json_binary(&StrategyExecuteMsg::Init(nodes))?, vec![]);
 
             Ok(Response::new()
+                .add_event(Event::new(format!("{}/update", env!("CARGO_PKG_NAME"))))
                 .add_message(cancel_actions_msg)
-                .add_message(init_strategy_msg)
-                .add_event(Event::new(format!("{}/update", env!("CARGO_PKG_NAME")))))
+                .add_message(init_strategy_msg))
         }
         StrategyExecuteMsg::Withdraw(amounts) => {
             if info.sender != OWNER.load(deps.storage)? {
@@ -192,9 +192,9 @@ pub fn execute(
                 .collect::<Vec<_>>();
 
             Ok(Response::new()
+                .add_event(Event::new(format!("{}/withdraw", env!("CARGO_PKG_NAME"))))
                 .add_message(withdrawal_msg)
-                .add_messages(fee_msgs)
-                .add_event(Event::new(format!("{}/withdraw", env!("CARGO_PKG_NAME")))))
+                .add_messages(fee_msgs))
         }
         StrategyExecuteMsg::Cancel => {
             if info.sender != MANAGER.load(deps.storage)? {
@@ -210,8 +210,8 @@ pub fn execute(
             );
 
             Ok(Response::new()
-                .add_message(cancel_actions_msg)
-                .add_event(Event::new(format!("{}/cancel", env!("CARGO_PKG_NAME")))))
+                .add_event(Event::new(format!("{}/cancel", env!("CARGO_PKG_NAME"))))
+                .add_message(cancel_actions_msg))
         }
         StrategyExecuteMsg::Process {
             operation,
