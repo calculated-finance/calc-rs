@@ -252,7 +252,7 @@ impl FinLimitOrderState<UnsetOrder> {
 
         let balance = deps
             .querier
-            .query_balance(env.contract.address.clone(), self.config.bid_denom.clone())?;
+            .query_balance(&env.contract.address, &self.config.bid_denom)?;
 
         let available = balance.amount + self.state.withdrawing + self.state.remaining;
         let final_offer = min(available, self.config.bid_amount.unwrap_or(available));
@@ -347,7 +347,8 @@ impl FinLimitOrderState<SetOrder> {
         let filled_ratio = Decimal::from_ratio(self.state.remaining, self.state.offer);
 
         let should_withdraw = self.state.remaining.eq(&Uint128::zero())
-            || filled_ratio.ge(&self.config.min_fill_ratio.unwrap_or(Decimal::zero()))
+            || self.state.filled.gt(&Uint128::zero())
+                && filled_ratio.ge(&self.config.min_fill_ratio.unwrap_or(Decimal::zero()))
             || self
                 .config
                 .strategy
