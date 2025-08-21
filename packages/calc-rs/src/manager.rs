@@ -52,6 +52,7 @@ pub struct Affiliate {
 #[cw_serde]
 pub struct Strategy {
     pub id: u64,
+    pub source: Option<String>,
     pub owner: Addr,
     pub contract_address: Addr,
     pub created_at: u64,
@@ -63,6 +64,7 @@ pub struct Strategy {
 #[cw_serde]
 pub enum ManagerExecuteMsg {
     Instantiate {
+        source: Option<String>,
         owner: Option<Addr>,
         label: String,
         affiliates: Vec<Affiliate>,
