@@ -475,6 +475,7 @@ mod conditions_tests {
             SystemResult::Ok(ContractResult::Ok(
                 to_json_binary(&Strategy {
                     id: 1,
+                    source: None,
                     contract_address: Addr::unchecked("strategy"),
                     status: StrategyStatus::Active,
                     owner: Addr::unchecked("owner"),

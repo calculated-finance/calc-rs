@@ -83,6 +83,7 @@ pub fn execute(
 ) -> ContractResult {
     match msg {
         ManagerExecuteMsg::Instantiate {
+            source,
             owner,
             label,
             affiliates,
@@ -175,6 +176,7 @@ pub fn execute(
                 contract_address.clone(),
                 &Strategy {
                     id,
+                    source,
                     owner: owner.clone(),
                     contract_address: contract_address.clone(),
                     created_at: env.block.time.seconds(),
@@ -388,6 +390,7 @@ mod tests {
 
         let strategy = Strategy {
             id: 1,
+            source: None,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
             created_at: env.block.time.seconds(),
@@ -444,6 +447,7 @@ mod tests {
 
         let strategy = Strategy {
             id: 1,
+            source: None,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
             created_at: env.block.time.seconds(),
@@ -493,6 +497,7 @@ mod tests {
 
         let strategy = Strategy {
             id: 1,
+            source: None,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
             created_at: env.block.time.seconds(),
@@ -542,6 +547,7 @@ mod tests {
 
         let strategy = Strategy {
             id: 1,
+            source: None,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
             created_at: env.block.time.seconds(),
@@ -584,6 +590,7 @@ mod tests {
 
         let strategy = Strategy {
             id: 1,
+            source: None,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
             created_at: env.block.time.seconds(),
@@ -627,6 +634,7 @@ mod tests {
 
         let strategy = Strategy {
             id: 1,
+            source: None,
             owner: info.sender.clone(),
             contract_address: Addr::unchecked("contract"),
             created_at: env.block.time.seconds(),
