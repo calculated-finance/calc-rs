@@ -200,6 +200,7 @@ impl Operation<Condition> for Condition {
                         pair.denoms.quote()
                     }
                     .to_string(),
+                    min_fill_ratio: None,
                     strategy: PriceStrategy::Fixed(price),
                     current_order: None,
                 };

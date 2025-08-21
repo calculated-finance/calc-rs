@@ -113,6 +113,7 @@ pub struct FinLimitOrder {
     pub bid_amount: Option<Uint128>,
     pub side: Side,
     pub strategy: PriceStrategy,
+    pub min_fill_ratio: Option<Decimal>,
     pub current_order: Option<StaleOrder>,
 }
 
@@ -343,7 +344,10 @@ impl FinLimitOrderState<SetOrder> {
             &self.config.side,
         )?;
 
-        let should_withdraw = self.state.filled.gt(&Uint128::zero())
+        let filled_ratio = Decimal::from_ratio(self.state.remaining, self.state.offer);
+
+        let should_withdraw = self.state.remaining.eq(&Uint128::zero())
+            || filled_ratio.ge(&self.config.min_fill_ratio.unwrap_or(Decimal::zero()))
             || self
                 .config
                 .strategy
@@ -404,13 +408,11 @@ impl Operation<FinLimitOrder> for FinLimitOrder {
             ));
         }
 
-        if let PriceStrategy::Offset { offset, .. } = &self.strategy {
-            if let Offset::Percent(percent) = offset {
-                if percent.gt(&99) {
-                    return Err(StdError::generic_err(
-                        "Offset cannot be greater than 99%".to_string(),
-                    ));
-                }
+        if let Some(min_fill_ratio) = self.min_fill_ratio {
+            if min_fill_ratio.gt(&Decimal::one()) {
+                return Err(StdError::generic_err(
+                    "Minimum fill ratio cannot be greater than one",
+                ));
             }
         }
 

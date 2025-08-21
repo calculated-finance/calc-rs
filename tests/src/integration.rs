@@ -84,6 +84,7 @@ mod integration_tests {
             bid_amount: None,
             side: Side::Base,
             strategy: PriceStrategy::Fixed(Decimal::percent(100)),
+            min_fill_ratio: None,
             current_order: None,
         }
     }
@@ -1472,7 +1473,170 @@ mod integration_tests {
                 )],
             )
             .execute()
-            .assert_strategy_balance(&filled_amount.clone());
+            .assert_strategy_balance(&filled_amount.clone())
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(50), // price
+                    remaining_amount,     // offer
+                    remaining_amount,     // remaining
+                    Uint128::zero(),      // filled
+                )],
+            );
+    }
+
+    #[test]
+    fn test_execute_limit_order_action_with_filled_ratio_less_than_min_fill_ratio_skips_claiming() {
+        let mut harness = CalcTestApp::setup();
+
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(Decimal::percent(50)),
+            min_fill_ratio: Some(Decimal::percent(90)),
+            ..default_limit_order_action(&harness)
+        };
+
+        let starting_balance = Coin::new(1_000_000u128, order_action.bid_denom.clone());
+        let pair = harness.query_fin_config(&order_action.pair_address);
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[starting_balance.clone()]);
+
+        let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(800_000);
+
+        let strategy_address = strategy.strategy_addr.clone();
+
+        strategy
+            .assert_address_balances(
+                &strategy_address,
+                &[Coin::new(0u128, filled_amount.denom.clone())],
+            )
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(50),    // price
+                    starting_balance.amount, // offer
+                    remaining_amount,        // remaining
+                    filled_amount.amount,    // filled
+                )],
+            )
+            .execute()
+            .assert_address_balances(&strategy_address, &[Coin::new(0u128, filled_amount.denom)])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(50),    // price
+                    starting_balance.amount, // offer
+                    remaining_amount,        // remaining
+                    filled_amount.amount,    // filled
+                )],
+            );
+    }
+
+    #[test]
+    fn test_execute_limit_order_action_with_filled_ratio_more_than_min_fill_ratio_claims() {
+        let mut harness = CalcTestApp::setup();
+
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(Decimal::percent(50)),
+            min_fill_ratio: Some(Decimal::percent(70)),
+            ..default_limit_order_action(&harness)
+        };
+
+        let starting_balance = Coin::new(1_000_000u128, order_action.bid_denom.clone());
+        let pair = harness.query_fin_config(&order_action.pair_address);
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[starting_balance.clone()]);
+
+        let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(800_000);
+
+        let strategy_address = strategy.strategy_addr.clone();
+
+        strategy
+            .assert_address_balances(&strategy_address, &[])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(50),    // price
+                    starting_balance.amount, // offer
+                    remaining_amount,        // remaining
+                    filled_amount.amount,    // filled
+                )],
+            )
+            .execute()
+            .assert_address_balances(&strategy_address, &[filled_amount.clone()])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(50), // price
+                    remaining_amount,     // offer
+                    remaining_amount,     // remaining
+                    Uint128::zero(),      // filled
+                )],
+            );
+    }
+
+    #[test]
+    fn test_execute_limit_order_action_with_filled_ratio_equal_to_min_fill_ratio_claims() {
+        let mut harness = CalcTestApp::setup();
+
+        let order_action = FinLimitOrder {
+            strategy: PriceStrategy::Fixed(Decimal::percent(5)),
+            min_fill_ratio: Some(Decimal::percent(100)),
+            ..default_limit_order_action(&harness)
+        };
+
+        let starting_balance = Coin::new(1_000u128, order_action.bid_denom.clone());
+        let pair = harness.query_fin_config(&order_action.pair_address);
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[starting_balance.clone()]);
+
+        let filled_amount = Coin::new(50u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(0);
+
+        let strategy_address = strategy.strategy_addr.clone();
+
+        strategy
+            .assert_address_balances(
+                &strategy_address,
+                &[Coin::new(0u128, filled_amount.denom.clone())],
+            )
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(5),     // price
+                    starting_balance.amount, // offer
+                    remaining_amount,        // remaining
+                    filled_amount.amount,    // filled
+                )],
+            )
+            .execute()
+            .assert_address_balances(&strategy_address, &[filled_amount])
+            .assert_strategy_fin_orders(&order_action.pair_address, vec![]);
     }
 
     #[test]
