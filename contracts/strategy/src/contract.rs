@@ -135,7 +135,7 @@ pub fn execute(
 
                 let balance = deps
                     .querier
-                    .query_balance(env.contract.address.clone(), amount.denom.clone())?;
+                    .query_balance(&env.contract.address, &amount.denom)?;
 
                 withdrawals.add(Coin::new(
                     min(balance.amount, amount.amount),

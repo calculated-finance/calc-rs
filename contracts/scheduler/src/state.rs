@@ -39,7 +39,7 @@ pub fn price_cursor(price: Decimal) -> String {
     } else {
         s.push_str(&"0".repeat(18));
     }
-    format!("{:0>39}", s)
+    format!("{s:0>39}")
 }
 
 impl TriggerStore<'_> {
