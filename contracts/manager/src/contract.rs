@@ -200,11 +200,13 @@ pub fn execute(
                 funds: info.funds,
             };
 
-            Ok(Response::new().add_message(init_message).add_event(
-                Event::new(format!("{}/strategy.create", env!("CARGO_PKG_NAME")))
-                    .add_attribute("owner", owner.as_str())
-                    .add_attribute("strategy_address", contract_address.as_str()),
-            ))
+            Ok(Response::new()
+                .add_event(
+                    Event::new(format!("{}/strategy.create", env!("CARGO_PKG_NAME")))
+                        .add_attribute("owner", owner.as_str())
+                        .add_attribute("strategy_address", contract_address.as_str()),
+                )
+                .add_message(init_message))
         }
         ManagerExecuteMsg::Execute { contract_address } => {
             let strategy = STRATEGIES.load(deps.storage, contract_address.clone())?;
@@ -225,11 +227,13 @@ pub fn execute(
             let execute_msg = Contract(contract_address.clone())
                 .call(to_json_binary(&StrategyExecuteMsg::Execute)?, info.funds);
 
-            Ok(Response::new().add_message(execute_msg).add_event(
-                Event::new(format!("{}/strategy.execute", env!("CARGO_PKG_NAME")))
-                    .add_attribute("executor", info.sender)
-                    .add_attribute("strategy_address", contract_address.as_str()),
-            ))
+            Ok(Response::new()
+                .add_event(
+                    Event::new(format!("{}/strategy.execute", env!("CARGO_PKG_NAME")))
+                        .add_attribute("executor", info.sender)
+                        .add_attribute("strategy_address", contract_address.as_str()),
+                )
+                .add_message(execute_msg))
         }
         ManagerExecuteMsg::Update {
             contract_address,
@@ -255,10 +259,12 @@ pub fn execute(
                 info.funds,
             );
 
-            Ok(Response::new().add_message(update_msg).add_event(
-                Event::new(format!("{}/strategy.update", env!("CARGO_PKG_NAME")))
-                    .add_attribute("strategy_address", contract_address.as_str()),
-            ))
+            Ok(Response::new()
+                .add_event(
+                    Event::new(format!("{}/strategy.update", env!("CARGO_PKG_NAME")))
+                        .add_attribute("strategy_address", contract_address.as_str()),
+                )
+                .add_message(update_msg))
         }
         ManagerExecuteMsg::UpdateStatus {
             contract_address,
@@ -288,11 +294,13 @@ pub fn execute(
                 info.funds,
             );
 
-            Ok(Response::new().add_message(strategy_msg).add_event(
-                Event::new(format!("{}/strategy.update-status", env!("CARGO_PKG_NAME")))
-                    .add_attribute("status", status.as_str())
-                    .add_attribute("strategy_address", contract_address.as_str()),
-            ))
+            Ok(Response::new()
+                .add_event(
+                    Event::new(format!("{}/strategy.update-status", env!("CARGO_PKG_NAME")))
+                        .add_attribute("status", status.as_str())
+                        .add_attribute("strategy_address", contract_address.as_str()),
+                )
+                .add_message(strategy_msg))
         }
         ManagerExecuteMsg::UpdateLabel {
             contract_address,
