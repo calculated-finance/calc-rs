@@ -39,7 +39,7 @@ fn mock_pool_btc() -> Binary {
 
 fn mock_pool_usdc() -> Binary {
     let pool = proto::types::QueryPoolResponse {
-        asset: "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48".to_string(),
+        asset: "ETH.USDC".to_string(),
         status: "Available".to_string(),
         decimals: 6,
         pending_inbound_asset: "0".to_string(),
@@ -74,7 +74,7 @@ pub fn mock_pool(request: Binary) -> Result<Binary, Error> {
 
     match req.asset.as_str() {
         "BTC.BTC" => Ok(mock_pool_btc()),
-        "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48" => Ok(mock_pool_usdc()),
+        "ETH.USDC" => Ok(mock_pool_usdc()),
         _ => Err(StdError::generic_err("Asset not found").into()),
     }
 }
@@ -87,7 +87,7 @@ pub fn mock_quote_response() -> AnyResult<Binary> {
         outbound_delay_blocks: 0,
         outbound_delay_seconds: 0,
         fees: Some(QuoteFees {
-            asset: 100.to_string(),
+            asset: "rune".to_string(),
             affiliate: 100.to_string(),
             outbound: 100.to_string(),
             liquidity: 100.to_string(),
