@@ -136,12 +136,6 @@ impl SwapQuote<New> {
             } => {
                 let expected_amount_out = self.route.get_expected_amount_out(deps, &self)?;
 
-                if expected_amount_out.is_zero() {
-                    return Err(StdError::generic_err(
-                        "Expected amount out is zero".to_string(),
-                    ));
-                }
-
                 let base_price =
                     Decimal::from_ratio(self.swap_amount.amount, base_receive_amount.amount);
 
