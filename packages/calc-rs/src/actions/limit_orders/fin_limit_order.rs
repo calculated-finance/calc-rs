@@ -404,6 +404,16 @@ impl Operation<FinLimitOrder> for FinLimitOrder {
             ));
         }
 
+        if let PriceStrategy::Offset { offset, .. } = &self.strategy {
+            if let Offset::Percent(percent) = offset {
+                if percent.gt(&99) {
+                    return Err(StdError::generic_err(
+                        "Offset cannot be greater than 99%".to_string(),
+                    ));
+                }
+            }
+        }
+
         Ok(self)
     }
 
