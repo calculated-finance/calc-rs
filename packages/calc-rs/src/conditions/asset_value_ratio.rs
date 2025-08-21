@@ -81,12 +81,20 @@ impl AssetValueRatio {
                     },
                 )?;
 
+                if book_response.base.is_empty() || book_response.quote.is_empty() {
+                    return Err(StdError::generic_err("Order book is empty".to_string()));
+                }
+
                 let pair = deps
                     .querier
                     .query_wasm_smart::<ConfigResponse>(address, &QueryMsg::Config {})?;
 
                 let mid_price = (book_response.base[0].price + book_response.quote[0].price)
                     / Decimal::from_ratio(2u128, 1u128);
+
+                if mid_price.is_zero() {
+                    return Err(StdError::generic_err("Mid price is zero".to_string()));
+                }
 
                 if pair.denoms.base() == self.numerator {
                     Decimal::one() / mid_price
