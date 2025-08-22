@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::fmt::Debug;
 
 use calc_rs::{manager::StrategyStatus, scheduler::ConditionFilter, strategy::StrategyConfig};
 use cosmwasm_std::{Addr, Coin, Decimal, Uint128};
@@ -157,9 +157,8 @@ impl<'a> StrategyHandler<'a> {
 
     pub fn assert_strategy_balance(&mut self, expected: &Coin) -> &mut Self {
         println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
-        let balances = self
-            .harness
-            .query_strategy_balances(&self.strategy_addr, HashSet::from([expected.denom.clone()]));
+        let balances = self.harness.query_strategy_balances(&self.strategy_addr);
+
         assert!(
             // Allow for rounding discrepancies
             balances.iter().any(|b| b.amount.abs_diff(expected.amount) < Uint128::new(10)),

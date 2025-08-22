@@ -426,6 +426,14 @@ impl Operation<FinLimitOrder> for FinLimitOrder {
             Err(_) => (vec![], self),
         }
     }
+
+    fn denoms(self, deps: Deps) -> StdResult<Vec<String>> {
+        let pair = self.get_pair(deps)?;
+        Ok(vec![
+            pair.denoms.base().to_string(),
+            pair.denoms.quote().to_string(),
+        ])
+    }
 }
 
 impl StatefulOperation<FinLimitOrder> for FinLimitOrder {

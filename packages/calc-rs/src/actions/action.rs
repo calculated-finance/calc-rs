@@ -57,6 +57,14 @@ impl Operation<Action> for Action {
             }
         }
     }
+
+    fn denoms(self, deps: Deps) -> StdResult<Vec<String>> {
+        match self {
+            Action::Swap(swap) => swap.denoms(deps),
+            Action::LimitOrder(limit_order) => limit_order.denoms(deps),
+            Action::Distribute(distribution) => distribution.denoms(deps),
+        }
+    }
 }
 
 impl StatefulOperation<Action> for Action {
