@@ -4,14 +4,13 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128,
 };
-use rujira_rs::fin::{
-    BookResponse, ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side,
-};
+use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
     core::Contract,
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
+    rujira::get_side_price,
 };
 
 #[cw_serde]
@@ -30,6 +29,7 @@ pub enum Offset {
 pub enum PriceStrategy {
     Fixed(Decimal),
     Offset {
+        side: Side,
         direction: Direction,
         offset: Offset,
         tolerance: Option<Offset>,
@@ -56,36 +56,16 @@ impl PriceStrategy {
         }
     }
 
-    pub fn get_new_price(
-        &self,
-        deps: Deps,
-        pair_address: &Addr,
-        side: &Side,
-    ) -> StdResult<Decimal> {
+    pub fn get_new_price(&self, deps: Deps, pair_address: &Addr) -> StdResult<Decimal> {
         Ok(match self {
             PriceStrategy::Fixed(price) => *price,
             PriceStrategy::Offset {
-                direction, offset, ..
+                side,
+                direction,
+                offset,
+                ..
             } => {
-                let book_response = deps.querier.query_wasm_smart::<BookResponse>(
-                    pair_address.clone(),
-                    &QueryMsg::Book {
-                        limit: Some(1),
-                        offset: None,
-                    },
-                )?;
-
-                let book = if side == &Side::Base {
-                    book_response.base
-                } else {
-                    book_response.quote
-                };
-
-                if book.is_empty() {
-                    return Err(StdError::generic_err("Order book is empty"));
-                }
-
-                let price = book[0].price;
+                let price = get_side_price(deps, pair_address, side)?;
 
                 match offset.clone() {
                     Offset::Exact(offset) => match direction {
@@ -187,7 +167,7 @@ pub struct StaleOrder {
 impl StaleOrder {
     pub fn refresh(self, deps: Deps, env: &Env, config: &FinLimitOrder) -> StdResult<SetOrder> {
         let order = deps.querier.query_wasm_smart::<OrderResponse>(
-            config.pair_address.clone(),
+            &config.pair_address,
             &QueryMsg::Order((
                 env.contract.address.to_string(),
                 config.side.clone(),
@@ -236,18 +216,27 @@ impl FinLimitOrderState<UnsetOrder> {
     }
 
     pub fn set(self, deps: Deps, env: &Env) -> StdResult<FinLimitOrderState<SettingOrder>> {
-        let price = self.config.strategy.get_new_price(
-            deps,
-            &self.config.pair_address,
-            &self.config.side,
-        )?;
+        let new_price = self
+            .config
+            .strategy
+            .get_new_price(deps, &self.config.pair_address)?;
 
-        let should_reset = if let Some(current_order) = &self.config.current_order {
-            self.config
+        let (should_reset, price) = if let Some(current_order) = &self.config.current_order {
+            let should_reset = self
+                .config
                 .strategy
-                .should_reset(current_order.price, price)
+                .should_reset(current_order.price, new_price);
+
+            (
+                should_reset,
+                if should_reset {
+                    new_price
+                } else {
+                    current_order.price
+                },
+            )
         } else {
-            true
+            (true, new_price)
         };
 
         let balance = deps
@@ -338,28 +327,36 @@ impl FinLimitOrderState<SetOrder> {
         self,
         deps: Deps,
     ) -> StdResult<FinLimitOrderState<WithdrawingOrder>> {
-        let new_price = self.config.strategy.get_new_price(
-            deps,
-            &self.config.pair_address,
-            &self.config.side,
-        )?;
+        let new_price = self
+            .config
+            .strategy
+            .get_new_price(deps, &self.config.pair_address)?;
 
-        let filled_ratio = Decimal::from_ratio(self.state.remaining, self.state.offer);
+        let filled_ratio = Decimal::one()
+            .saturating_sub(Decimal::from_ratio(self.state.remaining, self.state.offer));
+
+        let should_reset = self
+            .config
+            .strategy
+            .should_reset(self.state.price, new_price);
+
+        let price = if should_reset {
+            new_price
+        } else {
+            self.state.price
+        };
 
         let should_withdraw = self.state.remaining.eq(&Uint128::zero())
             || self.state.filled.gt(&Uint128::zero())
                 && filled_ratio.ge(&self.config.min_fill_ratio.unwrap_or(Decimal::zero()))
-            || self
-                .config
-                .strategy
-                .should_reset(self.state.price, new_price);
+            || should_reset;
 
         if should_withdraw {
             let withdrawing_order = self.withdraw()?;
 
             return Ok(FinLimitOrderState {
                 state: WithdrawingOrder {
-                    new_price: Some(new_price),
+                    new_price: Some(price),
                     ..withdrawing_order.state
                 },
                 ..withdrawing_order
@@ -371,7 +368,7 @@ impl FinLimitOrderState<SetOrder> {
             state: WithdrawingOrder {
                 withdrawing: Uint128::zero(),
                 remaining: self.state.remaining,
-                new_price: Some(new_price),
+                new_price: Some(price),
                 messages: vec![],
             },
         })
@@ -440,7 +437,7 @@ impl StatefulOperation<FinLimitOrder> for FinLimitOrder {
     fn balances(&self, deps: Deps, env: &Env) -> StdResult<Coins> {
         let pair = deps
             .querier
-            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})?;
+            .query_wasm_smart::<ConfigResponse>(&self.pair_address, &QueryMsg::Config {})?;
 
         let (remaining, filled) = if let Some(existing_order) = self.current_order.clone() {
             let order_state = existing_order.refresh(deps, env, self)?;

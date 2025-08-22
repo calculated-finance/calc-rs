@@ -169,12 +169,21 @@ impl<'a> StrategyHandler<'a> {
 
     pub fn assert_strategy_balances(&mut self, expected_balances: &[Coin]) -> &mut Self {
         println!("[StrategyHandler] Asserting all strategy balances are {expected_balances:#?}");
-        let balances = self.harness.query_balances(&self.strategy_addr);
+        let balances = self.harness.query_strategy_balances(&self.strategy_addr);
+
+        if expected_balances.is_empty() {
+            assert!(
+                balances.is_empty(),
+                "Expected no strategy balances but found: {balances:#?}"
+            );
+            return self;
+        }
 
         for expected in expected_balances {
             let actual = balances.iter().find(|c| {
                 // Allow for rounding discrepancies
-                c.denom == expected.denom && c.amount.abs_diff(expected.amount) < Uint128::new(10)
+                c.denom.to_lowercase() == expected.denom.to_lowercase()
+                    && c.amount.abs_diff(expected.amount) < Uint128::new(10)
             });
 
             if expected.amount.is_zero() {
@@ -204,10 +213,19 @@ impl<'a> StrategyHandler<'a> {
         );
         let balances = self.harness.query_balances(address);
 
+        if expected_balances.is_empty() {
+            assert!(
+                balances.is_empty(),
+                "Expected no balances for {address} but found: {balances:#?}"
+            );
+            return self;
+        }
+
         for expected in expected_balances {
             let actual = balances.iter().find(|c| {
                 // Allow for rounding discrepancies
-                c.denom == expected.denom && c.amount.abs_diff(expected.amount) < Uint128::new(10)
+                c.denom.to_lowercase() == expected.denom.to_lowercase()
+                    && c.amount.abs_diff(expected.amount) < Uint128::new(10)
             });
 
             if expected.amount.is_zero() {

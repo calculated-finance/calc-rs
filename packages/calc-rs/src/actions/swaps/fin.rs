@@ -3,14 +3,13 @@ use std::{cmp::max, vec};
 use crate::{
     actions::swaps::swap::{Adjusted, Executable, New, SwapQuote},
     core::Contract,
+    rujira::get_mid_price,
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128,
 };
-use rujira_rs::fin::{
-    BookResponse, ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest,
-};
+use rujira_rs::fin::{ConfigResponse, ExecuteMsg, QueryMsg, SimulationResponse, SwapRequest};
 
 #[cw_serde]
 pub struct FinRoute {
@@ -86,24 +85,7 @@ impl FinRoute {
             )));
         }
 
-        let book_response = deps.querier.query_wasm_smart::<BookResponse>(
-            &self.pair_address,
-            &QueryMsg::Book {
-                limit: Some(1),
-                offset: None,
-            },
-        )?;
-
-        if book_response.base.is_empty() || book_response.quote.is_empty() {
-            return Err(StdError::generic_err("Order book is empty".to_string()));
-        }
-
-        let mid_price = (book_response.base[0].price + book_response.quote[0].price)
-            / Decimal::from_ratio(2u128, 1u128);
-
-        if mid_price.is_zero() {
-            return Err(StdError::generic_err("Mid price is zero".to_string()));
-        }
+        let mid_price = get_mid_price(deps, &self.pair_address)?;
 
         let pair = deps
             .querier
