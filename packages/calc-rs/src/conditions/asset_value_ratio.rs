@@ -1,7 +1,7 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Decimal, Deps, Env, StdError, StdResult};
 use rujira_rs::{
-    fin::{BookResponse, ConfigResponse, QueryMsg},
+    fin::{ConfigResponse, QueryMsg},
     query::Pool,
     Layer1Asset,
 };
@@ -73,29 +73,17 @@ impl AssetValueRatio {
             return Ok(false);
         }
 
-        let price = match self.oracle.clone() {
+        let price = match &self.oracle {
             PriceSource::Fin { address } => {
-                let book_response = deps.querier.query_wasm_smart::<BookResponse>(
-                    &address,
-                    &QueryMsg::Book {
-                        limit: Some(1),
-                        offset: None,
-                    },
-                )?;
-
-                if book_response.base.is_empty() || book_response.quote.is_empty() {
-                    return Err(StdError::generic_err("Order book is empty".to_string()));
-                }
-
-                let pair = deps
-                    .querier
-                    .query_wasm_smart::<ConfigResponse>(&address, &QueryMsg::Config {})?;
-
-                let mid_price = get_mid_price(deps, &address)?;
+                let mid_price = get_mid_price(deps, address)?;
 
                 if mid_price.is_zero() {
                     return Err(StdError::generic_err("Mid price is zero".to_string()));
                 }
+
+                let pair = deps
+                    .querier
+                    .query_wasm_smart::<ConfigResponse>(address, &QueryMsg::Config {})?;
 
                 if pair.denoms.base() == self.numerator {
                     Decimal::one() / mid_price

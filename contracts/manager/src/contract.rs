@@ -225,7 +225,7 @@ pub fn execute(
             )?;
 
             let execute_msg = Contract(contract_address.clone())
-                .call(to_json_binary(&StrategyExecuteMsg::Execute)?, info.funds);
+                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, info.funds);
 
             Ok(Response::new()
                 .add_event(
@@ -288,8 +288,8 @@ pub fn execute(
 
             let strategy_msg = Contract(contract_address.clone()).call(
                 to_json_binary(&match status {
-                    StrategyStatus::Active => StrategyExecuteMsg::Execute,
-                    StrategyStatus::Paused => StrategyExecuteMsg::Cancel,
+                    StrategyStatus::Active => StrategyExecuteMsg::Execute {},
+                    StrategyStatus::Paused => StrategyExecuteMsg::Cancel {},
                 })?,
                 info.funds,
             );
@@ -339,7 +339,7 @@ pub fn execute(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
-        ManagerQueryMsg::Config => to_json_binary(&CONFIG.load(deps.storage)?),
+        ManagerQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         ManagerQueryMsg::Strategy { address } => {
             to_json_binary(&STRATEGIES.load(deps.storage, address)?)
         }
@@ -377,7 +377,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
             to_json_binary(&strategies?)
         }
-        ManagerQueryMsg::Count => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
+        ManagerQueryMsg::Count {} => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
     }
 }
 
