@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::{cmp::min, collections::HashSet};
 
 use calc_rs::{
     core::{Contract, ContractError, ContractResult},
@@ -311,7 +311,7 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
             nodes: NODES.all(deps.storage)?,
         }),
         StrategyQueryMsg::Balances => {
-            let balances = NODES.all(deps.storage)?.iter().try_fold(
+            let mut balances = NODES.all(deps.storage)?.iter().try_fold(
                 Coins::default(),
                 |mut acc, node| -> StdResult<Coins> {
                     let node_balances = node.balances(deps, &env)?;
@@ -321,6 +321,18 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
                     Ok(acc)
                 },
             )?;
+
+            let denoms = NODES
+                .all(deps.storage)?
+                .into_iter()
+                .flat_map(|node| node.denoms(deps))
+                .flatten()
+                .collect::<HashSet<_>>();
+
+            for denom in denoms {
+                let balance = deps.querier.query_balance(&env.contract.address, &denom)?;
+                balances.add(balance)?;
+            }
 
             to_json_binary(&balances.to_vec())
         }

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use calc_rs::{
     manager::{Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy},
@@ -7,7 +7,7 @@ use calc_rs::{
     },
     strategy::{Node, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
 };
-use cosmwasm_std::{Addr, Coin, Coins, Decimal, StdError, Uint128};
+use cosmwasm_std::{Addr, Coin, Decimal, StdError, Uint128};
 use cw_multi_test::{error::AnyResult, AppResponse, BasicAppBuilder, ContractWrapper, Executor};
 use rujira_rs::fin::{
     ConfigResponse, Denoms, ExecuteMsg, InstantiateMsg, OrdersResponse, Price, QueryMsg, Side, Tick,
@@ -339,30 +339,11 @@ impl CalcTestApp {
             .unwrap()
     }
 
-    pub fn query_strategy_balances(
-        &self,
-        strategy_addr: &Addr,
-        denoms: HashSet<String>,
-    ) -> Vec<Coin> {
-        let mut node_balances = Coins::try_from(
-            self.app
-                .wrap()
-                .query_wasm_smart::<Vec<Coin>>(strategy_addr, &StrategyQueryMsg::Balances)
-                .unwrap(),
-        )
-        .unwrap();
-
-        for denom in denoms {
-            let contract_balance = self
-                .app
-                .wrap()
-                .query_balance(strategy_addr, &denom)
-                .unwrap_or_else(|_| Coin::new(0u128, denom.clone()));
-
-            node_balances.add(contract_balance).unwrap();
-        }
-
-        node_balances.into_vec()
+    pub fn query_strategy_balances(&self, strategy_addr: &Addr) -> Vec<Coin> {
+        self.app
+            .wrap()
+            .query_wasm_smart::<Vec<Coin>>(strategy_addr, &StrategyQueryMsg::Balances)
+            .unwrap()
     }
 
     pub fn query_balances(&self, addr: &Addr) -> Vec<Coin> {

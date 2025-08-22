@@ -1464,8 +1464,10 @@ mod integration_tests {
         let filled_amount = Coin::new(100_000u128, pair.denoms.ask(&order_action.side));
         let remaining_amount = Uint128::new(800_000);
 
+        let strategy_address = strategy.strategy_addr.clone();
+
         strategy
-            .assert_strategy_balances(&[])
+            .assert_address_balances(&strategy_address, &[])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
@@ -1477,7 +1479,7 @@ mod integration_tests {
                 )],
             )
             .execute()
-            .assert_strategy_balance(&filled_amount.clone())
+            .assert_address_balances(&strategy_address, &[filled_amount.clone()])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(

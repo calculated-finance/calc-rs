@@ -114,6 +114,10 @@ impl Operation<Condition> for Schedule {
             Err(_) => (vec![], Condition::Schedule(self)),
         }
     }
+
+    fn denoms(self, _deps: Deps) -> StdResult<Vec<String>> {
+        Ok(self.execution_rebate.into_iter().map(|c| c.denom).collect())
+    }
 }
 
 impl StatefulOperation<Condition> for Schedule {

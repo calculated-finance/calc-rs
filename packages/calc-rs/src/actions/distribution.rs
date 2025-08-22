@@ -195,4 +195,8 @@ impl Operation<Distribution> for Distribution {
             Err(_) => (vec![], self),
         }
     }
+
+    fn denoms(self, _deps: Deps) -> StdResult<Vec<String>> {
+        Ok(self.denoms)
+    }
 }

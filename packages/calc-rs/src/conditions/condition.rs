@@ -237,6 +237,13 @@ impl Operation<Condition> for Condition {
             _ => (vec![], self),
         }
     }
+
+    fn denoms(self, deps: Deps) -> StdResult<Vec<String>> {
+        match self {
+            Condition::Schedule(schedule) => schedule.denoms(deps),
+            _ => Ok(vec![]),
+        }
+    }
 }
 
 impl StatefulOperation<Condition> for Condition {

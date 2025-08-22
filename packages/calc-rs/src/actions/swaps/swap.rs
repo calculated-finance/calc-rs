@@ -373,6 +373,13 @@ impl Operation<Swap> for Swap {
             Err(_) => (vec![], self),
         }
     }
+
+    fn denoms(self, _deps: Deps) -> StdResult<Vec<String>> {
+        Ok(vec![
+            self.swap_amount.denom,
+            self.minimum_receive_amount.denom,
+        ])
+    }
 }
 
 #[cfg(test)]
