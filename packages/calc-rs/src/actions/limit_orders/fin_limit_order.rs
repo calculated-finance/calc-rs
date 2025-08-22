@@ -70,7 +70,7 @@ impl PriceStrategy {
                 let book_response = deps.querier.query_wasm_smart::<BookResponse>(
                     pair_address.clone(),
                     &QueryMsg::Book {
-                        limit: Some(10),
+                        limit: Some(1),
                         offset: None,
                     },
                 )?;
