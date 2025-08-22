@@ -91,7 +91,7 @@ pub enum ManagerExecuteMsg {
 #[derive(QueryResponses)]
 pub enum ManagerQueryMsg {
     #[returns(ManagerConfig)]
-    Config,
+    Config {},
     #[returns(Strategy)]
     Strategy { address: Addr },
     #[returns(Vec<Strategy>)]
@@ -102,5 +102,5 @@ pub enum ManagerQueryMsg {
         limit: Option<u16>,
     },
     #[returns(u64)]
-    Count,
+    Count {},
 }

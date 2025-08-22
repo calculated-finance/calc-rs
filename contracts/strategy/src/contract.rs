@@ -79,7 +79,7 @@ pub fn execute(
                 .add_event(Event::new(format!("{}/init", env!("CARGO_PKG_NAME"))))
                 .add_message(execute_actions_msg))
         }
-        StrategyExecuteMsg::Execute => {
+        StrategyExecuteMsg::Execute {} => {
             if info.sender != MANAGER.load(deps.storage)? {
                 return Err(ContractError::Unauthorized {});
             }
@@ -103,7 +103,7 @@ pub fn execute(
 
             let cancel_actions_msg = Contract(env.contract.address.clone()).call(
                 to_json_binary(&StrategyExecuteMsg::Process {
-                    operation: StrategyOperation::Cancel,
+                    operation: StrategyOperation::Cancel {},
                     previous: None,
                 })?,
                 vec![],
@@ -196,14 +196,14 @@ pub fn execute(
                 .add_message(withdrawal_msg)
                 .add_messages(fee_msgs))
         }
-        StrategyExecuteMsg::Cancel => {
+        StrategyExecuteMsg::Cancel {} => {
             if info.sender != MANAGER.load(deps.storage)? {
                 return Err(ContractError::Unauthorized {});
             }
 
             let cancel_actions_msg = Contract(env.contract.address.clone()).call(
                 to_json_binary(&StrategyExecuteMsg::Process {
-                    operation: StrategyOperation::Cancel,
+                    operation: StrategyOperation::Cancel {},
                     previous: None,
                 })?,
                 vec![],
@@ -247,7 +247,7 @@ pub fn execute(
 
                 let (messages, node) = match operation {
                     StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
-                    StrategyOperation::Cancel => current_node.cancel(deps.as_ref(), &env)?,
+                    StrategyOperation::Cancel {} => current_node.cancel(deps.as_ref(), &env)?,
                 };
 
                 NODES.save(deps.storage, &node)?;
@@ -305,12 +305,12 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     match msg {
-        StrategyQueryMsg::Config => to_json_binary(&StrategyConfig {
+        StrategyQueryMsg::Config {} => to_json_binary(&StrategyConfig {
             manager: MANAGER.load(deps.storage)?,
             owner: OWNER.load(deps.storage)?,
             nodes: NODES.all(deps.storage)?,
         }),
-        StrategyQueryMsg::Balances => {
+        StrategyQueryMsg::Balances {} => {
             let mut balances = NODES.all(deps.storage)?.iter().try_fold(
                 Coins::default(),
                 |mut acc, node| -> StdResult<Coins> {
@@ -445,7 +445,7 @@ mod tests {
             deps.as_mut(),
             env.clone(),
             message_info(&manager, &[]),
-            StrategyExecuteMsg::Execute
+            StrategyExecuteMsg::Execute {}
         )
         .is_ok());
 
@@ -454,7 +454,7 @@ mod tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&env.contract.address, &[]),
-                StrategyExecuteMsg::Execute
+                StrategyExecuteMsg::Execute {}
             ),
             Err(ContractError::Unauthorized {})
         );
@@ -464,7 +464,7 @@ mod tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&owner, &[]),
-                StrategyExecuteMsg::Execute
+                StrategyExecuteMsg::Execute {}
             ),
             Err(ContractError::Unauthorized {})
         );
@@ -474,7 +474,7 @@ mod tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&Addr::unchecked("anyone"), &[]),
-                StrategyExecuteMsg::Execute
+                StrategyExecuteMsg::Execute {}
             ),
             Err(ContractError::Unauthorized {})
         );
@@ -579,7 +579,7 @@ mod tests {
             deps.as_mut(),
             env.clone(),
             message_info(&manager, &[]),
-            StrategyExecuteMsg::Cancel
+            StrategyExecuteMsg::Cancel {}
         )
         .is_ok());
 
@@ -588,7 +588,7 @@ mod tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&env.contract.address, &[]),
-                StrategyExecuteMsg::Cancel
+                StrategyExecuteMsg::Cancel {}
             ),
             Err(ContractError::Unauthorized {})
         );
@@ -598,7 +598,7 @@ mod tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&owner, &[]),
-                StrategyExecuteMsg::Cancel
+                StrategyExecuteMsg::Cancel {}
             ),
             Err(ContractError::Unauthorized {})
         );
@@ -608,7 +608,7 @@ mod tests {
                 deps.as_mut(),
                 env.clone(),
                 message_info(&Addr::unchecked("anyone"), &[]),
-                StrategyExecuteMsg::Cancel
+                StrategyExecuteMsg::Cancel {}
             ),
             Err(ContractError::Unauthorized {})
         );

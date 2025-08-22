@@ -43,10 +43,10 @@ pub struct StrategyInstantiateMsg {
 #[cw_serde]
 pub enum StrategyExecuteMsg {
     Init(Vec<Node>),
-    Execute,
+    Execute {},
     Withdraw(Vec<Coin>),
     Update(Vec<Node>),
-    Cancel,
+    Cancel {},
     Process {
         operation: StrategyOperation,
         previous: Option<u16>,
@@ -57,9 +57,9 @@ pub enum StrategyExecuteMsg {
 #[derive(QueryResponses)]
 pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
-    Config,
+    Config {},
     #[returns(Vec<Coin>)]
-    Balances,
+    Balances {},
 }
 
 #[cw_serde]
