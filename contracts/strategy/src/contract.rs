@@ -305,12 +305,12 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
     match msg {
-        StrategyQueryMsg::Config => to_json_binary(&StrategyConfig {
+        StrategyQueryMsg::Config {} => to_json_binary(&StrategyConfig {
             manager: MANAGER.load(deps.storage)?,
             owner: OWNER.load(deps.storage)?,
             nodes: NODES.all(deps.storage)?,
         }),
-        StrategyQueryMsg::Balances => {
+        StrategyQueryMsg::Balances {} => {
             let balances = NODES.all(deps.storage)?.iter().try_fold(
                 Coins::default(),
                 |mut acc, node| -> StdResult<Coins> {

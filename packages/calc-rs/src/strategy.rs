@@ -57,9 +57,9 @@ pub enum StrategyExecuteMsg {
 #[derive(QueryResponses)]
 pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
-    Config,
+    Config {},
     #[returns(Vec<Coin>)]
-    Balances,
+    Balances {},
 }
 
 #[cw_serde]

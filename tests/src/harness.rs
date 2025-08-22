@@ -347,7 +347,7 @@ impl CalcTestApp {
         let mut node_balances = Coins::try_from(
             self.app
                 .wrap()
-                .query_wasm_smart::<Vec<Coin>>(strategy_addr, &StrategyQueryMsg::Balances)
+                .query_wasm_smart::<Vec<Coin>>(strategy_addr, &StrategyQueryMsg::Balances {})
                 .unwrap(),
         )
         .unwrap();

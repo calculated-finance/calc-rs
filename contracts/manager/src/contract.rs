@@ -49,7 +49,8 @@ pub fn instantiate(
 pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
+pub fn migrate(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
+    CONFIG.save(deps.storage, &msg)?;
     Ok(Response::new())
 }
 
@@ -339,7 +340,7 @@ pub fn execute(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
-        ManagerQueryMsg::Config => to_json_binary(&CONFIG.load(deps.storage)?),
+        ManagerQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         ManagerQueryMsg::Strategy { address } => {
             to_json_binary(&STRATEGIES.load(deps.storage, address)?)
         }
@@ -377,7 +378,7 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 
             to_json_binary(&strategies?)
         }
-        ManagerQueryMsg::Count => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
+        ManagerQueryMsg::Count {} => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
     }
 }
 
