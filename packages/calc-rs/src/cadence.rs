@@ -76,7 +76,7 @@ impl Cadence {
                             if previous_order_filled {
                                 true
                             } else {
-                                let new_price = strategy.get_new_price(deps, pair_address, side)?;
+                                let new_price = strategy.get_new_price(deps, pair_address)?;
                                 strategy.should_reset(*previous, new_price)
                             }
                         }
@@ -124,7 +124,7 @@ impl Cadence {
                 let price = if let Some(previous) = previous {
                     *previous
                 } else {
-                    strategy.get_new_price(deps, pair_address, side)?
+                    strategy.get_new_price(deps, pair_address)?
                 };
 
                 Condition::FinLimitOrderFilled {
@@ -197,7 +197,8 @@ impl Cadence {
                 previous,
             } => {
                 if let Some(previous) = previous {
-                    let new_price = strategy.get_new_price(deps, &pair_address, &side)?;
+                    let new_price = strategy.get_new_price(deps, &pair_address)?;
+
                     if strategy.should_reset(previous, new_price) {
                         Cadence::LimitOrder {
                             pair_address: pair_address.clone(),
@@ -217,7 +218,7 @@ impl Cadence {
                     Cadence::LimitOrder {
                         pair_address: pair_address.clone(),
                         side: side.clone(),
-                        previous: Some(strategy.get_new_price(deps, &pair_address, &side)?),
+                        previous: Some(strategy.get_new_price(deps, &pair_address)?),
                         strategy,
                     }
                 }
@@ -240,7 +241,10 @@ mod tests {
         testing::{mock_dependencies, mock_env},
         to_json_binary, ContractResult, SystemResult, Uint128, WasmQuery,
     };
-    use rujira_rs::fin::{BookItemResponse, BookResponse, OrderResponse, Price, QueryMsg};
+    use rujira_rs::fin::{
+        BookItemResponse, BookResponse, ConfigResponse, Denoms, OrderResponse, Price, QueryMsg,
+        Tick,
+    };
     use std::time::Duration;
 
     #[test]
@@ -480,25 +484,46 @@ mod tests {
         );
 
         let offset_strategy = PriceStrategy::Offset {
+            side: side.clone(),
             direction: Direction::Above,
             offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
             tolerance: Some(Offset::Percent(50)),
         };
 
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&BookResponse {
-                    base: vec![BookItemResponse {
-                        price: Decimal::from_str("1.45").unwrap(),
-                        total: Uint128::new(1_000_000),
-                    }],
-                    quote: vec![BookItemResponse {
-                        price: Decimal::from_str("1.35").unwrap(),
-                        total: Uint128::new(1_000_000),
-                    }],
-                })
-                .unwrap(),
-            ))
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Book { .. } => to_json_binary(&BookResponse {
+                        base: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.45").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                        quote: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.35").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
+                    })
+                    .unwrap(),
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            }))
         });
 
         assert_eq!(
@@ -686,25 +711,46 @@ mod tests {
         );
 
         let offset_strategy = PriceStrategy::Offset {
+            side: side.clone(),
             direction: Direction::Above,
             offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
             tolerance: Some(Offset::Percent(50)),
         };
 
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&BookResponse {
-                    base: vec![BookItemResponse {
-                        price: Decimal::from_str("1.45").unwrap(),
-                        total: Uint128::new(1_000_000),
-                    }],
-                    quote: vec![BookItemResponse {
-                        price: Decimal::from_str("1.35").unwrap(),
-                        total: Uint128::new(1_000_000),
-                    }],
-                })
-                .unwrap(),
-            ))
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Book { .. } => to_json_binary(&BookResponse {
+                        base: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.45").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                        quote: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.35").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
+                    })
+                    .unwrap(),
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            }))
         });
 
         assert_eq!(
@@ -835,20 +881,34 @@ mod tests {
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
 
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&OrderResponse {
-                    owner: "scheduler".to_string(),
-                    side: Side::Base,
-                    price: Price::Fixed(Decimal::from_str("100.0").unwrap()),
-                    rate: Decimal::from_str("0.1").unwrap(),
-                    updated_at: Timestamp::from_seconds(12),
-                    offer: Uint128::new(7123123),
-                    remaining: Uint128::new(1),
-                    filled: Uint128::new(23453),
-                })
-                .unwrap(),
-            ))
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Order { .. } => to_json_binary(&OrderResponse {
+                        owner: "scheduler".to_string(),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::from_str("100.0").unwrap()),
+                        rate: Decimal::from_str("0.1").unwrap(),
+                        updated_at: Timestamp::from_seconds(12),
+                        offer: Uint128::new(7123123),
+                        remaining: Uint128::new(1),
+                        filled: Uint128::new(23453),
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
+                    })
+                    .unwrap(),
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            }))
         });
 
         assert!(!Cadence::LimitOrder {
@@ -860,20 +920,34 @@ mod tests {
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
 
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&OrderResponse {
-                    owner: "scheduler".to_string(),
-                    side: Side::Base,
-                    price: Price::Fixed(Decimal::from_str("100.0").unwrap()),
-                    rate: Decimal::from_str("0.1").unwrap(),
-                    updated_at: Timestamp::from_seconds(12),
-                    offer: Uint128::new(7123123),
-                    remaining: Uint128::new(0),
-                    filled: Uint128::new(23453),
-                })
-                .unwrap(),
-            ))
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Order { .. } => to_json_binary(&OrderResponse {
+                        owner: "scheduler".to_string(),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::from_str("100.0").unwrap()),
+                        rate: Decimal::from_str("0.1").unwrap(),
+                        updated_at: Timestamp::from_seconds(12),
+                        offer: Uint128::new(7123123),
+                        remaining: Uint128::new(0),
+                        filled: Uint128::new(23453),
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
+                    })
+                    .unwrap(),
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            }))
         });
 
         assert!(Cadence::LimitOrder {
@@ -890,6 +964,7 @@ mod tests {
             side: Side::Base,
             previous: None,
             strategy: PriceStrategy::Offset {
+                side: Side::Base,
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -898,20 +973,34 @@ mod tests {
         .is_due(deps.as_ref(), &env, &Addr::unchecked("scheduler"))
         .unwrap());
 
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&OrderResponse {
-                    owner: "scheduler".to_string(),
-                    side: Side::Base,
-                    price: Price::Fixed(Decimal::from_str("1.55").unwrap()),
-                    rate: Decimal::from_str("0.1").unwrap(),
-                    updated_at: Timestamp::from_seconds(12),
-                    offer: Uint128::new(7123123),
-                    remaining: Uint128::new(0),
-                    filled: Uint128::new(23453),
-                })
-                .unwrap(),
-            ))
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Order { .. } => to_json_binary(&OrderResponse {
+                        owner: "scheduler".to_string(),
+                        side: Side::Base,
+                        price: Price::Fixed(Decimal::from_str("1.55").unwrap()),
+                        rate: Decimal::from_str("0.1").unwrap(),
+                        updated_at: Timestamp::from_seconds(12),
+                        offer: Uint128::new(7123123),
+                        remaining: Uint128::new(0),
+                        filled: Uint128::new(23453),
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
+                    })
+                    .unwrap(),
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            }))
         });
 
         assert!(Cadence::LimitOrder {
@@ -919,6 +1008,7 @@ mod tests {
             side: Side::Base,
             previous: Some(Decimal::from_str("1.55").unwrap()),
             strategy: PriceStrategy::Offset {
+                side: Side::Base,
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -942,14 +1032,30 @@ mod tests {
                     })
                     .unwrap(),
                     QueryMsg::Book { .. } => to_json_binary(&BookResponse {
-                        base: vec![BookItemResponse {
-                            price: Decimal::from_str("1.45").unwrap(),
-                            total: Uint128::new(1_000_000),
-                        }],
-                        quote: vec![BookItemResponse {
-                            price: Decimal::from_str("1.35").unwrap(),
-                            total: Uint128::new(1_000_000),
-                        }],
+                        base: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.45").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                        quote: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.35").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
                     _ => panic!("unexpected query type"),
@@ -963,6 +1069,7 @@ mod tests {
             side: Side::Base,
             previous: Some(Decimal::from_str("1.65").unwrap()),
             strategy: PriceStrategy::Offset {
+                side: Side::Base,
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -986,14 +1093,30 @@ mod tests {
                     })
                     .unwrap(),
                     QueryMsg::Book { .. } => to_json_binary(&BookResponse {
-                        base: vec![BookItemResponse {
-                            price: Decimal::from_str("1.45").unwrap(),
-                            total: Uint128::new(1_000_000),
-                        }],
-                        quote: vec![BookItemResponse {
-                            price: Decimal::from_str("1.35").unwrap(),
-                            total: Uint128::new(1_000_000),
-                        }],
+                        base: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.45").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                        quote: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.35").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
                     _ => panic!("unexpected query type"),
@@ -1007,6 +1130,7 @@ mod tests {
             side: Side::Base,
             previous: Some(Decimal::from_str("1.65").unwrap()),
             strategy: PriceStrategy::Offset {
+                side: Side::Base,
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(50)),
@@ -1030,14 +1154,30 @@ mod tests {
                     })
                     .unwrap(),
                     QueryMsg::Book { .. } => to_json_binary(&BookResponse {
-                        base: vec![BookItemResponse {
-                            price: Decimal::from_str("1.45").unwrap(),
-                            total: Uint128::new(1_000_000),
-                        }],
-                        quote: vec![BookItemResponse {
-                            price: Decimal::from_str("1.35").unwrap(),
-                            total: Uint128::new(1_000_000),
-                        }],
+                        base: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.45").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                        quote: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.35").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
                     _ => panic!("unexpected query type"),
@@ -1051,6 +1191,7 @@ mod tests {
             side: Side::Base,
             previous: Some(Decimal::from_str("1.65").unwrap()),
             strategy: PriceStrategy::Offset {
+                side: Side::Base,
                 direction: Direction::Above,
                 offset: Offset::Exact(Decimal::from_str("0.10").unwrap()),
                 tolerance: Some(Offset::Percent(1)),

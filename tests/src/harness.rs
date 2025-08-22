@@ -144,13 +144,43 @@ impl CalcTestApp {
         let orders = vec![
             (
                 Side::Base,
+                Price::Fixed(Decimal::one() + Decimal::percent(4)),
+                Some(Uint128::new(1)),
+            ),
+            (
+                Side::Base,
+                Price::Fixed(Decimal::one() + Decimal::percent(3)),
+                Some(Uint128::new(1)),
+            ),
+            (
+                Side::Base,
+                Price::Fixed(Decimal::one() + Decimal::percent(2)),
+                Some(Uint128::new(1)),
+            ),
+            (
+                Side::Base,
                 Price::Fixed(Decimal::one() + Decimal::percent(1)),
-                Some(Uint128::new(100_000)),
+                Some(Uint128::new(10_000_000)),
             ),
             (
                 Side::Quote,
                 Price::Fixed(Decimal::one() - Decimal::percent(1)),
-                Some(Uint128::new(100_000)),
+                Some(Uint128::new(10_000_000)),
+            ),
+            (
+                Side::Quote,
+                Price::Fixed(Decimal::one() - Decimal::percent(2)),
+                Some(Uint128::new(1)),
+            ),
+            (
+                Side::Quote,
+                Price::Fixed(Decimal::one() - Decimal::percent(3)),
+                Some(Uint128::new(1)),
+            ),
+            (
+                Side::Quote,
+                Price::Fixed(Decimal::one() - Decimal::percent(4)),
+                Some(Uint128::new(1)),
             ),
         ];
 
@@ -159,8 +189,8 @@ impl CalcTestApp {
             fin_addr.clone(),
             &ExecuteMsg::Order((orders, None)),
             &[
-                Coin::new(100_000u128, base_denom),
-                Coin::new(100_000u128, quote_denom),
+                Coin::new(10_000_003u128, base_denom),
+                Coin::new(10_000_003u128, quote_denom),
             ],
         )
         .unwrap();

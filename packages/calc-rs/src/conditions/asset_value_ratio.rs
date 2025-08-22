@@ -6,6 +6,8 @@ use rujira_rs::{
     Layer1Asset,
 };
 
+use crate::rujira::get_mid_price;
+
 #[cw_serde]
 pub enum PriceSource {
     Fin { address: Addr },
@@ -87,10 +89,9 @@ impl AssetValueRatio {
 
                 let pair = deps
                     .querier
-                    .query_wasm_smart::<ConfigResponse>(address, &QueryMsg::Config {})?;
+                    .query_wasm_smart::<ConfigResponse>(&address, &QueryMsg::Config {})?;
 
-                let mid_price = (book_response.base[0].price + book_response.quote[0].price)
-                    / Decimal::from_ratio(2u128, 1u128);
+                let mid_price = get_mid_price(deps, &address)?;
 
                 if mid_price.is_zero() {
                     return Err(StdError::generic_err("Mid price is zero".to_string()));
@@ -175,14 +176,20 @@ mod tests {
                     })
                     .unwrap(),
                     QueryMsg::Book { .. } => to_json_binary(&BookResponse {
-                        base: vec![BookItemResponse {
-                            price: Decimal::from_str("2.1").unwrap(),
-                            total: Uint128::new(1000),
-                        }],
-                        quote: vec![BookItemResponse {
-                            price: Decimal::from_str("1.9").unwrap(),
-                            total: Uint128::new(1000),
-                        }],
+                        base: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("2.1").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
+                        quote: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1.9").unwrap(),
+                                total: Uint128::new(1_000_000),
+                            };
+                            4
+                        ],
                     })
                     .unwrap(),
                     _ => panic!("Unexpected query type"),

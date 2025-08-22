@@ -5,6 +5,7 @@ pub mod constants;
 pub mod core;
 pub mod manager;
 pub mod operation;
+pub mod rujira;
 pub mod scheduler;
 pub mod strategy;
 pub mod thorchain;
