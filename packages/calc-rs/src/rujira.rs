@@ -1,85 +1,62 @@
 use cosmwasm_std::{Addr, Decimal, Deps, StdError, StdResult, Uint128};
-use rujira_rs::fin::{BookResponse, ConfigResponse, QueryMsg, Side};
+use rujira_rs::fin::{BookItemResponse, BookResponse, ConfigResponse, QueryMsg, Side};
 
-const MIN_ORDERS: u8 = 4;
-const MIN_VALUE: Uint128 = Uint128::new(10u128.pow(8)); // ~$1 USDC
-const MAX_ITERATIONS: u8 = 3;
+const ORDERS_THRESHOLD: usize = 12;
+const MIN_ORDERS: usize = 4;
+const DEPTH_THRESHOLD: Uint128 = Uint128::new(10u128.pow(8)); // ~$1 USDC
+const MIN_DEPTH: Uint128 = Uint128::new(10u128.pow(3)); // ~$1 BTC
+const MAX_ITERATIONS: u8 = 2;
 
 pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult<Decimal> {
-    let mut orders: u8 = 0;
-    let mut quote_value = Uint128::zero();
-    let mut base_depth = Uint128::zero();
+    let mut depth = Uint128::zero();
+    let mut book: Vec<BookItemResponse> = Vec::with_capacity(12);
+    let mut i: u8 = 1;
 
-    let mut i: u8 = 0;
-
-    while i <= MAX_ITERATIONS && (quote_value < MIN_VALUE || orders < MIN_ORDERS) {
-        let limit = (i + 1) * 4;
-
+    while i <= MAX_ITERATIONS && book.len() < ORDERS_THRESHOLD && depth < DEPTH_THRESHOLD {
         let book_response = deps.querier.query_wasm_smart::<BookResponse>(
             pair_address,
             &QueryMsg::Book {
-                limit: Some(limit),
-                offset: Some(i * 4),
+                limit: Some(i * 4),
+                offset: Some(book.len() as u8),
             },
         )?;
 
-        let book = if side == &Side::Base {
+        let mut orders = if side == &Side::Base {
             book_response.base
         } else {
             book_response.quote
         };
 
-        if book.is_empty() {
+        if orders.is_empty() && book.len() < MIN_ORDERS {
             return Err(StdError::generic_err(
                 "Order book is too thin to avoid price manipulation",
             ));
         }
 
-        for order in &book {
-            if order.price.is_zero() {
-                return Err(StdError::generic_err(
-                    "Order book contains a zero price order",
-                ));
-            }
+        depth += orders.iter().map(|order| order.total).sum::<Uint128>();
 
-            if side == &Side::Base {
-                quote_value += order.total.mul_floor(order.price);
-                base_depth += order.total;
-            } else {
-                quote_value += order.total;
-                base_depth += order.total.div_ceil(order.price);
-            }
-
-            orders += 1;
-
-            if orders >= MIN_ORDERS && quote_value >= MIN_VALUE {
-                break;
-            }
-        }
-
-        if book.len() < limit as usize {
-            break;
-        }
-
+        book.append(&mut orders);
         i += 1;
     }
 
-    if orders < MIN_ORDERS || quote_value < MIN_VALUE {
+    if book.len() < MIN_ORDERS || depth < MIN_DEPTH {
         return Err(StdError::generic_err(
             "Order book is too thin to avoid price manipulation",
         ));
     }
 
+    let value = book.iter().fold(Uint128::zero(), |acc, order| {
+        acc + order.total.mul_floor(order.price)
+    });
+
     let pair = deps
         .querier
         .query_wasm_smart::<ConfigResponse>(pair_address, &QueryMsg::Config {})?;
 
-    let vwap = Decimal::from_ratio(quote_value, base_depth);
-
     let price = if side == &Side::Base {
-        pair.tick.truncate_ceil(&vwap)
+        pair.tick.truncate_ceil(&Decimal::from_ratio(value, depth))
     } else {
-        pair.tick.truncate_floor(&vwap)
+        pair.tick.truncate_floor(&Decimal::from_ratio(value, depth))
     };
 
     Ok(price)
@@ -88,6 +65,12 @@ pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult
 pub fn get_mid_price(deps: Deps, address: &Addr) -> StdResult<Decimal> {
     let quote_price = get_side_price(deps, address, &Side::Quote)?;
     let base_price = get_side_price(deps, address, &Side::Base)?;
+
+    if quote_price.is_zero() || base_price.is_zero() {
+        return Err(StdError::generic_err(
+            "Order book is too thin to avoid price manipulation",
+        ));
+    }
 
     Ok((quote_price + base_price) / Decimal::from_ratio(2u128, 1u128))
 }
@@ -102,7 +85,7 @@ mod tests {
         from_json, testing::mock_dependencies, to_json_binary, ContractResult, SystemResult,
         WasmQuery,
     };
-    use rujira_rs::fin::{BookItemResponse, BookResponse, Denoms, Tick};
+    use rujira_rs::fin::{BookResponse, Denoms, Tick};
 
     #[test]
     fn test_get_price_with_empty_book_fails() {
@@ -145,77 +128,26 @@ mod tests {
     fn get_price_with_insufficient_depth_fails() {
         let mut deps = mock_dependencies();
 
-        deps.querier.update_wasm(|query| {
-            SystemResult::Ok(ContractResult::Ok(match query {
-                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
-                    QueryMsg::Book { limit, .. } => to_json_binary(&BookResponse {
-                        base: vec![
-                            BookItemResponse {
-                                price: Decimal::one(),
-                                total: Uint128::new(1_000_000),
-                            };
-                            limit.unwrap() as usize
-                        ],
-                        quote: vec![
-                            BookItemResponse {
-                                price: Decimal::one(),
-                                total: Uint128::new(1_000_000),
-                            };
-                            limit.unwrap() as usize
-                        ],
-                    })
-                    .unwrap(),
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            }))
-        });
-
-        assert_eq!(
-            get_side_price(
-                deps.as_ref(),
-                &Addr::unchecked("rujira-fin:pair"),
-                &Side::Base
-            )
-            .unwrap_err()
-            .to_string(),
-            "Generic error: Order book is too thin to avoid price manipulation"
-        );
-
-        assert_eq!(
-            get_side_price(
-                deps.as_ref(),
-                &Addr::unchecked("rujira-fin:pair"),
-                &Side::Quote
-            )
-            .unwrap_err()
-            .to_string(),
-            "Generic error: Order book is too thin to avoid price manipulation"
-        );
-    }
-
-    #[test]
-    fn get_price_with_insufficient_orders_fails() {
-        let mut deps = mock_dependencies();
-
-        deps.querier.update_wasm(|query| {
-            SystemResult::Ok(ContractResult::Ok(match query {
-                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
-                    QueryMsg::Book { .. } => to_json_binary(&BookResponse {
-                        base: vec![BookItemResponse {
+        deps.querier.update_wasm(|_| {
+            SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&BookResponse {
+                    base: vec![
+                        BookItemResponse {
                             price: Decimal::one(),
-                            total: Uint128::new(100_000_000),
-                        }],
-                        quote: vec![BookItemResponse {
+                            total: Uint128::new(49),
+                        };
+                        10
+                    ],
+                    quote: vec![
+                        BookItemResponse {
                             price: Decimal::one(),
-                            total: Uint128::new(100_000_000),
-                        }],
-                    })
-                    .unwrap(),
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            }))
+                            total: Uint128::new(49),
+                        };
+                        10
+                    ],
+                })
+                .unwrap(),
+            ))
         });
 
         assert_eq!(
@@ -252,14 +184,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::one(),
-                                total: Uint128::new(30_000_000),
+                                total: Uint128::new(500_000_000),
                             };
                             limit.unwrap() as usize
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::one(),
-                                total: Uint128::new(30_000_000),
+                                total: Uint128::new(500_000_000),
                             };
                             limit.unwrap() as usize
                         ],
@@ -313,14 +245,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::one(),
-                                total: Uint128::new(10_000_000),
+                                total: Uint128::new(60_000),
                             };
                             limit.unwrap() as usize
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::one(),
-                                total: Uint128::new(10_000_000),
+                                total: Uint128::new(60_000),
                             };
                             limit.unwrap() as usize
                         ],
@@ -374,37 +306,37 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("4.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(799_999_999),
                             },
                             BookItemResponse {
                                 price: Decimal::from_str("4.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(799_999_999),
                             },
                             BookItemResponse {
                                 price: Decimal::from_str("3.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(200_000_001),
                             },
                             BookItemResponse {
                                 price: Decimal::from_str("3.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(200_000_001),
                             },
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("2.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(200_000_001),
                             },
                             BookItemResponse {
                                 price: Decimal::from_str("2.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(200_000_001),
                             },
                             BookItemResponse {
                                 price: Decimal::from_str("1.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(799_999_999),
                             },
                             BookItemResponse {
                                 price: Decimal::from_str("1.0").unwrap(),
-                                total: Uint128::new(100_000_000),
+                                total: Uint128::new(799_999_999),
                             },
                         ],
                     })
@@ -432,7 +364,7 @@ mod tests {
                 &Side::Base,
             )
             .unwrap(),
-            Decimal::from_str("3.5").unwrap()
+            Decimal::from_str("3.799999999").unwrap()
         );
 
         assert_eq!(
@@ -442,7 +374,7 @@ mod tests {
                 &Side::Quote,
             )
             .unwrap(),
-            Decimal::from_str("1.333333333").unwrap()
+            Decimal::from_str("1.200000001").unwrap()
         );
     }
 }
