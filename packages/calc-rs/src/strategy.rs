@@ -173,13 +173,6 @@ impl Operation<Node> for Node {
             }
         }
     }
-
-    fn denoms(self, deps: Deps) -> StdResult<Vec<String>> {
-        match self {
-            Node::Action { action, .. } => action.denoms(deps),
-            Node::Condition { condition, .. } => condition.denoms(deps),
-        }
-    }
 }
 
 impl StatefulOperation<Node> for Node {

@@ -5,7 +5,6 @@ use crate::manager::Affiliate;
 pub trait Operation<T> {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, T);
-    fn denoms(self, deps: Deps) -> StdResult<Vec<String>>;
 }
 
 pub trait StatefulOperation<T> {
