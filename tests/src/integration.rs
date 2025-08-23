@@ -1372,7 +1372,7 @@ mod integration_tests {
             ..default_limit_order_action(&harness)
         };
 
-        let starting_balance = Coin::new(100_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
         let pair = harness.query_fin_config(&order_action.pair_address);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -1383,8 +1383,8 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(10_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(79_999_994);
+        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(7_999_999_994);
 
         strategy
             .assert_strategy_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()))
@@ -1404,7 +1404,7 @@ mod integration_tests {
     fn test_execute_limit_order_action_with_fixed_price_strategy_is_idempotent() {
         let mut harness = CalcTestApp::setup();
         let order_action = default_limit_order_action(&harness);
-        let starting_balance = Coin::new(100_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_nodes(vec![Node::Action {
@@ -1447,7 +1447,7 @@ mod integration_tests {
             ..default_limit_order_action(&harness)
         };
 
-        let starting_balance = Coin::new(100_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
         let pair = harness.query_fin_config(&order_action.pair_address);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -1458,8 +1458,8 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(10_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(79_999_994);
+        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(7_999_999_994);
 
         let strategy_address = strategy.strategy_addr.clone();
 
@@ -1499,7 +1499,7 @@ mod integration_tests {
             ..default_limit_order_action(&harness)
         };
 
-        let starting_balance = Coin::new(100_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
         let pair = harness.query_fin_config(&order_action.pair_address);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -1510,8 +1510,8 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(10_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(79_999_994);
+        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(7_999_999_994);
 
         let strategy_address = strategy.strategy_addr.clone();
 
@@ -1551,7 +1551,7 @@ mod integration_tests {
             ..default_limit_order_action(&harness)
         };
 
-        let starting_balance = Coin::new(100_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
         let pair = harness.query_fin_config(&order_action.pair_address);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -1562,8 +1562,8 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(10_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(79_999_994);
+        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(7_999_999_994);
 
         let strategy_address = strategy.strategy_addr.clone();
 
@@ -1745,7 +1745,7 @@ mod integration_tests {
             ..default_limit_order_action(&harness)
         };
 
-        let starting_balance = Coin::new(10_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
         let unknown = harness.unknown.clone();
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -1769,7 +1769,7 @@ mod integration_tests {
                 )],
             );
 
-        let new_order_amount = Coin::new(20_000_000u128, pair.denoms.base());
+        let new_order_amount = Coin::new(2_000_000_000u128, pair.denoms.base());
 
         strategy
             .harness
@@ -1818,7 +1818,7 @@ mod integration_tests {
             ..default_limit_order_action(&harness)
         };
 
-        let starting_balance = Coin::new(10_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
         let unknown = harness.unknown.clone();
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -1830,7 +1830,7 @@ mod integration_tests {
             .instantiate(&[starting_balance.clone()]);
 
         strategy
-            .assert_strategy_balance(&starting_balance.clone())
+            .assert_strategy_balances(&[starting_balance.clone()])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
@@ -1842,7 +1842,7 @@ mod integration_tests {
                 )],
             );
 
-        let new_order_amount = Coin::new(20_000_000u128, pair.denoms.base());
+        let new_order_amount = Coin::new(2_000_000_000u128, pair.denoms.base());
 
         strategy
             .harness
@@ -1860,7 +1860,7 @@ mod integration_tests {
 
         strategy
             .execute()
-            .assert_strategy_balance(&starting_balance.clone())
+            .assert_strategy_balances(&[starting_balance.clone()])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
@@ -1883,7 +1883,7 @@ mod integration_tests {
             strategy: PriceStrategy::Fixed(price),
             ..default_limit_order_action(&harness)
         };
-        let starting_balance = Coin::new(100_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_nodes(vec![Node::Action {
@@ -1893,8 +1893,8 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let remaining_amount = Uint128::new(79_999_994);
-        let filled_amount = Coin::new(10_000_002u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(7_999_999_994);
+        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
 
         strategy
             .assert_strategy_fin_orders(
@@ -1925,7 +1925,7 @@ mod integration_tests {
             strategy: PriceStrategy::Fixed(price),
             ..default_limit_order_action(&harness)
         };
-        let starting_balance = Coin::new(100_000_000u128, order_action.bid_denom.clone());
+        let starting_balance = Coin::new(10_000_000_000u128, order_action.bid_denom.clone());
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_nodes(vec![Node::Action {
@@ -1935,8 +1935,8 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let remaining_amount = Uint128::new(79_999_994);
-        let filled_amount = Coin::new(10_000_002u128, pair.denoms.ask(&order_action.side));
+        let remaining_amount = Uint128::new(7_999_999_994);
+        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
 
         let strategy_address = strategy.strategy_addr.clone();
 

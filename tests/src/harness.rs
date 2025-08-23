@@ -119,11 +119,11 @@ impl CalcTestApp {
                     storage,
                     &owner,
                     vec![
-                        Coin::new(1_000_000_000u128, base_denom),
-                        Coin::new(1_000_000_000u128, quote_denom),
-                        Coin::new(1_000_000_000u128, "x/ruji"),
-                        Coin::new(1_000_000_000u128, "ETH-USDC"),
-                        Coin::new(1_000_000_000u128, "BTC-BTC"),
+                        Coin::new(100_000_000_000u128, base_denom),
+                        Coin::new(100_000_000_000u128, quote_denom),
+                        Coin::new(100_000_000_000u128, "x/ruji"),
+                        Coin::new(100_000_000_000u128, "ETH-USDC"),
+                        Coin::new(100_000_000_000u128, "BTC-BTC"),
                     ],
                 )
                 .unwrap();
@@ -133,9 +133,9 @@ impl CalcTestApp {
                     storage,
                     &unknown,
                     vec![
-                        Coin::new(1_000_000_000u128, base_denom),
-                        Coin::new(1_000_000_000u128, quote_denom),
-                        Coin::new(1_000_000_000u128, "x/ruji"),
+                        Coin::new(100_000_000_000u128, base_denom),
+                        Coin::new(100_000_000_000u128, quote_denom),
+                        Coin::new(100_000_000_000u128, "x/ruji"),
                     ],
                 )
                 .unwrap();
@@ -160,12 +160,12 @@ impl CalcTestApp {
             (
                 Side::Base,
                 Price::Fixed(Decimal::one() + Decimal::percent(1)),
-                Some(Uint128::new(10_000_000)),
+                Some(Uint128::new(1_000_000_000)),
             ),
             (
                 Side::Quote,
                 Price::Fixed(Decimal::one() - Decimal::percent(1)),
-                Some(Uint128::new(10_000_000)),
+                Some(Uint128::new(1_000_000_000)),
             ),
             (
                 Side::Quote,
@@ -189,8 +189,8 @@ impl CalcTestApp {
             fin_addr.clone(),
             &ExecuteMsg::Order((orders, None)),
             &[
-                Coin::new(10_000_003u128, base_denom),
-                Coin::new(10_000_003u128, quote_denom),
+                Coin::new(1_000_000_003u128, base_denom),
+                Coin::new(1_000_000_003u128, quote_denom),
             ],
         )
         .unwrap();

@@ -167,14 +167,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("2.1").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.9").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
