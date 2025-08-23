@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashSet};
+use std::cmp::min;
 
 use calc_rs::{
     core::{Contract, ContractError, ContractResult},
@@ -322,15 +322,8 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
                 },
             )?;
 
-            let denoms = NODES
-                .all(deps.storage)?
-                .into_iter()
-                .flat_map(|node| node.denoms(deps))
-                .flatten()
-                .collect::<HashSet<_>>();
-
-            for denom in denoms {
-                let balance = deps.querier.query_balance(&env.contract.address, &denom)?;
+            #[allow(deprecated)]
+            for balance in deps.querier.query_all_balances(&env.contract.address)? {
                 balances.add(balance)?;
             }
 
