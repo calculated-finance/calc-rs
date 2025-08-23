@@ -497,14 +497,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.45").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.35").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
@@ -724,14 +724,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.45").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.35").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
@@ -1035,14 +1035,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.45").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.35").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
@@ -1096,14 +1096,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.45").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.35").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
@@ -1157,14 +1157,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.45").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::from_str("1.35").unwrap(),
-                                total: Uint128::new(1_000_000),
+                                total: Uint128::new(30_000_000),
                             };
                             4
                         ],
