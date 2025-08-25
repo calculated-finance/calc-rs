@@ -4,6 +4,7 @@ use calc_rs::{
     core::{Contract, ContractError, ContractResult},
     manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg},
     strategy::{StrategyExecuteMsg, StrategyQueryMsg},
+    thorchain::is_secured_asset,
     tokenizer::{TokenizerConfig, TokenizerExecuteMsg, TokenizerInstantiateMsg, TokenizerQueryMsg},
 };
 use cosmwasm_schema::cw_serde;
@@ -13,7 +14,7 @@ use cosmwasm_std::{
 use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdResult};
 use rujira_rs::TokenFactory;
 
-use crate::state::{BASE_DENOM, DENOM, DESCRIPTION, ORACLES, STRATEGY};
+use crate::state::{DENOM, DESCRIPTION, ORACLES, QUOTE_DENOM, STRATEGY};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -29,8 +30,15 @@ pub fn instantiate(
         )));
     }
 
+    if !is_secured_asset(&msg.quote_denom) {
+        return Err(ContractError::generic_err(format!(
+            "Quote denom {} must be a secured asset",
+            msg.quote_denom
+        )));
+    }
+
     DENOM.save(deps.storage, &msg.token_metadata.name)?;
-    BASE_DENOM.save(deps.storage, &msg.base_denom)?;
+    QUOTE_DENOM.save(deps.storage, &msg.quote_denom)?;
     ORACLES.save(deps.storage, &msg.oracles)?;
 
     let strategy_id = deps
@@ -236,7 +244,7 @@ pub fn execute(
                 to_address: info.sender.to_string(),
                 amount: vec![Coin::new(
                     value_delta.u128(),
-                    BASE_DENOM.load(deps.storage)?,
+                    QUOTE_DENOM.load(deps.storage)?,
                 )],
             };
 
@@ -252,7 +260,7 @@ pub fn query(deps: Deps, _env: Env, msg: TokenizerQueryMsg) -> StdResult<Binary>
     match msg {
         TokenizerQueryMsg::Config {} => to_json_binary(&TokenizerConfig {
             denom: DENOM.load(deps.storage)?,
-            base_denom: BASE_DENOM.load(deps.storage)?,
+            quote_denom: QUOTE_DENOM.load(deps.storage)?,
             oracles: ORACLES.load(deps.storage)?,
             strategy_address: STRATEGY.load(deps.storage)?,
             description: DESCRIPTION.load(deps.storage)?,
@@ -275,7 +283,7 @@ fn get_strategy_value(deps: Deps) -> StdResult<Coin> {
             .query_wasm_smart::<Vec<Coin>>(strategy, &StrategyQueryMsg::Balances {})?,
     )?;
 
-    let quote_denom = BASE_DENOM.load(deps.storage)?;
+    let quote_denom = QUOTE_DENOM.load(deps.storage)?;
 
     let mut total_value = Uint128::zero();
 
