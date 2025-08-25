@@ -9,3 +9,4 @@ pub mod rujira;
 pub mod scheduler;
 pub mod strategy;
 pub mod thorchain;
+pub mod tokenizer;
