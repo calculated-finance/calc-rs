@@ -313,6 +313,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "calc-tokenizer"
+version = "0.1.0"
+dependencies = [
+ "calc-rs",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
