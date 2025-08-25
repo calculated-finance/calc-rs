@@ -156,20 +156,23 @@ pub fn execute(
 
             let strategy_address = STRATEGY.load(deps.storage)?;
 
-            let cancel_strategy_msg = Contract(strategy_address)
+            let cancel_strategy_msg = Contract(strategy_address.clone())
                 .call(to_json_binary(&StrategyExecuteMsg::Cancel {})?, vec![]);
 
-            let withdraw_strategy_msg = Contract(strategy_address).call(
-                to_json_binary(&StrategyExecuteMsg::Withdraw(withdrawal))?,
+            let withdraw_strategy_msg = Contract(strategy_address.clone()).call(
+                to_json_binary(&StrategyExecuteMsg::Withdraw(withdrawal.clone()))?,
                 vec![],
             );
+
+            let execute_strategy_msg = Contract(strategy_address)
+                .call(to_json_binary(&StrategyExecuteMsg::Execute {})?, vec![]);
 
             let distribute_msg = BankMsg::Send {
                 to_address: info.sender.to_string(),
                 amount: withdrawal,
             };
 
-            let value = get_strategy_value(deps)?;
+            let value = get_strategy_value(deps.as_ref())?;
 
             let burn_msg = Contract(env.contract.address).call(
                 to_json_binary(&TokenizerExecuteMsg::Burn {
@@ -181,7 +184,8 @@ pub fn execute(
             Ok(Response::new()
                 .add_message(cancel_strategy_msg)
                 .add_message(withdraw_strategy_msg)
-                .add_message(withdrawal_msg)
+                .add_message(execute_strategy_msg)
+                .add_message(distribute_msg)
                 .add_message(burn_msg))
         }
         TokenizerExecuteMsg::Mint { previous_value } => {
