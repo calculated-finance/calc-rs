@@ -1,5 +1,5 @@
 {
-  "contract_name": "scheduler",
+  "contract_name": "calc-scheduler",
   "contract_version": "0.1.0",
   "idl_version": "1.0.0",
   "instantiate": {
@@ -588,7 +588,8 @@
                 "type": "object",
                 "required": [
                   "direction",
-                  "offset"
+                  "offset",
+                  "side"
                 ],
                 "properties": {
                   "direction": {
@@ -596,6 +597,9 @@
                   },
                   "offset": {
                     "$ref": "#/definitions/Offset"
+                  },
+                  "side": {
+                    "$ref": "#/definitions/Side"
                   },
                   "tolerance": {
                     "anyOf": [
@@ -1587,7 +1591,8 @@
                   "type": "object",
                   "required": [
                     "direction",
-                    "offset"
+                    "offset",
+                    "side"
                   ],
                   "properties": {
                     "direction": {
@@ -1595,6 +1600,9 @@
                     },
                     "offset": {
                       "$ref": "#/definitions/Offset"
+                    },
+                    "side": {
+                      "$ref": "#/definitions/Side"
                     },
                     "tolerance": {
                       "anyOf": [

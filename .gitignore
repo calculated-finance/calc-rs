@@ -8,3 +8,4 @@ GEMINI.md
 *.ts
 *.js
 query.proto
+!scripts/types.ts
