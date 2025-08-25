@@ -3,14 +3,13 @@ use std::hash::{DefaultHasher, Hasher};
 use calc_rs::{
     core::{Contract, ContractError, ContractResult},
     manager::{ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg},
-    strategy::StrategyQueryMsg,
+    strategy::{StrategyExecuteMsg, StrategyQueryMsg},
     tokenizer::{TokenizerConfig, TokenizerExecuteMsg, TokenizerInstantiateMsg, TokenizerQueryMsg},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     entry_point, instantiate2_address, to_json_binary, BankMsg, Coin, Coins, Decimal, Uint128,
 };
-#[cfg(not(feature = "library"))]
 use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdResult};
 use rujira_rs::TokenFactory;
 
@@ -127,13 +126,63 @@ pub fn execute(
                 .add_message(mint_msg))
         }
         TokenizerExecuteMsg::Withdraw {} => {
-            if info.funds.len() != 1 || info.funds[0].denom != DENOM.load(deps.storage)? {
-                return Err(ContractError::generic_err(
-                    "Must include exactly one coin in a Withdraw",
+            let denom = DENOM.load(deps.storage)?;
+
+            if info.funds.len() != 1 || info.funds[0].denom != denom {
+                return Err(ContractError::generic_err(format!(
+                    "Must only deposit {denom} when withdrawing funds"
+                )));
+            }
+
+            let burn_amount = info.funds[0].amount;
+
+            let token_factory = TokenFactory::new(&env, &DENOM.load(deps.storage)?);
+            let token_supply = token_factory.supply(deps.querier)?;
+            let burn_proportion = Decimal::from_ratio(burn_amount, token_supply);
+
+            let balances = deps.querier.query_wasm_smart::<Vec<Coin>>(
+                &STRATEGY.load(deps.storage)?,
+                &StrategyQueryMsg::Balances {},
+            )?;
+
+            let mut withdrawal = Vec::with_capacity(balances.len());
+
+            for balance in balances {
+                withdrawal.push(Coin::new(
+                    balance.amount.mul_floor(burn_proportion),
+                    balance.denom,
                 ));
             }
 
-            Ok(Response::new())
+            let strategy_address = STRATEGY.load(deps.storage)?;
+
+            let cancel_strategy_msg = Contract(strategy_address)
+                .call(to_json_binary(&StrategyExecuteMsg::Cancel {})?, vec![]);
+
+            let withdraw_strategy_msg = Contract(strategy_address).call(
+                to_json_binary(&StrategyExecuteMsg::Withdraw(withdrawal))?,
+                vec![],
+            );
+
+            let distribute_msg = BankMsg::Send {
+                to_address: info.sender.to_string(),
+                amount: withdrawal,
+            };
+
+            let value = get_strategy_value(deps)?;
+
+            let burn_msg = Contract(env.contract.address).call(
+                to_json_binary(&TokenizerExecuteMsg::Burn {
+                    previous_value: value,
+                })?,
+                vec![],
+            );
+
+            Ok(Response::new()
+                .add_message(cancel_strategy_msg)
+                .add_message(withdraw_strategy_msg)
+                .add_message(withdrawal_msg)
+                .add_message(burn_msg))
         }
         TokenizerExecuteMsg::Mint { previous_value } => {
             if info.sender != env.contract.address {
@@ -144,6 +193,7 @@ pub fn execute(
 
             let post_value = get_strategy_value(deps.as_ref())?;
             let value_delta = post_value.amount.checked_sub(previous_value.amount)?;
+
             let token_factory = TokenFactory::new(&env, &DENOM.load(deps.storage)?);
             let token_supply = token_factory.supply(deps.querier)?;
 
@@ -154,6 +204,7 @@ pub fn execute(
             };
 
             let mint_msg = token_factory.mint_msg(mint_amount, info.sender);
+
             Ok(Response::new().add_message(mint_msg))
         }
         TokenizerExecuteMsg::Burn { previous_value } => {
@@ -165,6 +216,7 @@ pub fn execute(
 
             let post_value = get_strategy_value(deps.as_ref())?;
             let value_delta = previous_value.amount.checked_sub(post_value.amount)?;
+
             let token_factory = TokenFactory::new(&env, &DENOM.load(deps.storage)?);
             let token_supply = token_factory.supply(deps.querier)?;
 
