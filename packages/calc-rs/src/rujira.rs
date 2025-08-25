@@ -3,7 +3,8 @@ use rujira_rs::fin::{BookResponse, ConfigResponse, QueryMsg, Side};
 
 const MIN_ORDERS: u8 = 4;
 const MIN_VALUE: Uint128 = Uint128::new(10u128.pow(8)); // ~$1 USDC
-const MAX_ITERATIONS: u8 = 3;
+const LIMIT: u8 = 4;
+const MAX_ITERATIONS: u8 = 2;
 
 pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult<Decimal> {
     let mut orders: u8 = 0;
@@ -13,12 +14,10 @@ pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult
     let mut i: u8 = 0;
 
     while i < MAX_ITERATIONS && (quote_value < MIN_VALUE || orders < MIN_ORDERS) {
-        let limit = (i + 1) * 4;
-
         let book_response = deps.querier.query_wasm_smart::<BookResponse>(
             pair_address,
             &QueryMsg::Book {
-                limit: Some(limit),
+                limit: Some(LIMIT),
                 offset: Some(orders),
             },
         )?;
@@ -43,11 +42,11 @@ pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult
             }
 
             if side == &Side::Base {
-                quote_value += order.total.mul_floor(order.price);
-                base_depth += order.total;
+                quote_value = quote_value.checked_add(order.total.mul_floor(order.price))?;
+                base_depth = base_depth.checked_add(order.total)?;
             } else {
-                quote_value += order.total;
-                base_depth += order.total.div_ceil(order.price);
+                quote_value = quote_value.checked_add(order.total)?;
+                base_depth = base_depth.checked_add(order.total.div_ceil(order.price))?;
             }
 
             orders += 1;
@@ -57,14 +56,14 @@ pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult
             }
         }
 
-        if book.len() < limit as usize {
+        if book.len() < LIMIT as usize {
             break;
         }
 
         i += 1;
     }
 
-    if orders < MIN_ORDERS || quote_value < MIN_VALUE {
+    if orders < MIN_ORDERS || quote_value < MIN_VALUE || base_depth.is_zero() {
         return Err(StdError::generic_err(
             "Order book is too thin to avoid price manipulation",
         ));
@@ -313,14 +312,14 @@ mod tests {
                         base: vec![
                             BookItemResponse {
                                 price: Decimal::one(),
-                                total: Uint128::new(10_000_000),
+                                total: Uint128::new(15_000_000),
                             };
                             limit.unwrap() as usize
                         ],
                         quote: vec![
                             BookItemResponse {
                                 price: Decimal::one(),
-                                total: Uint128::new(10_000_000),
+                                total: Uint128::new(15_000_000),
                             };
                             limit.unwrap() as usize
                         ],
