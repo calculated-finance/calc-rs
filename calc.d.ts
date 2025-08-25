@@ -8,6 +8,7 @@ export interface Strategy {
   id: number;
   label: string;
   owner: Addr;
+  source?: string | null;
   status: StrategyStatus;
   updated_at: number;
 }
@@ -17,7 +18,9 @@ export interface ManagerInstantiateMsg {
   strategy_code_id: number;
 }
 export type ManagerQueryMsg =
-  | ("config" | "count")
+  | {
+      config: {};
+    }
   | {
       strategy: {
         address: Addr;
@@ -30,6 +33,9 @@ export type ManagerQueryMsg =
         start_after?: number | null;
         status?: StrategyStatus | null;
       };
+    }
+  | {
+      count: {};
     };
 export type Uint64 = number;
 export type ManagerExecuteMsg =
@@ -39,6 +45,7 @@ export type ManagerExecuteMsg =
         label: string;
         nodes: Node[];
         owner?: Addr | null;
+        source?: string | null;
       };
     }
   | {
@@ -135,6 +142,7 @@ export type PriceStrategy =
       offset: {
         direction: Direction;
         offset: Offset;
+        side: Side;
         tolerance?: Offset | null;
       };
     };
@@ -297,6 +305,7 @@ export interface FinLimitOrder {
   bid_amount?: Uint128 | null;
   bid_denom: string;
   current_order?: StaleOrder | null;
+  min_fill_ratio?: Decimal | null;
   pair_address: Addr;
   side: Side;
   strategy: PriceStrategy;
@@ -422,17 +431,28 @@ export interface StrategyInstantiateMsg {
   owner: Addr;
 }
 
-export type StrategyQueryMsg = "config" | "balances";
+export type StrategyQueryMsg =
+  | {
+      config: {};
+    }
+  | {
+      balances: {};
+    };
 export type StrategyExecuteMsg =
-  | ("execute" | "cancel")
   | {
       init: Node[];
+    }
+  | {
+      execute: {};
     }
   | {
       withdraw: Coin[];
     }
   | {
       update: Node[];
+    }
+  | {
+      cancel: {};
     }
   | {
       process: {

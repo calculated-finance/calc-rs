@@ -516,7 +516,8 @@
               "type": "object",
               "required": [
                 "direction",
-                "offset"
+                "offset",
+                "side"
               ],
               "properties": {
                 "direction": {
@@ -524,6 +525,9 @@
                 },
                 "offset": {
                   "$ref": "#/definitions/Offset"
+                },
+                "side": {
+                  "$ref": "#/definitions/Side"
                 },
                 "tolerance": {
                   "anyOf": [

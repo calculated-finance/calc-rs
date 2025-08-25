@@ -1,10 +1,10 @@
-use calc_rs::scheduler::{SchedulerExecuteMsg, SchedulerInstantiateMsg, SchedulerQueryMsg};
+use calc_rs::tokenizer::{TokenizerExecuteMsg, TokenizerInstantiateMsg, TokenizerQueryMsg};
 use cosmwasm_schema::write_api;
 
 fn main() {
     write_api! {
-        instantiate: SchedulerInstantiateMsg,
-        execute: SchedulerExecuteMsg,
-        query: SchedulerQueryMsg,
+        instantiate: TokenizerInstantiateMsg,
+        execute: TokenizerExecuteMsg,
+        query: TokenizerQueryMsg,
     }
 }

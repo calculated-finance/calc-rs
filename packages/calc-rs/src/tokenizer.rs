@@ -1,4 +1,4 @@
-use cosmwasm_schema::cw_serde;
+use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Coin};
 use rujira_rs::TokenMetadata;
 
@@ -33,7 +33,10 @@ pub enum TokenizerExecuteMsg {
 }
 
 #[cw_serde]
+#[derive(QueryResponses)]
 pub enum TokenizerQueryMsg {
+    #[returns(TokenizerConfig)]
     Config {},
+    #[returns(Coin)]
     Value {},
 }
