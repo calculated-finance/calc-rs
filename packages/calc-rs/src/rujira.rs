@@ -19,7 +19,7 @@ pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult
             pair_address,
             &QueryMsg::Book {
                 limit: Some(limit),
-                offset: Some(i * 4),
+                offset: Some(orders),
             },
         )?;
 
