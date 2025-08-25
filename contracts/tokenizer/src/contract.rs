@@ -115,7 +115,7 @@ pub fn execute(
                 ));
             }
 
-            let value = get_strategy_value(deps.as_ref())?;
+            let strategy_value = get_strategy_value(deps.as_ref())?;
 
             let deposit_strategy_funds_msg = BankMsg::Send {
                 to_address: STRATEGY.load(deps.storage)?.to_string(),
@@ -124,7 +124,7 @@ pub fn execute(
 
             let mint_msg = Contract(env.contract.address).call(
                 to_json_binary(&TokenizerExecuteMsg::Mint {
-                    previous_value: value,
+                    previous_value: strategy_value,
                 })?,
                 vec![],
             );
@@ -142,11 +142,9 @@ pub fn execute(
                 )));
             }
 
-            let burn_amount = info.funds[0].amount;
-
             let token_factory = TokenFactory::new(&env, &DENOM.load(deps.storage)?);
             let token_supply = token_factory.supply(deps.querier)?;
-            let burn_proportion = Decimal::from_ratio(burn_amount, token_supply);
+            let burn_proportion = Decimal::from_ratio(info.funds[0].amount, token_supply);
 
             let balances = deps.querier.query_wasm_smart::<Vec<Coin>>(
                 &STRATEGY.load(deps.storage)?,
@@ -180,11 +178,11 @@ pub fn execute(
                 amount: withdrawal,
             };
 
-            let value = get_strategy_value(deps.as_ref())?;
+            let strategy_value = get_strategy_value(deps.as_ref())?;
 
             let burn_msg = Contract(env.contract.address).call(
                 to_json_binary(&TokenizerExecuteMsg::Burn {
-                    previous_value: value,
+                    previous_value: strategy_value,
                 })?,
                 vec![],
             );

@@ -1,5 +1,5 @@
 {
-  "contract_name": "manager",
+  "contract_name": "calc-manager",
   "contract_version": "0.1.0",
   "idl_version": "1.0.0",
   "instantiate": {
@@ -69,6 +69,12 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
                 ]
               }
             },
@@ -729,6 +735,16 @@
               }
             ]
           },
+          "min_fill_ratio": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pair_address": {
             "$ref": "#/definitions/Addr"
           },
@@ -920,7 +936,8 @@
                 "type": "object",
                 "required": [
                   "direction",
-                  "offset"
+                  "offset",
+                  "side"
                 ],
                 "properties": {
                   "direction": {
@@ -928,6 +945,9 @@
                   },
                   "offset": {
                     "$ref": "#/definitions/Offset"
+                  },
+                  "side": {
+                    "$ref": "#/definitions/Side"
                   },
                   "tolerance": {
                     "anyOf": [
@@ -1305,11 +1325,17 @@
     "title": "QueryMsg",
     "oneOf": [
       {
-        "type": "string",
-        "enum": [
-          "config",
-          "count"
-        ]
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       },
       {
         "type": "object",
@@ -1378,6 +1404,19 @@
                 ]
               }
             },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "object",
             "additionalProperties": false
           }
         },
@@ -1477,6 +1516,12 @@
             "owner": {
               "$ref": "#/definitions/Addr"
             },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "status": {
               "$ref": "#/definitions/StrategyStatus"
             },
@@ -1529,6 +1574,12 @@
         },
         "owner": {
           "$ref": "#/definitions/Addr"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "status": {
           "$ref": "#/definitions/StrategyStatus"
