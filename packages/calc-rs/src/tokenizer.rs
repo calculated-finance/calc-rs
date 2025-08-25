@@ -7,7 +7,7 @@ use crate::{conditions::asset_value_ratio::PriceSource, manager::Affiliate, stra
 #[cw_serde]
 pub struct TokenizerInstantiateMsg {
     pub label: String,
-    pub base_denom: String,
+    pub quote_denom: String,
     pub oracles: Vec<(String, PriceSource)>,
     pub nodes: Vec<Node>,
     pub affiliates: Vec<Affiliate>,
@@ -18,7 +18,7 @@ pub struct TokenizerInstantiateMsg {
 #[cw_serde]
 pub struct TokenizerConfig {
     pub denom: String,
-    pub base_denom: String,
+    pub quote_denom: String,
     pub oracles: Vec<(String, PriceSource)>,
     pub strategy_address: Addr,
     pub description: String,
