@@ -37,7 +37,6 @@ pub fn instantiate(
         )));
     }
 
-    DENOM.save(deps.storage, &msg.token_metadata.name)?;
     QUOTE_DENOM.save(deps.storage, &msg.quote_denom)?;
     ORACLES.save(deps.storage, &msg.oracles)?;
 
@@ -87,6 +86,8 @@ pub fn instantiate(
     let token_factory = TokenFactory::new(&env, &msg.token_metadata.name);
     let create_token_msg = token_factory.create_msg(msg.token_metadata);
 
+    DENOM.save(deps.storage, &token_factory.denom())?;
+
     Ok(Response::new()
         .add_message(instantiate_strategy_msg)
         .add_message(create_token_msg))
@@ -108,7 +109,7 @@ pub fn execute(
     msg: TokenizerExecuteMsg,
 ) -> ContractResult {
     match msg {
-        TokenizerExecuteMsg::Deposit {} => {
+        TokenizerExecuteMsg::Deposit { recipient } => {
             if info.funds.is_empty() {
                 return Err(ContractError::generic_err(
                     "Must include funds in a Deposit",
@@ -124,6 +125,7 @@ pub fn execute(
 
             let mint_msg = Contract(env.contract.address).call(
                 to_json_binary(&TokenizerExecuteMsg::Mint {
+                    recipient: recipient.unwrap_or(info.sender),
                     previous_value: strategy_value,
                 })?,
                 vec![],
@@ -144,7 +146,9 @@ pub fn execute(
 
             let token_factory = TokenFactory::new(&env, &DENOM.load(deps.storage)?);
             let token_supply = token_factory.supply(deps.querier)?;
-            let burn_proportion = Decimal::from_ratio(info.funds[0].amount, token_supply);
+
+            let burn_amount = info.funds[0].amount;
+            let burn_proportion = Decimal::from_ratio(burn_amount, token_supply);
 
             let balances = deps.querier.query_wasm_smart::<Vec<Coin>>(
                 &STRATEGY.load(deps.storage)?,
@@ -178,14 +182,7 @@ pub fn execute(
                 amount: withdrawal,
             };
 
-            let strategy_value = get_strategy_value(deps.as_ref())?;
-
-            let burn_msg = Contract(env.contract.address).call(
-                to_json_binary(&TokenizerExecuteMsg::Burn {
-                    previous_value: strategy_value,
-                })?,
-                vec![],
-            );
+            let burn_msg = token_factory.burn_msg(burn_amount);
 
             Ok(Response::new()
                 .add_message(cancel_strategy_msg)
@@ -194,7 +191,10 @@ pub fn execute(
                 .add_message(distribute_msg)
                 .add_message(burn_msg))
         }
-        TokenizerExecuteMsg::Mint { previous_value } => {
+        TokenizerExecuteMsg::Mint {
+            recipient,
+            previous_value,
+        } => {
             if info.sender != env.contract.address {
                 return Err(ContractError::generic_err(
                     "Mint can only be called by the contract itself",
@@ -213,42 +213,9 @@ pub fn execute(
                 token_supply.mul_floor(Decimal::from_ratio(value_delta, previous_value.amount))
             };
 
-            let mint_msg = token_factory.mint_msg(mint_amount, info.sender);
+            let mint_msg = token_factory.mint_msg(mint_amount, recipient);
 
             Ok(Response::new().add_message(mint_msg))
-        }
-        TokenizerExecuteMsg::Burn { previous_value } => {
-            if info.sender != env.contract.address {
-                return Err(ContractError::generic_err(
-                    "Burn can only be called by the contract itself",
-                ));
-            }
-
-            let post_value = get_strategy_value(deps.as_ref())?;
-            let value_delta = previous_value.amount.checked_sub(post_value.amount)?;
-
-            let token_factory = TokenFactory::new(&env, &DENOM.load(deps.storage)?);
-            let token_supply = token_factory.supply(deps.querier)?;
-
-            let burn_amount = if token_supply.is_zero() || previous_value.amount.is_zero() {
-                Uint128::zero()
-            } else {
-                token_supply.mul_floor(Decimal::from_ratio(value_delta, previous_value.amount))
-            };
-
-            let burn_msg = token_factory.burn_msg(burn_amount);
-
-            let withdraw_strategy_funds_msg = BankMsg::Send {
-                to_address: info.sender.to_string(),
-                amount: vec![Coin::new(
-                    value_delta.u128(),
-                    QUOTE_DENOM.load(deps.storage)?,
-                )],
-            };
-
-            Ok(Response::new()
-                .add_message(burn_msg)
-                .add_message(withdraw_strategy_funds_msg))
         }
     }
 }

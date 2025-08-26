@@ -26,10 +26,14 @@ pub struct TokenizerConfig {
 
 #[cw_serde]
 pub enum TokenizerExecuteMsg {
-    Deposit {},
+    Deposit {
+        recipient: Option<Addr>,
+    },
     Withdraw {},
-    Mint { previous_value: Coin },
-    Burn { previous_value: Coin },
+    Mint {
+        recipient: Addr,
+        previous_value: Coin,
+    },
 }
 
 #[cw_serde]
