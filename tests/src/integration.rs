@@ -3883,4 +3883,9 @@ mod integration_tests {
 
         assert_eq!(keeper_balance, Coin::new(5u128, "x/ruji"));
     }
+
+    // Tokenizer tests
+
+    #[test]
+    fn test_tokenizer_saves_correct_strategy_address() {}
 }

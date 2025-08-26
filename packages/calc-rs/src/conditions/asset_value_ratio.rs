@@ -14,6 +14,53 @@ pub enum PriceSource {
     Thorchain,
 }
 
+impl PriceSource {
+    pub fn query_price(
+        &self,
+        deps: Deps,
+        base_asset: &str,
+        quote_asset: &str,
+    ) -> StdResult<Decimal> {
+        match self {
+            PriceSource::Fin { address } => {
+                let mid_price = get_mid_price(deps, address)?;
+
+                if mid_price.is_zero() {
+                    return Err(StdError::generic_err("Mid price is zero".to_string()));
+                }
+
+                let pair = deps
+                    .querier
+                    .query_wasm_smart::<ConfigResponse>(address.clone(), &QueryMsg::Config {})?;
+
+                let denoms = [pair.denoms.base(), pair.denoms.quote()];
+
+                if !denoms.contains(&base_asset) || !denoms.contains(&quote_asset) {
+                    return Err(StdError::generic_err(format!(
+                        "Pair at {address} does not include assets {base_asset} and {quote_asset}"
+                    )));
+                }
+
+                if pair.denoms.base() == quote_asset {
+                    Ok(Decimal::one() / mid_price)
+                } else {
+                    Ok(mid_price)
+                }
+            }
+            PriceSource::Thorchain => {
+                let numerator_price = fetch_l1_asset_price(deps, quote_asset)?;
+                let denominator_price = fetch_l1_asset_price(deps, base_asset)?;
+
+                numerator_price.checked_div(denominator_price).map_err(|_| {
+                    StdError::generic_err(format!(
+                        "Failed to calculate asset value ratio: L1 oracle price for '{base_asset}' is zero"
+                    ))
+                })
+            }
+        }
+    }
+}
+
 #[cw_serde]
 pub struct AssetValueRatio {
     pub numerator: String,
@@ -73,38 +120,9 @@ impl AssetValueRatio {
             return Ok(false);
         }
 
-        let price = match &self.oracle {
-            PriceSource::Fin { address } => {
-                let mid_price = get_mid_price(deps, address)?;
-
-                if mid_price.is_zero() {
-                    return Err(StdError::generic_err("Mid price is zero".to_string()));
-                }
-
-                let pair = deps
-                    .querier
-                    .query_wasm_smart::<ConfigResponse>(address, &QueryMsg::Config {})?;
-
-                if pair.denoms.base() == self.numerator {
-                    Decimal::one() / mid_price
-                } else {
-                    mid_price
-                }
-            }
-            PriceSource::Thorchain => {
-                let numerator_price = fetch_l1_asset_price(deps, &self.numerator)?;
-                let denominator_price = fetch_l1_asset_price(deps, &self.denominator)?;
-
-                numerator_price
-                    .checked_div(denominator_price)
-                    .map_err(|_| {
-                        StdError::generic_err(format!(
-                        "Failed to calculate asset value ratio: L1 oracle price for '{}' is zero",
-                        self.denominator
-                    ))
-                    })?
-            }
-        };
+        let price = &self
+            .oracle
+            .query_price(deps, &self.denominator, &self.numerator)?;
 
         let balance_ratio =
             Decimal::from_ratio(numerator_balance.amount, denominator_balance.amount);

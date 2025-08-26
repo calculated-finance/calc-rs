@@ -1,5 +1,5 @@
 {
-  "contract_name": "strategy",
+  "contract_name": "calc-strategy",
   "contract_version": "0.1.0",
   "idl_version": "1.0.0",
   "instantiate": {
@@ -585,6 +585,16 @@
               }
             ]
           },
+          "min_fill_ratio": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pair_address": {
             "$ref": "#/definitions/Addr"
           },
@@ -776,7 +786,8 @@
                 "type": "object",
                 "required": [
                   "direction",
-                  "offset"
+                  "offset",
+                  "side"
                 ],
                 "properties": {
                   "direction": {
@@ -784,6 +795,9 @@
                   },
                   "offset": {
                     "$ref": "#/definitions/Offset"
+                  },
+                  "side": {
+                    "$ref": "#/definitions/Side"
                   },
                   "tolerance": {
                     "anyOf": [
@@ -1161,13 +1175,6 @@
     "title": "ExecuteMsg",
     "oneOf": [
       {
-        "type": "string",
-        "enum": [
-          "execute",
-          "cancel"
-        ]
-      },
-      {
         "type": "object",
         "required": [
           "init"
@@ -1178,6 +1185,19 @@
             "items": {
               "$ref": "#/definitions/Node"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "execute"
+        ],
+        "properties": {
+          "execute": {
+            "type": "object",
+            "additionalProperties": false
           }
         },
         "additionalProperties": false
@@ -1208,6 +1228,19 @@
             "items": {
               "$ref": "#/definitions/Node"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "cancel"
+        ],
+        "properties": {
+          "cancel": {
+            "type": "object",
+            "additionalProperties": false
           }
         },
         "additionalProperties": false
@@ -1772,6 +1805,16 @@
               }
             ]
           },
+          "min_fill_ratio": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pair_address": {
             "$ref": "#/definitions/Addr"
           },
@@ -1963,7 +2006,8 @@
                 "type": "object",
                 "required": [
                   "direction",
-                  "offset"
+                  "offset",
+                  "side"
                 ],
                 "properties": {
                   "direction": {
@@ -1971,6 +2015,9 @@
                   },
                   "offset": {
                     "$ref": "#/definitions/Offset"
+                  },
+                  "side": {
+                    "$ref": "#/definitions/Side"
                   },
                   "tolerance": {
                     "anyOf": [
@@ -2353,10 +2400,33 @@
   "query": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "QueryMsg",
-    "type": "string",
-    "enum": [
-      "config",
-      "balances"
+    "oneOf": [
+      {
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "balances"
+        ],
+        "properties": {
+          "balances": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
     ]
   },
   "migrate": null,
@@ -2946,6 +3016,16 @@
                 }
               ]
             },
+            "min_fill_ratio": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Decimal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "pair_address": {
               "$ref": "#/definitions/Addr"
             },
@@ -3137,7 +3217,8 @@
                   "type": "object",
                   "required": [
                     "direction",
-                    "offset"
+                    "offset",
+                    "side"
                   ],
                   "properties": {
                     "direction": {
@@ -3145,6 +3226,9 @@
                     },
                     "offset": {
                       "$ref": "#/definitions/Offset"
+                    },
+                    "side": {
+                      "$ref": "#/definitions/Side"
                     },
                     "tolerance": {
                       "anyOf": [
