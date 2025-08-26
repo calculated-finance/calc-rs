@@ -37,8 +37,7 @@ impl PriceSource {
 
                 if !denoms.contains(&base_asset) || !denoms.contains(&quote_asset) {
                     return Err(StdError::generic_err(format!(
-                        "Pair at {} does not include assets {} and {}",
-                        address, base_asset, quote_asset
+                        "Pair at {address} does not include assets {base_asset} and {quote_asset}"
                     )));
                 }
 
@@ -49,13 +48,12 @@ impl PriceSource {
                 }
             }
             PriceSource::Thorchain => {
-                let numerator_price = fetch_l1_asset_price(deps, &quote_asset)?;
-                let denominator_price = fetch_l1_asset_price(deps, &base_asset)?;
+                let numerator_price = fetch_l1_asset_price(deps, quote_asset)?;
+                let denominator_price = fetch_l1_asset_price(deps, base_asset)?;
 
                 numerator_price.checked_div(denominator_price).map_err(|_| {
                     StdError::generic_err(format!(
-                        "Failed to calculate asset value ratio: L1 oracle price for '{}' is zero",
-                        base_asset
+                        "Failed to calculate asset value ratio: L1 oracle price for '{base_asset}' is zero"
                     ))
                 })
             }
