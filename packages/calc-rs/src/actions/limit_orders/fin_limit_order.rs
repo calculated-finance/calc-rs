@@ -57,32 +57,37 @@ impl PriceStrategy {
     }
 
     pub fn get_new_price(&self, deps: Deps, pair_address: &Addr) -> StdResult<Decimal> {
-        Ok(match self {
-            PriceStrategy::Fixed(price) => *price,
-            PriceStrategy::Offset {
-                side,
-                direction,
-                offset,
-                ..
-            } => {
-                let price = get_side_price(deps, pair_address, side)?;
+        let pair = deps
+            .querier
+            .query_wasm_smart::<ConfigResponse>(pair_address, &QueryMsg::Config {})?;
 
-                match offset.clone() {
-                    Offset::Exact(offset) => match direction {
-                        Direction::Above => price.saturating_add(offset),
-                        Direction::Below => price.saturating_sub(offset),
-                    },
-                    Offset::Percent(offset) => {
-                        match direction {
+        let price =
+            match self {
+                PriceStrategy::Fixed(price) => *price,
+                PriceStrategy::Offset {
+                    side,
+                    direction,
+                    offset,
+                    ..
+                } => {
+                    let price = get_side_price(deps, pair_address, side)?;
+
+                    match offset.clone() {
+                        Offset::Exact(offset) => match direction {
+                            Direction::Above => price.saturating_add(offset),
+                            Direction::Below => price.saturating_sub(offset),
+                        },
+                        Offset::Percent(offset) => match direction {
                             Direction::Above => price
                                 .saturating_mul(Decimal::percent(100u64.saturating_add(offset))),
                             Direction::Below => price
                                 .saturating_mul(Decimal::percent(100u64.saturating_sub(offset))),
-                        }
+                        },
                     }
                 }
-            }
-        })
+            };
+
+        Ok(pair.tick.truncate_floor(&price))
     }
 }
 
@@ -98,12 +103,7 @@ pub struct FinLimitOrder {
 }
 
 impl FinLimitOrder {
-    pub fn get_pair(&self, deps: Deps) -> StdResult<ConfigResponse> {
-        deps.querier
-            .query_wasm_smart::<ConfigResponse>(self.pair_address.clone(), &QueryMsg::Config {})
-    }
-
-    fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
         let mut messages = vec![];
 
         let order = if let Some(existing_order) = self.current_order.clone() {
@@ -417,11 +417,8 @@ impl Operation<FinLimitOrder> for FinLimitOrder {
         Ok(self)
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, FinLimitOrder) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, limit_order)) => (messages, limit_order),
-            Err(_) => (vec![], self),
-        }
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
+        self.execute(deps, env)
     }
 }
 

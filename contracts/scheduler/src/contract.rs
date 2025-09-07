@@ -9,8 +9,8 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply, Response,
-    StdResult, SubMsg, SubMsgResult,
+    to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env, MessageInfo, Reply,
+    Response, StdResult, SubMsg, SubMsgResult,
 };
 use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg};
 
@@ -185,9 +185,13 @@ pub fn execute(
                             &QueryMsg::Config {},
                         )?;
 
+                        let rebate_amount = order
+                            .filled
+                            .mul_floor(Decimal::one().checked_sub(pair.fee_maker)?);
+
                         let rebate_msg = SubMsg::reply_never(BankMsg::Send {
                             to_address: info.sender.to_string(),
-                            amount: vec![Coin::new(order.filled, pair.denoms.ask(&side))],
+                            amount: vec![Coin::new(rebate_amount, pair.denoms.ask(&side))],
                         });
 
                         sub_messages.push(rebate_msg);

@@ -224,6 +224,7 @@ pub struct Swap {
     pub maximum_slippage_bps: u64,
     pub adjustment: SwapAmountAdjustment,
     pub routes: Vec<SwapRoute>,
+    pub swapped_amount: Option<Uint128>,
 }
 
 impl Swap {
@@ -240,6 +241,12 @@ impl Swap {
 
         if self.routes.is_empty() {
             return Err(StdError::generic_err("No swap routes provided"));
+        }
+
+        if self.swapped_amount.is_some() {
+            return Err(StdError::generic_err(
+                "Cannot initialize with pre-existing swapped amount",
+            ));
         }
 
         if let SwapAmountAdjustment::LinearScalar {
@@ -305,6 +312,8 @@ impl Swap {
         let mut best_quote = None;
         let mut best_amount = Uint128::zero();
 
+        let mut quote_errors = Vec::<StdError>::with_capacity(self.routes.len());
+
         for route in &self.routes {
             let quote = SwapQuote {
                 swap_amount: self.swap_amount.clone(),
@@ -322,17 +331,27 @@ impl Swap {
                     best_amount = validated_quote.state.expected_amount_out.amount;
                     best_quote = Some(validated_quote);
                 }
+            } else if let Err(err) = quote {
+                quote_errors.push(err);
             }
+        }
+
+        if best_quote.is_none() && !quote_errors.is_empty() {
+            return Err(StdError::generic_err(format!(
+                "No valid swap routes: {:?}",
+                quote_errors
+            )));
         }
 
         Ok(best_quote)
     }
 
-    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Swap)> {
+    pub fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Swap)> {
         let best_quote = self.best_quote(deps, env)?;
 
         if let Some(quote) = best_quote {
             let swap_message = quote.execute(deps, env)?;
+            let swap_amount = quote.swap_amount;
 
             let updated_routes = self
                 .routes
@@ -352,11 +371,16 @@ impl Swap {
                     // Some routes (i.e. Thorchain) may have relevant state that cannot be
                     // verifiably committed or recreated, so we cache it here.
                     routes: updated_routes,
+                    swapped_amount: Some(
+                        self.swapped_amount.unwrap_or(Uint128::zero()) + swap_amount.amount,
+                    ),
                     ..self
                 },
             ))
         } else {
-            Ok((vec![], self))
+            return Err(StdError::generic_err(
+                "No valid swap quotes available".to_string(),
+            ));
         }
     }
 }
@@ -367,11 +391,8 @@ impl Operation<Swap> for Swap {
         Ok(self.with_affiliates())
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Swap) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, swap)) => (messages, swap),
-            Err(_) => (vec![], self),
-        }
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Swap)> {
+        self.execute(deps, env)
     }
 }
 

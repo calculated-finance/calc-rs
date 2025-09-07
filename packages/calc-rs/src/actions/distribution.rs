@@ -34,6 +34,7 @@ pub struct Destination {
     pub shares: Uint128,
     pub recipient: Recipient,
     pub label: Option<String>,
+    pub distributions: Option<Vec<Coin>>,
 }
 
 #[cw_serde]
@@ -61,79 +62,12 @@ impl Distribution {
                         },
                         shares: total_fee_applied_shares.mul_ceil(Decimal::bps(affiliate.bps)),
                         label: Some(affiliate.label.clone()),
+                        distributions: Some(vec![]),
                     })
                     .collect(),
             ]
             .concat(),
         })
-    }
-
-    pub fn execute_unsafe(
-        self,
-        deps: Deps,
-        env: &Env,
-    ) -> StdResult<(Vec<CosmosMsg>, Distribution)> {
-        let mut balances = Coins::default();
-
-        for denom in &self.denoms {
-            balances.add(
-                deps.querier
-                    .query_balance(env.contract.address.as_ref(), denom)?,
-            )?;
-        }
-
-        if balances.is_empty() {
-            return Ok((vec![], self));
-        }
-
-        let mut messages = vec![];
-
-        let total_shares = self
-            .destinations
-            .iter()
-            .fold(Uint128::zero(), |acc, d| acc + d.shares);
-
-        for destination in &self.destinations {
-            let share_ratio = Decimal::from_ratio(destination.shares, total_shares);
-
-            let denom_shares = balances
-                .iter()
-                .flat_map(|coin| {
-                    let amount = coin.amount.mul_floor(share_ratio);
-                    if amount.is_zero() {
-                        None
-                    } else {
-                        Some(Coin::new(amount, coin.denom.clone()))
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            if denom_shares.is_empty() {
-                continue;
-            }
-
-            let distribute_message = match destination.recipient.clone() {
-                Recipient::Bank { address, .. } => CosmosMsg::Bank(BankMsg::Send {
-                    to_address: address.into(),
-                    amount: denom_shares,
-                }),
-                Recipient::Contract { address, msg, .. } => CosmosMsg::Wasm(WasmMsg::Execute {
-                    contract_addr: address.into(),
-                    msg,
-                    funds: denom_shares,
-                }),
-                Recipient::Deposit { memo } => MsgDeposit {
-                    memo,
-                    coins: denom_shares,
-                    signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
-                }
-                .into_cosmos_msg()?,
-            };
-
-            messages.push(distribute_message);
-        }
-
-        Ok((messages, self))
     }
 }
 
@@ -157,6 +91,12 @@ impl Operation<Distribution> for Distribution {
         for destination in self.destinations.iter() {
             if destination.shares.is_zero() {
                 return Err(StdError::generic_err("Destination shares cannot be zero"));
+            }
+
+            if destination.distributions.is_some() {
+                return Err(StdError::generic_err(format!(
+                    "Destinations cannot have pre-specified distributions"
+                )));
             }
 
             match &destination.recipient {
@@ -189,10 +129,92 @@ impl Operation<Distribution> for Distribution {
         })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Distribution) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, action)) => (messages, action),
-            Err(_) => (vec![], self),
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Distribution)> {
+        let mut balances = Coins::default();
+
+        for denom in &self.denoms {
+            balances.add(
+                deps.querier
+                    .query_balance(env.contract.address.as_ref(), denom)?,
+            )?;
         }
+
+        if balances.is_empty() {
+            return Ok((vec![], self));
+        }
+
+        let mut messages = vec![];
+
+        let total_shares = self
+            .destinations
+            .iter()
+            .fold(Uint128::zero(), |acc, d| acc + d.shares);
+
+        let mut destinations = Vec::<Destination>::with_capacity(self.destinations.len());
+
+        for destination in &self.destinations {
+            let share_ratio = Decimal::from_ratio(destination.shares, total_shares);
+
+            let mut denom_shares: Vec<Coin> = Vec::with_capacity(balances.len());
+
+            for (i, remaining) in balances.clone().iter().enumerate() {
+                if remaining.amount.is_zero() {
+                    continue;
+                }
+
+                let amount = if i == balances.len() - 1 {
+                    remaining.amount
+                } else {
+                    remaining.amount.mul_floor(share_ratio)
+                };
+
+                if amount.is_zero() {
+                    continue;
+                }
+
+                let to_distribute = Coin::new(amount, remaining.denom.clone());
+
+                balances.sub(to_distribute.clone())?;
+                denom_shares.push(to_distribute);
+            }
+
+            if denom_shares.is_empty() {
+                continue;
+            }
+
+            let distribute_message = match destination.recipient.clone() {
+                Recipient::Bank { address, .. } => CosmosMsg::Bank(BankMsg::Send {
+                    to_address: address.into(),
+                    amount: denom_shares.clone(),
+                }),
+                Recipient::Contract { address, msg, .. } => CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: address.into(),
+                    msg,
+                    funds: denom_shares.clone(),
+                }),
+                Recipient::Deposit { memo } => MsgDeposit {
+                    memo,
+                    coins: denom_shares.clone(),
+                    signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                }
+                .into_cosmos_msg()?,
+            };
+
+            messages.push(distribute_message);
+
+            let mut distributions =
+                Coins::try_from(destination.distributions.clone().unwrap_or_default())?;
+
+            for distribution in denom_shares {
+                distributions.add(distribution)?;
+            }
+
+            destinations.push(Destination {
+                distributions: Some(distributions.into_vec()),
+                ..destination.clone()
+            });
+        }
+
+        Ok((messages, self))
     }
 }

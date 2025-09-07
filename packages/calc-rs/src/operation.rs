@@ -4,7 +4,7 @@ use crate::manager::Affiliate;
 
 pub trait Operation<T> {
     fn init(self, deps: Deps, env: &Env, affiliates: &[Affiliate]) -> StdResult<T>;
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, T);
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, T)>;
 }
 
 pub trait StatefulOperation<T> {

@@ -21,19 +21,16 @@ Think of a strategy as a programmable decision tree that lives on the blockchain
 ### Simple Strategy Examples
 
 ```
-     GRID BOT:                      DCA:                           TWAP:
-    ┌────────────────────────┐     ┌────────────────────────┐     ┌────────────────────────┐
-    │    Every 50 blocks     │     │     Every weekday      │     │      Every minute      │
-    └────────────┬───────────┘     └────────────┬───────────┘     └────────────┬───────────┘
-    ┌────────────┴───────────┐     ┌────────────┴───────────┐     ┌────────────┴───────────┐
-    │ Try swap 100 RUNE into │     │ Swap 100 USDC for RUNE │     │ Claim and reset limit  │
-    │   at least 110 RUJI    │     │  with max 2% slippage  │     │ order 2 bps above ask  │
-    └────────────┬───────────┘     └────────────┬───────────┘     └────────────────────────┘
-    ┌────────────┴───────────┐     ┌────────────┴───────────┐
-    │ Try swap 100 RUJI into │     │ Send 50% RUNE to bank  │
-    │   at least 110 RUNE    │     │    and 50% to other    │
-    └────────────────────────┘     │    trading strategy    │
-                                   └────────────────────────┘
+     DCA:
+    ┌──────────────────────────┐          ┌──────────────────────────┐          ┌──────────────────────────┐          ┌──────────────────────────┐
+    │     If has swap asset    ├── then ──┤   If can execute swap    ├── then ──┤     Set time trigger     ├── then ──┤       Perform swap       │
+    └─────────────┬────────────┘          └─────────────┬────────────┘          └──────────────────────────┘          └──────────────────────────┘
+                  │                                     │
+                else                                  else
+                  │                                     │
+    ┌─────────────┴────────────┐          ┌─────────────┴────────────┐
+    │ Distribute receive asset │          │    Set price trigger     │
+    └──────────────────────────┘          └──────────────────────────┘
 ```
 
 ### Advanced Control Flow Patterns

@@ -22,59 +22,18 @@ pub struct Schedule {
     pub execution_rebate: Vec<Coin>,
     pub executors: Vec<Addr>,
     pub jitter: Option<Duration>,
-}
-
-impl Schedule {
-    pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
-        let mut rebate = Coins::default();
-
-        for amount in self.execution_rebate.iter() {
-            let balance = deps
-                .querier
-                .query_balance(&env.contract.address, &amount.denom)?;
-
-            rebate.add(Coin {
-                denom: amount.denom.clone(),
-                amount: min(amount.amount, balance.amount),
-            })?;
-        }
-
-        let (condition, schedule) = if self.cadence.is_due(deps, env, &self.scheduler_address)? {
-            let current = self.cadence.clone().crank(deps, env)?;
-            let condition = current.into_condition(deps, env, &self.scheduler_address)?;
-            (
-                condition,
-                Schedule {
-                    next: Some(current),
-                    ..self
-                },
-            )
-        } else {
-            let condition = self
-                .cadence
-                .into_condition(deps, env, &self.scheduler_address)?;
-            (condition, self)
-        };
-
-        let create_trigger_msg = Contract(schedule.scheduler_address.clone()).call(
-            to_json_binary(&SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
-                condition: condition.clone(),
-                msg: to_json_binary(&ManagerExecuteMsg::Execute {
-                    contract_address: env.contract.address.clone(),
-                })?,
-                contract_address: schedule.manager_address.clone(),
-                executors: schedule.executors.clone(),
-                jitter: schedule.jitter,
-            })))?,
-            rebate.to_vec(),
-        );
-
-        Ok((vec![create_trigger_msg], Condition::Schedule(schedule)))
-    }
+    pub max_executions: Option<u64>,
+    pub execution_count: Option<u64>,
 }
 
 impl Operation<Condition> for Schedule {
     fn init(self, deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Condition> {
+        if self.execution_count.is_some() {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "Schedule executions cannot be preset",
+            ));
+        }
+
         deps.api
             .addr_validate(self.manager_address.as_str())
             .map_err(|_| {
@@ -108,11 +67,62 @@ impl Operation<Condition> for Schedule {
         Ok(Condition::Schedule(self))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Condition) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, schedule)) => (messages, schedule),
-            Err(_) => (vec![], Condition::Schedule(self)),
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        let execution_count = self.execution_count.unwrap_or_default() + 1;
+
+        if let Some(max_executions) = self.max_executions {
+            if execution_count > max_executions {
+                return Err(cosmwasm_std::StdError::generic_err(
+                    "Schedule has reached its maximum number of executions",
+                ));
+            }
         }
+
+        let mut rebate = Coins::default();
+
+        for amount in self.execution_rebate.iter() {
+            let balance = deps
+                .querier
+                .query_balance(&env.contract.address, &amount.denom)?;
+
+            rebate.add(Coin {
+                denom: amount.denom.clone(),
+                amount: min(amount.amount, balance.amount),
+            })?;
+        }
+
+        let (condition, schedule) = if self.cadence.is_due(deps, env, &self.scheduler_address)? {
+            let current = self.cadence.clone().crank(deps, env)?;
+            let condition = current.into_condition(deps, env, &self.scheduler_address)?;
+            (
+                condition,
+                Schedule {
+                    next: Some(current),
+                    execution_count: Some(execution_count),
+                    ..self
+                },
+            )
+        } else {
+            let condition = self
+                .cadence
+                .into_condition(deps, env, &self.scheduler_address)?;
+            (condition, self)
+        };
+
+        let create_trigger_msg = Contract(schedule.scheduler_address.clone()).call(
+            to_json_binary(&SchedulerExecuteMsg::Create(Box::new(CreateTriggerMsg {
+                condition: condition.clone(),
+                msg: to_json_binary(&ManagerExecuteMsg::Execute {
+                    contract_address: env.contract.address.clone(),
+                })?,
+                contract_address: schedule.manager_address.clone(),
+                executors: schedule.executors.clone(),
+                jitter: schedule.jitter,
+            })))?,
+            rebate.to_vec(),
+        );
+
+        Ok((vec![create_trigger_msg], Condition::Schedule(schedule)))
     }
 }
 

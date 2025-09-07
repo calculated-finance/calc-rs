@@ -47,6 +47,7 @@ mod integration_tests {
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
+            swapped_amount: None,
         }
     }
 
@@ -64,6 +65,7 @@ mod integration_tests {
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
+            swapped_amount: None,
         }
     }
 
@@ -77,6 +79,7 @@ mod integration_tests {
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
+            swapped_amount: None,
         }
     }
 
@@ -101,6 +104,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             denoms: vec![default_swap_action(harness).swap_amount.denom.clone()],
         }
@@ -185,6 +189,8 @@ mod integration_tests {
                     executors: vec![],
                     jitter: None,
                     next: None,
+                    execution_count: None,
+                    max_executions: None,
                 }),
                 index: 3,
                 on_success: Some(4),
@@ -199,6 +205,7 @@ mod integration_tests {
                     routes: vec![SwapRoute::Fin(FinRoute {
                         pair_address: fin_pair.clone(),
                     })],
+                    swapped_amount: None,
                 }),
                 index: 4,
                 on_success: Some(5),
@@ -1066,6 +1073,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -1111,6 +1119,7 @@ mod integration_tests {
                     latest_swap: None,
                 }),
             ],
+            swapped_amount: None,
         };
 
         let mut strategy = StrategyBuilder::new(&mut harness)
@@ -2031,6 +2040,7 @@ mod integration_tests {
                     },
                     shares: Uint128::new(10_000),
                     label: None,
+                    distributions: None,
                 },
                 Destination {
                     recipient: Recipient::Bank {
@@ -2038,6 +2048,7 @@ mod integration_tests {
                     },
                     shares: Uint128::zero(),
                     label: None,
+                    distributions: None,
                 },
             ],
             ..default_distribution_action(&harness)
@@ -2064,6 +2075,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             ..default_distribution_action(&harness)
         };
@@ -2090,6 +2102,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             ..default_distribution_action(&harness)
         };
@@ -2117,6 +2130,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             denoms: vec!["x/ruji".to_string(), "x/ruji".to_string()],
         };
@@ -2137,6 +2151,7 @@ mod integration_tests {
             },
             shares: Uint128::new(25),
             label: Some("CALC".to_string()),
+            distributions: None,
         });
 
         assert_eq!(
@@ -2162,6 +2177,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             denoms: vec!["x/ruji".to_string()],
         };
@@ -2190,6 +2206,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Bank {
@@ -2197,6 +2214,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Contract {
@@ -2212,6 +2230,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
         ];
 
@@ -2226,6 +2245,7 @@ mod integration_tests {
             },
             shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
             label: None,
+            distributions: None,
         };
 
         let distribution_action = Distribution {
@@ -2290,6 +2310,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Bank {
@@ -2297,6 +2318,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Contract {
@@ -2312,6 +2334,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
         ];
 
@@ -2326,6 +2349,7 @@ mod integration_tests {
             },
             shares: total_shares_with_fees.mul_ceil(Decimal::bps(BASE_FEE_BPS)),
             label: None,
+            distributions: None,
         };
 
         let distribution_action = Distribution {
@@ -2399,6 +2423,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Bank {
@@ -2406,6 +2431,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Contract {
@@ -2421,6 +2447,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
         ];
 
@@ -2435,6 +2462,7 @@ mod integration_tests {
             },
             shares: total_shares_with_fees.mul_ceil(Decimal::bps(BASE_FEE_BPS)),
             label: None,
+            distributions: None,
         };
 
         let distribution_action = Distribution {
@@ -2501,6 +2529,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -2542,6 +2571,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -2583,6 +2613,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let second_swap_action = Swap {
@@ -2593,6 +2624,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -2642,6 +2674,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -2691,6 +2724,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -2796,6 +2830,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -2866,6 +2901,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -2942,6 +2978,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![Coin::new(
@@ -3068,6 +3105,7 @@ mod integration_tests {
             routes: vec![SwapRoute::Fin(FinRoute {
                 pair_address: harness.fin_addr.clone(),
             })],
+            swapped_amount: None,
         };
 
         let funds = vec![
@@ -3245,6 +3283,8 @@ mod integration_tests {
                         executors: vec![],
                         jitter: None,
                         next: None,
+                        execution_count: None,
+                        max_executions: None,
                     }),
                     index: 0,
                     on_success: Some(1),
@@ -3281,6 +3321,8 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3327,6 +3369,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3376,6 +3420,8 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3422,6 +3468,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().height),
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3471,6 +3519,8 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3517,6 +3567,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3568,6 +3620,8 @@ mod integration_tests {
                 strategy: PriceStrategy::Fixed(Decimal::one()),
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3604,6 +3658,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         let funds = vec![Coin::new(
@@ -3654,6 +3710,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().height),
             },
             execution_rebate: vec![],
+            execution_count: None,
+            max_executions: None,
         };
 
         let funds = vec![Coin::new(
@@ -3715,6 +3773,8 @@ mod integration_tests {
             execution_rebate: vec![Coin::new(100_u128, pair.denoms.base())],
             executors: vec![],
             jitter: None,
+            execution_count: None,
+            max_executions: None,
         };
 
         let starting_balance = Coin::new(1_000u128, pair.denoms.base());
@@ -3831,6 +3891,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![Coin::new(1u128, "x/ruji")],
+            execution_count: None,
+            max_executions: None,
         };
 
         let funds = vec![

@@ -5,7 +5,9 @@ use cosmwasm_std::{Coins, CosmosMsg, Deps, Env, StdResult};
 
 use crate::{
     actions::{
-        distribution::Distribution, limit_orders::fin_limit_order::FinLimitOrder, swaps::swap::Swap,
+        distribution::Distribution, increment::Increment,
+        limit_orders::fin_limit_order::FinLimitOrder, swaps::swap::Swap,
+        track_account::TrackAccount,
     },
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
@@ -16,6 +18,8 @@ pub enum Action {
     Swap(Swap),
     LimitOrder(FinLimitOrder),
     Distribute(Distribution),
+    Increment(Increment),
+    Track(TrackAccount),
 }
 
 impl Action {
@@ -24,6 +28,8 @@ impl Action {
             Action::Swap(action) => action.routes.len() * 4 + 1,
             Action::Distribute(action) => action.destinations.len() + 1,
             Action::LimitOrder(_) => 4,
+            Action::Increment(_) => 0,
+            Action::Track(_) => 1,
         }
     }
 }
@@ -38,22 +44,32 @@ impl Operation<Action> for Action {
             Action::Distribute(distribution) => {
                 Action::Distribute(distribution.init(deps, env, affiliates)?)
             }
+            Action::Increment(counter) => Action::Increment(counter.init(deps, env, affiliates)?),
+            Action::Track(track) => Action::Track(track.init(deps, env, affiliates)?),
         })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
         match self {
             Action::Swap(swap) => {
-                let (messages, swap) = swap.execute(deps, env);
-                (messages, Action::Swap(swap))
+                let (messages, swap) = swap.execute(deps, env)?;
+                Ok((messages, Action::Swap(swap)))
             }
             Action::LimitOrder(limit_order) => {
-                let (messages, limit_order) = limit_order.execute(deps, env);
-                (messages, Action::LimitOrder(limit_order))
+                let (messages, limit_order) = limit_order.execute(deps, env)?;
+                Ok((messages, Action::LimitOrder(limit_order)))
             }
             Action::Distribute(distribution) => {
-                let (messages, distribution) = distribution.execute(deps, env);
-                (messages, Action::Distribute(distribution))
+                let (messages, distribution) = distribution.execute(deps, env)?;
+                Ok((messages, Action::Distribute(distribution)))
+            }
+            Action::Increment(counter) => {
+                let (messages, counter) = counter.execute(deps, env)?;
+                Ok((messages, Action::Increment(counter)))
+            }
+            Action::Track(track) => {
+                let (messages, track) = track.execute(deps, env)?;
+                Ok((messages, Action::Track(track)))
             }
         }
     }

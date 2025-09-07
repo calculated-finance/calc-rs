@@ -16,7 +16,7 @@ use cosmwasm_std::{
     Reply, Response, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH};
+use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH, WITHDRAWALS};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -191,8 +191,18 @@ pub fn execute(
                 })
                 .collect::<Vec<_>>();
 
+            WITHDRAWALS.update(deps.storage, |existing| -> StdResult<_> {
+                for withdrawal in existing {
+                    final_withdrawals.add(withdrawal)?;
+                }
+                Ok(final_withdrawals.to_vec())
+            })?;
+
             Ok(Response::new()
-                .add_event(Event::new(format!("{}/withdraw", env!("CARGO_PKG_NAME"))))
+                .add_event(
+                    Event::new(format!("{}/withdraw", env!("CARGO_PKG_NAME")))
+                        .add_attribute("owner", info.sender.to_string()),
+                )
                 .add_message(withdrawal_msg)
                 .add_messages(fee_msgs))
         }
@@ -210,7 +220,10 @@ pub fn execute(
             );
 
             Ok(Response::new()
-                .add_event(Event::new(format!("{}/cancel", env!("CARGO_PKG_NAME"))))
+                .add_event(
+                    Event::new(format!("{}/cancel", env!("CARGO_PKG_NAME")))
+                        .add_attribute("owner", info.sender.to_string()),
+                )
                 .add_message(cancel_actions_msg))
         }
         StrategyExecuteMsg::Process {
@@ -245,11 +258,33 @@ pub fn execute(
                 let index = current_node.index();
                 path.push(index.to_string());
 
-                let (messages, node) = match operation {
+                let result = match operation {
                     StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
-                    StrategyOperation::Cancel {} => current_node.cancel(deps.as_ref(), &env)?,
+                    StrategyOperation::Cancel {} => current_node.cancel(deps.as_ref(), &env),
                 };
 
+                if let Err(err) = result {
+                    return Ok(Response::new()
+                        .add_events(vec![
+                            Event::new(format!("{}/process", env!("CARGO_PKG_NAME")))
+                                .add_attribute("operation", operation.as_str())
+                                .add_attribute("path", path.join(",")),
+                            Event::new(format!("{}/process.reply", env!("CARGO_PKG_NAME")))
+                                .add_attribute("status", "error")
+                                .add_attribute("error", err.to_string()),
+                        ])
+                        .add_submessage(SubMsg::reply_never(
+                            Contract(env.contract.address.clone()).call(
+                                to_json_binary(&StrategyExecuteMsg::Process {
+                                    operation,
+                                    previous: Some(index),
+                                })?,
+                                vec![],
+                            ),
+                        )));
+                }
+
+                let (messages, node) = result?;
                 NODES.save(deps.storage, &node)?;
 
                 if !messages.is_empty() {
@@ -367,6 +402,7 @@ mod tests {
                         address: owner.clone(),
                     },
                     label: None,
+                    distributions: None,
                 }],
             }),
             index: 0,
@@ -426,6 +462,7 @@ mod tests {
                         address: owner.clone(),
                     },
                     label: None,
+                    distributions: None,
                 }],
             }),
             index: 0,
@@ -493,6 +530,7 @@ mod tests {
                         address: owner.clone(),
                     },
                     label: None,
+                    distributions: None,
                 }],
             }),
             index: 0,
@@ -560,6 +598,7 @@ mod tests {
                         address: owner.clone(),
                     },
                     label: None,
+                    distributions: None,
                 }],
             }),
             index: 0,

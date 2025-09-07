@@ -231,10 +231,10 @@ impl Operation<Condition> for Condition {
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Condition) {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
         match self {
             Condition::Schedule(schedule) => schedule.execute(deps, env),
-            _ => (vec![], self),
+            _ => Ok((vec![], self)),
         }
     }
 }
@@ -380,7 +380,8 @@ mod conditions_tests {
                 pair_address: Addr::unchecked("fin_pair")
             })],
             maximum_slippage_bps: 100,
-            adjustment: SwapAmountAdjustment::Fixed
+            adjustment: SwapAmountAdjustment::Fixed,
+            swapped_amount: None,
         })
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
@@ -392,7 +393,8 @@ mod conditions_tests {
                 pair_address: Addr::unchecked("fin_pair")
             })],
             maximum_slippage_bps: 100,
-            adjustment: SwapAmountAdjustment::Fixed
+            adjustment: SwapAmountAdjustment::Fixed,
+            swapped_amount: None,
         })
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
@@ -404,7 +406,8 @@ mod conditions_tests {
                 pair_address: Addr::unchecked("fin_pair")
             })],
             maximum_slippage_bps: 100,
-            adjustment: SwapAmountAdjustment::Fixed
+            adjustment: SwapAmountAdjustment::Fixed,
+            swapped_amount: None,
         })
         .is_satisfied(deps.as_ref(), &env)
         .unwrap());
