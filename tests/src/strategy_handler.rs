@@ -86,16 +86,6 @@ impl<'a> StrategyHandler<'a> {
             )
             .unwrap();
 
-        self.harness
-            .execute_filtered_triggers(
-                &self.keeper,
-                ConditionFilter::LimitOrder {
-                    pair_address: self.harness.fin_addr.clone(),
-                    price_range: None,
-                },
-            )
-            .unwrap();
-
         self
     }
 
