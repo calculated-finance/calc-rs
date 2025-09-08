@@ -50,6 +50,7 @@ pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
+    WITHDRAWALS.save(_deps.storage, &vec![])?;
     Ok(Response::new())
 }
 

@@ -47,6 +47,10 @@ pub enum Condition {
         price: Decimal,
     },
     AssetValueRatio(AssetValueRatio),
+    CheckedLessThan {
+        current: Option<u32>,
+        limit: u32,
+    },
 }
 
 impl Condition {
@@ -61,6 +65,7 @@ impl Condition {
             Condition::StrategyStatus { .. } => 2,
             Condition::OraclePrice { .. } => 2,
             Condition::AssetValueRatio(_) => 2,
+            Condition::CheckedLessThan { .. } => 1,
         }
     }
 
@@ -134,6 +139,13 @@ impl Condition {
             Condition::AssetValueRatio(asset_value_ratio) => {
                 asset_value_ratio.is_satisfied(deps, env)?
             }
+            Condition::CheckedLessThan {
+                current,
+                limit: max,
+            } => match current {
+                Some(current) => current < max,
+                None => true,
+            },
         })
     }
 }
@@ -219,13 +231,28 @@ impl Operation<Condition> for Condition {
                 asset_value_ratio.validate(deps)?;
                 Ok(self)
             }
-            Condition::BlocksCompleted(_) | Condition::TimestampElapsed(_) => Ok(self),
+            Condition::CheckedLessThan { .. }
+            | Condition::BlocksCompleted(_)
+            | Condition::TimestampElapsed(_) => Ok(self),
         }
     }
 
     fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Condition) {
         match self {
             Condition::Schedule(schedule) => schedule.execute(deps, env),
+            Condition::CheckedLessThan {
+                current,
+                limit: max,
+            } => (
+                vec![],
+                Condition::CheckedLessThan {
+                    current: match current {
+                        None => Some(1),
+                        Some(current) => Some(current + 1),
+                    },
+                    limit: max,
+                },
+            ),
             _ => (vec![], self),
         }
     }

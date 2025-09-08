@@ -1,4 +1,5 @@
 use calc_rs::{
+    conditions::condition::Condition,
     constants::MAX_STRATEGY_SIZE,
     manager::Affiliate,
     operation::Operation,
@@ -53,14 +54,21 @@ impl NodeStore {
                     }
                 }
                 Node::Condition {
+                    ref condition,
                     on_success,
                     on_failure,
                     ..
                 } => {
                     if on_failure.is_none() && on_success.is_none() {
-                        return Err(StdError::generic_err(
-                            "Condition node must have at least one branch defined",
-                        ));
+                        // TODO: refactor schedules out into their own node type
+                        match condition {
+                            Condition::Schedule(_) => {}
+                            _ => {
+                                return Err(StdError::generic_err(
+                                    "Condition node must have at least one branch defined",
+                                ));
+                            }
+                        }
                     }
 
                     if let Some(on_success) = on_success {
