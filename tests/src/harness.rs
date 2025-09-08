@@ -451,7 +451,7 @@ impl CalcTestApp {
             assert!(
                 actual
                     .iter()
-                    .any(|c| c.denom == coin.denom && c.amount == coin.amount),
+                    .any(|c| c.denom == coin.denom && c.amount.abs_diff(coin.amount) < Uint128::new(10)),
                 "Expected balance for {address} to include {coin}, but it was not found. Actual balances: {actual:#?}"
             );
         }

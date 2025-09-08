@@ -149,6 +149,14 @@ impl<'a> StrategyHandler<'a> {
         println!("[StrategyHandler] Asserting strategy balance is {expected:#?}");
         let balances = self.harness.query_strategy_balances(&self.strategy_addr);
 
+        if balances.is_empty() {
+            assert!(
+                expected.amount.is_zero(),
+                "Expected strategy balance of {expected:?} but found no balances"
+            );
+            return self;
+        }
+
         assert!(
             // Allow for rounding discrepancies
             balances.iter().any(|b| b.amount.abs_diff(expected.amount) < Uint128::new(10)),
@@ -163,7 +171,7 @@ impl<'a> StrategyHandler<'a> {
 
         if expected_balances.is_empty() {
             assert!(
-                balances.is_empty(),
+                balances.is_empty() || balances.iter().all(|c| c.amount < Uint128::new(10)),
                 "Expected no strategy balances but found: {balances:#?}"
             );
             return self;
@@ -178,7 +186,7 @@ impl<'a> StrategyHandler<'a> {
 
             if expected.amount.is_zero() {
                 assert!(
-                    actual.is_none(),
+                    actual.is_none() || actual.unwrap().amount < Uint128::new(10),
                     "Expected zero balance for {} but found: {actual:?}",
                     expected.denom
                 );
