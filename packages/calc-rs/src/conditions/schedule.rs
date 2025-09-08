@@ -113,11 +113,8 @@ impl Operation<Condition> for Schedule {
         Ok(Condition::Schedule(self))
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Condition) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, schedule)) => (messages, schedule),
-            Err(_) => (vec![], Condition::Schedule(self)),
-        }
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        self.execute_unsafe(deps, env)
     }
 }
 

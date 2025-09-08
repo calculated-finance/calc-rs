@@ -189,10 +189,7 @@ impl Operation<Distribution> for Distribution {
         })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Distribution) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, action)) => (messages, action),
-            Err(_) => (vec![], self),
-        }
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Distribution)> {
+        self.execute_unsafe(deps, env)
     }
 }

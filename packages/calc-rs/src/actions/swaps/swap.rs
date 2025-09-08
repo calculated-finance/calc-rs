@@ -305,6 +305,8 @@ impl Swap {
         let mut best_quote = None;
         let mut best_amount = Uint128::zero();
 
+        let mut quote_errors = Vec::<StdError>::with_capacity(self.routes.len());
+
         for route in &self.routes {
             let quote = SwapQuote {
                 swap_amount: self.swap_amount.clone(),
@@ -322,7 +324,16 @@ impl Swap {
                     best_amount = validated_quote.state.expected_amount_out.amount;
                     best_quote = Some(validated_quote);
                 }
+            } else if let Err(err) = quote {
+                quote_errors.push(err);
             }
+        }
+
+        if best_quote.is_none() {
+            return Err(StdError::generic_err(format!(
+                "No valid swap routes: {:?}",
+                quote_errors
+            )));
         }
 
         Ok(best_quote)
@@ -367,11 +378,8 @@ impl Operation<Swap> for Swap {
         Ok(self.with_affiliates())
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Swap) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, swap)) => (messages, swap),
-            Err(_) => (vec![], self),
-        }
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Swap)> {
+        self.execute_unsafe(deps, env)
     }
 }
 

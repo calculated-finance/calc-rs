@@ -417,11 +417,8 @@ impl Operation<FinLimitOrder> for FinLimitOrder {
         Ok(self)
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, FinLimitOrder) {
-        match self.clone().execute_unsafe(deps, env) {
-            Ok((messages, limit_order)) => (messages, limit_order),
-            Err(_) => (vec![], self),
-        }
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, FinLimitOrder)> {
+        self.execute_unsafe(deps, env)
     }
 }
 

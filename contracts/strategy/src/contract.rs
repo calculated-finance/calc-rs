@@ -245,35 +245,62 @@ pub fn execute(
                 let index = current_node.index();
                 path.push(index.to_string());
 
-                let (messages, node) = match operation {
-                    StrategyOperation::Execute => current_node.execute(deps.as_ref(), &env),
-                    StrategyOperation::Cancel {} => current_node.cancel(deps.as_ref(), &env)?,
+                let result = match operation {
+                    StrategyOperation::Execute => current_node.clone().execute(deps.as_ref(), &env),
+                    StrategyOperation::Cancel {} => {
+                        current_node.clone().cancel(deps.as_ref(), &env)
+                    }
                 };
 
-                NODES.save(deps.storage, &node)?;
+                match result {
+                    Ok((messages, node)) => {
+                        NODES.save(deps.storage, &node)?;
 
-                if !messages.is_empty() {
-                    PATH.save(deps.storage, &path)?;
+                        if !messages.is_empty() {
+                            PATH.save(deps.storage, &path)?;
 
-                    return Ok(Response::new()
-                        .add_submessages(
-                            messages
-                                .into_iter()
-                                .map(|message| SubMsg::reply_always(message, index.into()))
-                                .collect::<Vec<_>>(),
-                        )
-                        .add_submessage(SubMsg::reply_never(
-                            Contract(env.contract.address.clone()).call(
-                                to_json_binary(&StrategyExecuteMsg::Process {
-                                    operation,
-                                    previous: Some(node.index()),
-                                })?,
-                                vec![],
-                            ),
-                        )));
+                            return Ok(Response::new()
+                                .add_submessages(
+                                    messages
+                                        .into_iter()
+                                        .map(|message| SubMsg::reply_always(message, index.into()))
+                                        .collect::<Vec<_>>(),
+                                )
+                                .add_submessage(SubMsg::reply_never(
+                                    Contract(env.contract.address.clone()).call(
+                                        to_json_binary(&StrategyExecuteMsg::Process {
+                                            operation,
+                                            previous: Some(node.index()),
+                                        })?,
+                                        vec![],
+                                    ),
+                                )));
+                        }
+
+                        next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
+                    }
+                    Err(err) => {
+                        PATH.save(deps.storage, &path)?;
+                        NODES.save(deps.storage, &current_node)?;
+
+                        return Ok(Response::new()
+                            .add_events(vec![Event::new(format!(
+                                "{}/process.reply",
+                                env!("CARGO_PKG_NAME")
+                            ))
+                            .add_attribute("status", "error")
+                            .add_attribute("error", err.to_string())])
+                            .add_submessage(SubMsg::reply_never(
+                                Contract(env.contract.address.clone()).call(
+                                    to_json_binary(&StrategyExecuteMsg::Process {
+                                        operation,
+                                        previous: Some(index),
+                                    })?,
+                                    vec![],
+                                ),
+                            )));
+                    }
                 }
-
-                next_node = NODES.get_next(deps.as_ref(), &env, &operation, &node).ok();
             }
 
             Ok(Response::new().add_event(
