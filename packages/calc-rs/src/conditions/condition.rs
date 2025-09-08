@@ -15,7 +15,6 @@ use crate::{
         limit_orders::fin_limit_order::{Direction, FinLimitOrder, PriceStrategy},
         swaps::swap::Swap,
     },
-    cadence::Cadence,
     conditions::{asset_value_ratio::AssetValueRatio, schedule::Schedule},
     manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
     operation::{Operation, StatefulOperation},
@@ -55,10 +54,7 @@ impl Condition {
         match self {
             Condition::TimestampElapsed(_) => 1,
             Condition::BlocksCompleted(_) => 1,
-            Condition::Schedule(schedule) => match schedule.cadence {
-                Cadence::LimitOrder { .. } => 4,
-                _ => 2,
-            },
+            Condition::Schedule(_) => 2,
             Condition::CanSwap { .. } => 2,
             Condition::FinLimitOrderFilled { .. } => 2,
             Condition::BalanceAvailable { .. } => 1,
@@ -72,11 +68,7 @@ impl Condition {
         Ok(match self {
             Condition::TimestampElapsed(timestamp) => env.block.time >= *timestamp,
             Condition::BlocksCompleted(height) => env.block.height >= *height,
-            Condition::Schedule(schedule) => {
-                schedule
-                    .cadence
-                    .is_due(deps, env, &schedule.scheduler_address)?
-            }
+            Condition::Schedule(schedule) => schedule.cadence.is_due(deps, env)?,
             Condition::FinLimitOrderFilled {
                 owner,
                 pair_address,

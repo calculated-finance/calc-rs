@@ -4,7 +4,7 @@ use std::{
 };
 
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Coin, Decimal, StdError, StdResult, Timestamp, Uint64};
+use cosmwasm_std::{Addr, Binary, Coin, StdError, StdResult, Timestamp, Uint64};
 
 use crate::conditions::condition::Condition;
 
@@ -90,10 +90,6 @@ pub enum ConditionFilter {
     BlockHeight {
         start: Option<u64>,
         end: Option<u64>,
-    },
-    LimitOrder {
-        pair_address: Addr,
-        price_range: Option<(Decimal, Decimal)>,
     },
 }
 

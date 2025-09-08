@@ -14,7 +14,7 @@ mod integration_tests {
         },
         constants::BASE_FEE_BPS,
         manager::{Affiliate, StrategyStatus},
-        scheduler::{ConditionFilter, CreateTriggerMsg, SchedulerExecuteMsg},
+        scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
     };
 
@@ -3547,48 +3547,6 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_instantiate_schedule_condition_with_limit_order_cadence_does_not_execute() {
-        let mut harness = CalcTestApp::setup();
-        let scheduler = harness.scheduler_addr.clone();
-        let manager = harness.manager_addr.clone();
-
-        let swap_action = default_swap_action(&harness);
-        let funds = vec![swap_action.swap_amount.clone()];
-
-        let schedule = Schedule {
-            scheduler_address: scheduler,
-            executors: vec![],
-            jitter: None,
-            next: None,
-            manager_address: manager,
-            cadence: Cadence::LimitOrder {
-                pair_address: harness.fin_addr.clone(),
-                side: Side::Base,
-                previous: None,
-                strategy: PriceStrategy::Fixed(Decimal::one()),
-            },
-            execution_rebate: vec![],
-        };
-
-        StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![
-                Node::Condition {
-                    condition: Condition::Schedule(schedule),
-                    index: 0,
-                    on_success: Some(1),
-                    on_failure: None,
-                },
-                Node::Action {
-                    action: Action::Swap(swap_action),
-                    index: 1,
-                    next: None,
-                },
-            ])
-            .instantiate(&funds)
-            .assert_strategy_balances(&funds);
-    }
-
-    #[test]
     fn test_crank_time_schedule_sets_and_resets_triggers() {
         let mut harness = CalcTestApp::setup();
         let swap_action = default_swap_action(&harness);
@@ -3691,126 +3649,6 @@ mod integration_tests {
                 &[Coin::new(
                     funds[0].amount - swap_action.swap_amount.amount * Uint128::new(5),
                     swap_action.swap_amount.denom.clone(),
-                )],
-            );
-    }
-
-    #[test]
-    fn test_crank_limit_order_schedule_sets_and_resets_triggers() {
-        let mut harness = CalcTestApp::setup();
-
-        let pair_address = harness.fin_addr.clone();
-        let pair = harness.query_fin_config(&pair_address);
-
-        let limit_order_schedule = Schedule {
-            scheduler_address: harness.scheduler_addr.clone(),
-            manager_address: harness.manager_addr.clone(),
-            cadence: Cadence::LimitOrder {
-                pair_address: pair_address.clone(),
-                side: Side::Base,
-                previous: None,
-                strategy: PriceStrategy::Fixed(Decimal::from_str("0.1").unwrap()),
-            },
-            next: None,
-            execution_rebate: vec![Coin::new(100_u128, pair.denoms.base())],
-            executors: vec![],
-            jitter: None,
-        };
-
-        let starting_balance = Coin::new(1_000u128, pair.denoms.base());
-        let distribution_action = Distribution {
-            denoms: vec![pair.denoms.quote().to_string()],
-            ..default_distribution_action(&harness)
-        };
-
-        let scheduler = harness.scheduler_addr.clone();
-        let builder = StrategyBuilder::new(&mut harness);
-        let keeper = builder.keeper.clone();
-
-        let keeper_balance = builder
-            .app
-            .app
-            .wrap()
-            .query_balance(&keeper, pair.denoms.quote())
-            .unwrap();
-
-        let mut strategy = builder
-            .with_nodes(vec![
-                Node::Condition {
-                    condition: Condition::Schedule(limit_order_schedule.clone()),
-                    index: 0,
-                    on_success: Some(1),
-                    on_failure: None,
-                },
-                Node::Action {
-                    action: Action::Distribute(distribution_action),
-                    index: 1,
-                    next: None,
-                },
-            ])
-            .instantiate(&[starting_balance.clone()]);
-
-        let strategy_addr = strategy.strategy_addr.clone();
-
-        strategy
-            .assert_address_balances(
-                &strategy_addr,
-                &[Coin::new(
-                    starting_balance.amount - Uint128::new(100),
-                    pair.denoms.base(),
-                )],
-            )
-            .assert_fin_orders(
-                &scheduler,
-                &pair_address,
-                vec![(
-                    Side::Base,
-                    Decimal::from_str("0.1").unwrap(), // price
-                    Uint128::new(100),                 // offer
-                    Uint128::zero(),                   // remaining
-                    Uint128::new(10),                  // filled
-                )],
-            )
-            .execute_triggers(ConditionFilter::LimitOrder {
-                pair_address: pair_address.clone(),
-                price_range: None,
-            })
-            .execute_triggers(ConditionFilter::LimitOrder {
-                pair_address: pair_address.clone(),
-                price_range: None,
-            })
-            .execute_triggers(ConditionFilter::LimitOrder {
-                pair_address: pair_address.clone(),
-                price_range: None,
-            })
-            .execute_triggers(ConditionFilter::LimitOrder {
-                pair_address: pair_address.clone(),
-                price_range: None,
-            })
-            .execute_triggers(ConditionFilter::LimitOrder {
-                pair_address: pair_address.clone(),
-                price_range: None,
-            })
-            .assert_strategy_balances(&[Coin::new(
-                starting_balance.amount - Uint128::new(600),
-                pair.denoms.base(),
-            )])
-            .assert_fin_orders(
-                &scheduler,
-                &pair_address,
-                vec![(
-                    Side::Base,
-                    Decimal::from_str("0.1").unwrap(), // price
-                    Uint128::new(100),                 // offer
-                    Uint128::zero(),                   // remaining
-                    Uint128::new(10),                  // filled
-                )],
-            )
-            .assert_address_balances(
-                &keeper,
-                &[Coin::new(
-                    keeper_balance.amount + Uint128::new(50),
-                    pair.denoms.quote(),
                 )],
             );
     }

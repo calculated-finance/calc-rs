@@ -2,7 +2,7 @@ use calc_rs::{
     conditions::condition::Condition,
     scheduler::{ConditionFilter, Trigger},
 };
-use cosmwasm_std::{Addr, Decimal, Order, StdResult, Storage, Uint64};
+use cosmwasm_std::{Addr, Order, StdResult, Storage, Uint64};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 
 pub const MANAGER: Item<Addr> = Item::new("manager");
@@ -10,36 +10,17 @@ pub const MANAGER: Item<Addr> = Item::new("manager");
 pub struct TriggerIndexes<'a> {
     pub timestamp: MultiIndex<'a, u64, Trigger, u64>,
     pub block_height: MultiIndex<'a, u64, Trigger, u64>,
-    pub limit_order_pair_price: MultiIndex<'a, (Addr, String), Trigger, u64>,
 }
 
 impl<'a> IndexList<Trigger> for TriggerIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Trigger>> + '_> {
-        let v: Vec<&dyn Index<Trigger>> = vec![
-            &self.timestamp,
-            &self.block_height,
-            &self.limit_order_pair_price,
-        ];
+        let v: Vec<&dyn Index<Trigger>> = vec![&self.timestamp, &self.block_height];
         Box::new(v.into_iter())
     }
 }
 
 pub struct TriggerStore<'a> {
     triggers: IndexedMap<u64, Trigger, TriggerIndexes<'a>>,
-}
-
-pub fn price_cursor(price: Decimal) -> String {
-    let mut s = price.to_string();
-    if let Some(dot) = s.find('.') {
-        let decimals = s.len() - dot - 1;
-        if decimals < 18 {
-            s.push_str(&"0".repeat(18 - decimals));
-        }
-        s.remove(dot);
-    } else {
-        s.push_str(&"0".repeat(18));
-    }
-    format!("{s:0>39}")
 }
 
 impl TriggerStore<'_> {
@@ -70,33 +51,6 @@ impl TriggerStore<'_> {
                 end.map(|e| Bound::inclusive((e.seconds(), u64::MAX))),
                 Order::Ascending,
             ),
-            ConditionFilter::LimitOrder {
-                pair_address,
-                price_range,
-            } => match price_range {
-                None => self
-                    .triggers
-                    .idx
-                    .limit_order_pair_price
-                    .sub_prefix(pair_address)
-                    .range(
-                        storage,
-                        Some(Bound::inclusive((price_cursor(Decimal::MIN), u64::MIN))),
-                        Some(Bound::inclusive((price_cursor(Decimal::MAX), u64::MAX))),
-                        Order::Ascending,
-                    ),
-                Some((above, below)) => self
-                    .triggers
-                    .idx
-                    .limit_order_pair_price
-                    .sub_prefix(pair_address)
-                    .range(
-                        storage,
-                        Some(Bound::inclusive((price_cursor(above), u64::MIN))),
-                        Some(Bound::inclusive((price_cursor(below), u64::MAX))),
-                        Order::Ascending,
-                    ),
-            },
         }
         .take(limit.unwrap_or(30))
         .flat_map(|r| r.map(|(_, v)| v))
@@ -130,29 +84,14 @@ pub const TRIGGERS: TriggerStore<'static> = TriggerStore {
                 "triggers_v1",
                 "triggers_v1__block_height",
             ),
-            limit_order_pair_price: MultiIndex::new(
-                |_, t| match t.condition.clone() {
-                    Condition::FinLimitOrderFilled {
-                        pair_address,
-                        price,
-                        ..
-                    } => (pair_address, price_cursor(price)),
-                    _ => (Addr::unchecked(""), Decimal::MAX.to_string()),
-                },
-                "triggers_v1",
-                "triggers_v1__limit_order_pair_price",
-            ),
         },
     ),
 };
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
     use cosmwasm_std::{testing::MockStorage, Binary, Timestamp};
-    use rujira_rs::fin::Side;
 
     #[test]
     fn test_block_height_filter() {
@@ -348,129 +287,6 @@ mod tests {
                     ConditionFilter::Timestamp {
                         start: Some(Timestamp::from_seconds(250)),
                         end: Some(Timestamp::from_seconds(350)),
-                    },
-                    None,
-                )
-                .unwrap(),
-            vec![]
-        );
-    }
-
-    #[test]
-    fn test_limit_order_filter() {
-        let storage = &mut MockStorage::default();
-        let owner = Addr::unchecked("creator");
-
-        let trigger_1 = Trigger {
-            id: Uint64::from(1u64),
-            owner: owner.clone(),
-            condition: Condition::FinLimitOrderFilled {
-                owner: None,
-                pair_address: Addr::unchecked("pair"),
-                side: Side::Base,
-                price: Decimal::from_str("1").unwrap(),
-            },
-            msg: Binary::default(),
-            contract_address: Addr::unchecked("contract1"),
-            executors: vec![],
-            execution_rebate: vec![],
-            jitter: None,
-        };
-
-        let trigger_2 = Trigger {
-            id: Uint64::from(2u64),
-            owner,
-            condition: Condition::FinLimitOrderFilled {
-                owner: None,
-                pair_address: Addr::unchecked("pair"),
-                side: Side::Base,
-                price: Decimal::from_str("2").unwrap(),
-            },
-            msg: Binary::default(),
-            contract_address: Addr::unchecked("contract1"),
-            executors: vec![],
-            execution_rebate: vec![],
-            jitter: None,
-        };
-
-        TRIGGERS.save(storage, &trigger_1).unwrap();
-        TRIGGERS.save(storage, &trigger_2).unwrap();
-
-        assert_eq!(
-            TRIGGERS
-                .filtered(
-                    storage,
-                    ConditionFilter::LimitOrder {
-                        pair_address: Addr::unchecked("pair"),
-                        price_range: None,
-                    },
-                    None,
-                )
-                .unwrap(),
-            vec![trigger_1.clone(), trigger_2.clone()]
-        );
-
-        assert_eq!(
-            TRIGGERS
-                .filtered(
-                    storage,
-                    ConditionFilter::LimitOrder {
-                        pair_address: Addr::unchecked("pair"),
-                        price_range: Some((
-                            Decimal::from_str("1").unwrap(),
-                            Decimal::from_str("2").unwrap()
-                        )),
-                    },
-                    None,
-                )
-                .unwrap(),
-            vec![trigger_1.clone(), trigger_2.clone()]
-        );
-
-        assert_eq!(
-            TRIGGERS
-                .filtered(
-                    storage,
-                    ConditionFilter::LimitOrder {
-                        pair_address: Addr::unchecked("pair"),
-                        price_range: Some((
-                            Decimal::from_str("1.5").unwrap(),
-                            Decimal::from_str("2.5").unwrap()
-                        )),
-                    },
-                    None,
-                )
-                .unwrap(),
-            vec![trigger_2.clone()]
-        );
-
-        assert_eq!(
-            TRIGGERS
-                .filtered(
-                    storage,
-                    ConditionFilter::LimitOrder {
-                        pair_address: Addr::unchecked("pair"),
-                        price_range: Some((
-                            Decimal::from_str("0.5").unwrap(),
-                            Decimal::from_str("1.5").unwrap()
-                        )),
-                    },
-                    None,
-                )
-                .unwrap(),
-            vec![trigger_1]
-        );
-
-        assert_eq!(
-            TRIGGERS
-                .filtered(
-                    storage,
-                    ConditionFilter::LimitOrder {
-                        pair_address: Addr::unchecked("pair"),
-                        price_range: Some((
-                            Decimal::from_str("2.5").unwrap(),
-                            Decimal::from_str("3.5").unwrap()
-                        )),
                     },
                     None,
                 )
