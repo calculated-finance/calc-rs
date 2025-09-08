@@ -101,6 +101,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             denoms: vec![default_swap_action(harness).swap_amount.denom.clone()],
         }
@@ -187,10 +188,6 @@ mod integration_tests {
                     jitter: None,
                     next: None,
                     executions: None,
-<<<<<<< HEAD
-=======
-                    max_executions: None,
->>>>>>> be46560 (Add execution tracking to Schedule and prevent exceeding max executions)
                 }),
                 index: 3,
                 on_success: Some(4),
@@ -2038,6 +2035,7 @@ mod integration_tests {
                     },
                     shares: Uint128::new(10_000),
                     label: None,
+                    distributions: None,
                 },
                 Destination {
                     recipient: Recipient::Bank {
@@ -2045,6 +2043,7 @@ mod integration_tests {
                     },
                     shares: Uint128::zero(),
                     label: None,
+                    distributions: None,
                 },
             ],
             ..default_distribution_action(&harness)
@@ -2071,6 +2070,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             ..default_distribution_action(&harness)
         };
@@ -2097,6 +2097,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             ..default_distribution_action(&harness)
         };
@@ -2113,10 +2114,10 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_instantiate_distribution_with_duplicate_denoms_saves_unique_denoms() {
+    fn test_instantiate_distribution_with_duplicate_denoms_fails() {
         let mut harness = CalcTestApp::setup();
 
-        let mut distribution_action = Distribution {
+        let distribution_action = Distribution {
             destinations: vec![Destination {
                 recipient: Recipient::Contract {
                     address: harness.app.api().addr_make("test"),
@@ -2124,39 +2125,19 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             denoms: vec!["x/ruji".to_string(), "x/ruji".to_string()],
         };
 
-        let fee_collector = harness.fee_collector_addr.clone();
-
-        let strategy = StrategyBuilder::new(&mut harness)
+        assert!(StrategyBuilder::new(&mut harness)
             .with_nodes(vec![Node::Action {
-                action: Action::Distribute(distribution_action.clone()),
+                action: Action::Distribute(distribution_action),
                 index: 0,
                 next: None,
             }])
-            .instantiate(&[]);
-
-        distribution_action.destinations.push(Destination {
-            recipient: Recipient::Bank {
-                address: fee_collector,
-            },
-            shares: Uint128::new(25),
-            label: Some("CALC".to_string()),
-        });
-
-        assert_eq!(
-            strategy.config().nodes[0],
-            Node::Action {
-                action: Action::Distribute(Distribution {
-                    denoms: vec!["x/ruji".to_string()],
-                    destinations: distribution_action.destinations,
-                }),
-                index: 0,
-                next: None,
-            }
-        );
+            .try_instantiate(&[])
+            .is_err());
     }
 
     #[test]
@@ -2169,6 +2150,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             }],
             denoms: vec!["x/ruji".to_string()],
         };
@@ -2197,6 +2179,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Bank {
@@ -2204,6 +2187,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Contract {
@@ -2219,6 +2203,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
         ];
 
@@ -2233,6 +2218,7 @@ mod integration_tests {
             },
             shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
             label: None,
+            distributions: None,
         };
 
         let distribution_action = Distribution {
@@ -2297,6 +2283,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Bank {
@@ -2304,6 +2291,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Contract {
@@ -2319,6 +2307,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
         ];
 
@@ -2333,6 +2322,7 @@ mod integration_tests {
             },
             shares: total_shares_with_fees.mul_ceil(Decimal::bps(BASE_FEE_BPS)),
             label: None,
+            distributions: None,
         };
 
         let distribution_action = Distribution {
@@ -2406,6 +2396,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Bank {
@@ -2413,6 +2404,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(10_000),
                 label: None,
+                distributions: None,
             },
             Destination {
                 recipient: Recipient::Contract {
@@ -2428,6 +2420,7 @@ mod integration_tests {
                 },
                 shares: Uint128::new(5_000),
                 label: None,
+                distributions: None,
             },
         ];
 
@@ -2442,6 +2435,7 @@ mod integration_tests {
             },
             shares: total_shares_with_fees.mul_ceil(Decimal::bps(BASE_FEE_BPS)),
             label: None,
+            distributions: None,
         };
 
         let distribution_action = Distribution {
@@ -2491,6 +2485,158 @@ mod integration_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_execute_distribution_updates_destination_distributions() {
+        let mut harness = CalcTestApp::setup();
+        let manager = harness.manager_addr.clone();
+        let owner = harness.owner.clone();
+        let fee_collector = harness.fee_collector_addr.clone();
+
+        let destinations = vec![Destination {
+            recipient: Recipient::Bank {
+                address: harness.app.api().addr_make("test1"),
+            },
+            shares: Uint128::new(10_000),
+            label: None,
+            distributions: None,
+        }];
+
+        let total_shares_with_fees = destinations
+            .iter()
+            .fold(Uint128::zero(), |acc, d| acc + d.shares)
+            .mul_ceil(Decimal::bps(10_000 + BASE_FEE_BPS));
+
+        let fee_collector_destination = Destination {
+            recipient: Recipient::Bank {
+                address: fee_collector.clone(),
+            },
+            shares: total_shares_with_fees.mul_floor(Decimal::bps(BASE_FEE_BPS)),
+            label: Some("CALC".to_string()),
+            distributions: None,
+        };
+
+        let distribution_action = Distribution {
+            denoms: vec!["x/ruji".to_string(), "rune".to_string()],
+            destinations: destinations.clone(),
+        };
+
+        let starting_balances = vec![
+            Coin::new(100_000u128, "rune"),
+            Coin::new(100_000u128, "x/ruji"),
+        ];
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::Distribute(distribution_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&starting_balances);
+
+        strategy.assert_strategy_balances(&[Coin::new(0u128, "rune"), Coin::new(0u128, "x/ruji")]);
+
+        let updated_destinations = [
+            destinations.clone(),
+            vec![fee_collector_destination.clone()],
+        ]
+        .concat()
+        .iter()
+        .enumerate()
+        .map(|(i, d)| Destination {
+            distributions: Some(
+                Coins::try_from(
+                    starting_balances
+                        .iter()
+                        .map(|b| {
+                            let amount = if i == destinations.len() {
+                                b.amount
+                                    .mul_ceil(Decimal::from_ratio(d.shares, total_shares_with_fees))
+                            } else {
+                                b.amount.mul_floor(Decimal::from_ratio(
+                                    d.shares,
+                                    total_shares_with_fees,
+                                ))
+                            };
+
+                            Coin::new(amount, b.denom.clone())
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap()
+                .into_vec(),
+            ),
+            ..d.clone()
+        })
+        .collect::<Vec<_>>();
+
+        strategy.assert_config(StrategyConfig {
+            manager: manager.clone(),
+            owner: owner.clone(),
+            nodes: vec![Node::Action {
+                action: Action::Distribute(Distribution {
+                    denoms: distribution_action.denoms.clone(),
+                    destinations: updated_destinations,
+                }),
+                index: 0,
+                next: None,
+            }],
+            withdrawals: vec![],
+        });
+
+        strategy.deposit(&starting_balances.clone()).execute();
+
+        strategy.assert_strategy_balances(&[Coin::new(0u128, "rune"), Coin::new(0u128, "x/ruji")]);
+
+        let updated_destinations = [
+            destinations.clone(),
+            vec![fee_collector_destination.clone()],
+        ]
+        .concat()
+        .iter()
+        .enumerate()
+        .map(|(i, d)| Destination {
+            distributions: Some(
+                Coins::try_from(
+                    starting_balances
+                        .iter()
+                        .map(|b| {
+                            let amount = if i == destinations.len() {
+                                b.amount
+                                    .mul_ceil(Decimal::from_ratio(d.shares, total_shares_with_fees))
+                                    * Uint128::new(2)
+                            } else {
+                                b.amount.mul_floor(Decimal::from_ratio(
+                                    d.shares,
+                                    total_shares_with_fees,
+                                )) * Uint128::new(2)
+                            };
+
+                            Coin::new(amount, b.denom.clone())
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap()
+                .into_vec(),
+            ),
+            ..d.clone()
+        })
+        .collect::<Vec<_>>();
+
+        strategy.assert_config(StrategyConfig {
+            manager,
+            owner,
+            nodes: vec![Node::Action {
+                action: Action::Distribute(Distribution {
+                    denoms: distribution_action.denoms,
+                    destinations: updated_destinations,
+                }),
+                index: 0,
+                next: None,
+            }],
+            withdrawals: vec![],
+        });
     }
 
     // Condition node tests
@@ -3664,64 +3810,6 @@ mod integration_tests {
                 &strategy_addr,
                 &[Coin::new(
                     funds[0].amount - swap_action.swap_amount.amount * Uint128::new(5),
-                    swap_action.swap_amount.denom.clone(),
-                )],
-            );
-    }
-
-    #[test]
-    fn test_schedule_condition_prevents_executions_after_max() {
-        let mut harness = CalcTestApp::setup();
-        let swap_action = default_swap_action(&harness);
-
-        let schedule = Schedule {
-            scheduler_address: harness.scheduler_addr.clone(),
-            executors: vec![],
-            jitter: None,
-            next: None,
-            manager_address: harness.manager_addr.clone(),
-            cadence: Cadence::Blocks {
-                interval: 60,
-                previous: Some(harness.app.block_info().height),
-            },
-            execution_rebate: vec![],
-            executions: None,
-            max_executions: Some(2),
-        };
-
-        let funds = vec![Coin::new(
-            swap_action.swap_amount.amount * Uint128::new(20),
-            swap_action.swap_amount.denom.clone(),
-        )];
-
-        let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![
-                Node::Condition {
-                    condition: Condition::Schedule(schedule),
-                    index: 0,
-                    on_success: Some(1),
-                    on_failure: None,
-                },
-                Node::Action {
-                    action: Action::Swap(swap_action.clone()),
-                    index: 1,
-                    next: None,
-                },
-            ])
-            .instantiate(&funds);
-
-        let strategy_addr = strategy.strategy_addr.clone();
-
-        strategy
-            .assert_strategy_balances(&funds)
-            .advance_blocks(60)
-            .advance_blocks(60)
-            .advance_blocks(60)
-            .advance_blocks(60)
-            .assert_address_balances(
-                &strategy_addr,
-                &[Coin::new(
-                    funds[0].amount - swap_action.swap_amount.amount * Uint128::new(2),
                     swap_action.swap_amount.denom.clone(),
                 )],
             );

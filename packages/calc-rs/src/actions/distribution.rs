@@ -34,6 +34,7 @@ pub struct Destination {
     pub shares: Uint128,
     pub recipient: Recipient,
     pub label: Option<String>,
+    pub distributions: Option<Vec<Coin>>,
 }
 
 #[cw_serde]
@@ -61,6 +62,7 @@ impl Distribution {
                         },
                         shares: total_fee_applied_shares.mul_ceil(Decimal::bps(affiliate.bps)),
                         label: Some(affiliate.label.clone()),
+                        distributions: None,
                     })
                     .collect(),
             ]
@@ -86,6 +88,7 @@ impl Distribution {
             return Ok((vec![], self));
         }
 
+        let mut remaining = balances.clone();
         let mut messages = vec![];
 
         let total_shares = self
@@ -93,17 +96,33 @@ impl Distribution {
             .iter()
             .fold(Uint128::zero(), |acc, d| acc + d.shares);
 
-        for destination in &self.destinations {
+        let destinations_count = self.destinations.len();
+        let final_destination = destinations_count.saturating_sub(1);
+
+        let mut destinations = Vec::<Destination>::with_capacity(destinations_count);
+
+        for (i, mut destination) in self.destinations.into_iter().enumerate() {
             let share_ratio = Decimal::from_ratio(destination.shares, total_shares);
 
             let denom_shares = balances
                 .iter()
                 .flat_map(|coin| {
-                    let amount = coin.amount.mul_floor(share_ratio);
-                    if amount.is_zero() {
-                        None
+                    let amount = if i == final_destination {
+                        remaining.amount_of(&coin.denom)
                     } else {
-                        Some(Coin::new(amount, coin.denom.clone()))
+                        coin.amount.mul_floor(share_ratio)
+                    };
+
+                    if amount.is_zero() {
+                        Err(StdError::generic_err(format!(
+                            "No remaining balance to distribute for denom {}",
+                            coin.denom
+                        )))
+                    } else {
+                        let distribution = Coin::new(amount, coin.denom.clone());
+                        remaining.sub(distribution.clone())?;
+
+                        Ok(distribution)
                     }
                 })
                 .collect::<Vec<_>>();
@@ -115,25 +134,43 @@ impl Distribution {
             let distribute_message = match destination.recipient.clone() {
                 Recipient::Bank { address, .. } => CosmosMsg::Bank(BankMsg::Send {
                     to_address: address.into(),
-                    amount: denom_shares,
+                    amount: denom_shares.clone(),
                 }),
                 Recipient::Contract { address, msg, .. } => CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: address.into(),
                     msg,
-                    funds: denom_shares,
+                    funds: denom_shares.clone(),
                 }),
                 Recipient::Deposit { memo } => MsgDeposit {
                     memo,
-                    coins: denom_shares,
+                    coins: denom_shares.clone(),
                     signer: deps.api.addr_canonicalize(env.contract.address.as_str())?,
                 }
                 .into_cosmos_msg()?,
             };
 
             messages.push(distribute_message);
+
+            let mut distributions =
+                Coins::try_from(destination.distributions.take().unwrap_or_default())?;
+
+            for distribution in denom_shares {
+                distributions.add(distribution)?;
+            }
+
+            destinations.push(Destination {
+                distributions: Some(distributions.into_vec()),
+                ..destination
+            });
         }
 
-        Ok((messages, self))
+        Ok((
+            messages,
+            Distribution {
+                denoms: self.denoms,
+                destinations,
+            },
+        ))
     }
 }
 
@@ -147,11 +184,15 @@ impl Operation<Distribution> for Distribution {
             return Err(StdError::generic_err("Destinations cannot be empty"));
         }
 
-        let denoms = HashSet::<String>::from_iter(self.denoms.clone())
+        let unique_denoms = HashSet::<String>::from_iter(self.denoms.clone())
             .into_iter()
             .collect::<Vec<_>>();
 
-        let has_native_denoms = denoms.iter().any(|d| !is_secured_asset(d));
+        if unique_denoms.len() != self.denoms.len() {
+            return Err(StdError::generic_err("Denoms cannot contain duplicates"));
+        }
+
+        let has_native_denoms = unique_denoms.iter().any(|d| !is_secured_asset(d));
         let mut total_shares = Uint128::zero();
 
         for destination in self.destinations.iter() {
@@ -183,10 +224,7 @@ impl Operation<Distribution> for Distribution {
             )));
         }
 
-        Ok(Distribution {
-            denoms,
-            ..Distribution::with_affiliates(self, affiliates)?
-        })
+        self.with_affiliates(affiliates)
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Distribution)> {
