@@ -27,6 +27,14 @@ pub struct Schedule {
 
 impl Schedule {
     pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        let executions = self.executions.unwrap_or(0) + 1;
+
+        if let Some(max) = self.max_executions {
+            if executions > max {
+                return Ok((vec![], Condition::Schedule(self)));
+            }
+        }
+
         let mut rebate = Coins::default();
 
         for amount in self.execution_rebate.iter() {

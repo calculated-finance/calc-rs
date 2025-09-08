@@ -254,6 +254,16 @@ impl CalcTestApp {
             .unwrap()
     }
 
+    pub fn get_triggers(&self, filter: ConditionFilter, limit: Option<usize>) -> Vec<Trigger> {
+        self.app
+            .wrap()
+            .query_wasm_smart::<Vec<Trigger>>(
+                self.scheduler_addr.clone(),
+                &SchedulerQueryMsg::Filtered { filter, limit },
+            )
+            .unwrap()
+    }
+
     pub fn create_strategy(
         &mut self,
         owner: &Addr,
