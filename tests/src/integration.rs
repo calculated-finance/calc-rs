@@ -18,7 +18,7 @@ mod integration_tests {
         strategy::Node,
     };
 
-    use std::{str::FromStr, time::Duration, vec};
+    use std::{str::FromStr, time::Duration, u128, vec};
 
     use calc_rs::{
         actions::{
@@ -132,6 +132,7 @@ mod integration_tests {
                 index: 0,
                 next: None,
             }],
+            withdrawals: vec![],
         });
     }
 
@@ -797,6 +798,7 @@ mod integration_tests {
                     index: 0,
                     next: None,
                 }],
+                withdrawals: vec![],
             })
             .assert_strategy_balances(&[Coin::new(
                 swap_action
@@ -3731,5 +3733,52 @@ mod integration_tests {
             .unwrap();
 
         assert_eq!(keeper_balance, Coin::new(5u128, "x/ruji"));
+    }
+
+    #[test]
+    fn test_withdraw_adds_amounts_to_withdrawals() {
+        let mut harness = CalcTestApp::setup();
+
+        let swap_action = Swap {
+            minimum_receive_amount: Coin::new(u128::MAX, "rune"),
+            ..default_swap_action(&harness)
+        };
+
+        let starting_balance = Coin::new(100000u128, "x/ruji");
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::Swap(swap_action),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[starting_balance.clone()]);
+
+        let desired = Uint128::new(50_000);
+        let fee = desired.mul_floor(Decimal::from_ratio(BASE_FEE_BPS, 10_000_u128));
+        let withdrawal = desired - fee;
+
+        strategy
+            .withdraw(vec![Coin::new(desired.u128(), "x/ruji")])
+            .assert_withdrawals(vec![Coin::new(withdrawal.u128(), "x/ruji")])
+            .assert_strategy_balance(&Coin::new(
+                (starting_balance.amount - desired).u128(),
+                "x/ruji",
+            ));
+
+        let new_desired = Uint128::new(30_000);
+        let new_fee = new_desired.mul_floor(Decimal::from_ratio(BASE_FEE_BPS, 10_000_u128));
+        let new_withdrawal = new_desired - new_fee;
+
+        strategy
+            .withdraw(vec![Coin::new(new_desired.u128(), "x/ruji")])
+            .assert_strategy_balance(&Coin::new(
+                (starting_balance.amount - (desired + new_desired)).u128(),
+                "x/ruji",
+            ))
+            .assert_withdrawals(vec![Coin::new(
+                (withdrawal + new_withdrawal).u128(),
+                "x/ruji",
+            )]);
     }
 }
