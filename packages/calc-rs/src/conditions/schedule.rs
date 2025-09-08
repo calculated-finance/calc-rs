@@ -22,6 +22,7 @@ pub struct Schedule {
     pub execution_rebate: Vec<Coin>,
     pub executors: Vec<Addr>,
     pub jitter: Option<Duration>,
+    pub executions: Option<u32>,
 }
 
 impl Schedule {
@@ -67,7 +68,13 @@ impl Schedule {
             rebate.to_vec(),
         );
 
-        Ok((vec![create_trigger_msg], Condition::Schedule(schedule)))
+        Ok((
+            vec![create_trigger_msg],
+            Condition::Schedule(Schedule {
+                executions: Some(schedule.executions.unwrap_or(0) + 1),
+                ..schedule
+            }),
+        ))
     }
 }
 
