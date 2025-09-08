@@ -39,9 +39,9 @@ impl Schedule {
             })?;
         }
 
-        let (condition, schedule) = if self.cadence.is_due(deps, env, &self.scheduler_address)? {
-            let current = self.cadence.clone().crank(deps, env)?;
-            let condition = current.into_condition(deps, env, &self.scheduler_address)?;
+        let (condition, schedule) = if self.cadence.is_due(deps, env)? {
+            let current = self.cadence.clone().crank(env)?;
+            let condition = current.into_condition(env)?;
             (
                 condition,
                 Schedule {
@@ -50,9 +50,7 @@ impl Schedule {
                 },
             )
         } else {
-            let condition = self
-                .cadence
-                .into_condition(deps, env, &self.scheduler_address)?;
+            let condition = self.cadence.into_condition(env)?;
             (condition, self)
         };
 
