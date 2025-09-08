@@ -16,7 +16,7 @@ use cosmwasm_std::{
     Reply, Response, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH};
+use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH, WITHDRAWALS};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -35,6 +35,7 @@ pub fn instantiate(
     MANAGER.save(deps.storage, &info.sender)?;
     OWNER.save(deps.storage, &msg.owner)?;
     AFFILIATES.save(deps.storage, &msg.affiliates)?;
+    WITHDRAWALS.save(deps.storage, &vec![])?;
 
     let init_msg = Contract(env.contract.address.clone()).call(
         to_json_binary(&StrategyExecuteMsg::Init(msg.nodes))?,
@@ -191,6 +192,13 @@ pub fn execute(
                 })
                 .collect::<Vec<_>>();
 
+            WITHDRAWALS.update(deps.storage, |existing| -> StdResult<_> {
+                for withdrawal in existing {
+                    final_withdrawals.add(withdrawal)?;
+                }
+                Ok(final_withdrawals.to_vec())
+            })?;
+
             Ok(Response::new()
                 .add_event(Event::new(format!("{}/withdraw", env!("CARGO_PKG_NAME"))))
                 .add_message(withdrawal_msg)
@@ -309,6 +317,7 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
             manager: MANAGER.load(deps.storage)?,
             owner: OWNER.load(deps.storage)?,
             nodes: NODES.all(deps.storage)?,
+            withdrawals: WITHDRAWALS.load(deps.storage)?,
         }),
         StrategyQueryMsg::Balances {} => {
             let mut balances = NODES.all(deps.storage)?.iter().try_fold(
