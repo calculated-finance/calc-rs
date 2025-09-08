@@ -41,21 +41,21 @@ impl Operation<Action> for Action {
         })
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Action) {
-        match self {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Action)> {
+        Ok(match self {
             Action::Swap(swap) => {
-                let (messages, swap) = swap.execute(deps, env);
+                let (messages, swap) = swap.execute(deps, env)?;
                 (messages, Action::Swap(swap))
             }
             Action::LimitOrder(limit_order) => {
-                let (messages, limit_order) = limit_order.execute(deps, env);
+                let (messages, limit_order) = limit_order.execute(deps, env)?;
                 (messages, Action::LimitOrder(limit_order))
             }
             Action::Distribute(distribution) => {
-                let (messages, distribution) = distribution.execute(deps, env);
+                let (messages, distribution) = distribution.execute(deps, env)?;
                 (messages, Action::Distribute(distribution))
             }
-        }
+        })
     }
 }
 

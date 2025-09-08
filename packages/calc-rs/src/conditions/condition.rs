@@ -223,10 +223,10 @@ impl Operation<Condition> for Condition {
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Condition) {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
         match self {
             Condition::Schedule(schedule) => schedule.execute(deps, env),
-            _ => (vec![], self),
+            _ => Ok((vec![], self)),
         }
     }
 }
@@ -254,10 +254,15 @@ mod conditions_tests {
     use std::str::FromStr;
 
     use cosmwasm_std::{
+        from_json,
         testing::{mock_dependencies, mock_env},
         to_json_binary, Addr, Coin, ContractResult, Decimal, SystemResult, Timestamp, Uint128,
+        WasmQuery,
     };
-    use rujira_rs::fin::{OrderResponse, Price, Side, SimulationResponse};
+    use rujira_rs::fin::{
+        BookItemResponse, BookResponse, Denoms, OrderResponse, Price, Side, SimulationResponse,
+        Tick,
+    };
 
     use crate::{
         actions::{
@@ -355,17 +360,52 @@ mod conditions_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
 
-        deps.querier.update_wasm(|_| {
-            SystemResult::Ok(ContractResult::Ok(
-                to_json_binary(&SimulationResponse {
-                    returned: Uint128::new(100),
-                    fee: Uint128::new(1),
-                })
-                .unwrap(),
-            ))
+        deps.querier.update_wasm(|query| {
+            SystemResult::Ok(ContractResult::Ok(match query {
+                WasmQuery::Smart { msg, .. } => match from_json(msg).unwrap() {
+                    QueryMsg::Simulate(_) => to_json_binary(&SimulationResponse {
+                        returned: Uint128::new(100),
+                        fee: Uint128::new(1),
+                    })
+                    .unwrap(),
+                    QueryMsg::Config {} => to_json_binary(&ConfigResponse {
+                        denoms: Denoms::new("rune", "x/ruji"),
+                        oracles: None,
+                        market_maker: None,
+                        tick: Tick::new(6),
+                        fee_taker: Decimal::percent(1),
+                        fee_maker: Decimal::percent(1),
+                        fee_address: "feetaker".to_string(),
+                    })
+                    .unwrap(),
+                    QueryMsg::Book { .. } => to_json_binary(&BookResponse {
+                        base: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1").unwrap(),
+                                total: Uint128::new(30_000_000),
+                            };
+                            10
+                        ],
+                        quote: vec![
+                            BookItemResponse {
+                                price: Decimal::from_str("1").unwrap(),
+                                total: Uint128::new(30_000_000),
+                            };
+                            10
+                        ],
+                    })
+                    .unwrap(),
+                    _ => panic!("Unexpected query: {:?}", msg),
+                },
+                _ => panic!("Unexpected query: {:?}", query),
+            }))
         });
 
-        assert!(!Condition::CanSwap(Swap {
+        deps.querier
+            .bank
+            .update_balance(&env.contract.address, vec![Coin::new(1000u128, "rune")]);
+
+        assert!(Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(101u128, "rune"),
             routes: vec![SwapRoute::Fin(FinRoute {
@@ -375,9 +415,9 @@ mod conditions_tests {
             adjustment: SwapAmountAdjustment::Fixed
         })
         .is_satisfied(deps.as_ref(), &env)
-        .unwrap());
+        .is_err());
 
-        assert!(!Condition::CanSwap(Swap {
+        assert!(Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(100u128, "rune"),
             routes: vec![SwapRoute::Fin(FinRoute {
@@ -387,9 +427,9 @@ mod conditions_tests {
             adjustment: SwapAmountAdjustment::Fixed
         })
         .is_satisfied(deps.as_ref(), &env)
-        .unwrap());
+        .is_ok());
 
-        assert!(!Condition::CanSwap(Swap {
+        assert!(Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(99u128, "rune"),
             routes: vec![SwapRoute::Fin(FinRoute {
@@ -399,7 +439,7 @@ mod conditions_tests {
             adjustment: SwapAmountAdjustment::Fixed
         })
         .is_satisfied(deps.as_ref(), &env)
-        .unwrap());
+        .is_ok());
     }
 
     #[test]

@@ -137,22 +137,22 @@ impl Operation<Node> for Node {
         }
     }
 
-    fn execute(self, deps: Deps, env: &Env) -> (Vec<CosmosMsg>, Node) {
+    fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Node)> {
         match self {
             Node::Action {
                 action,
                 index,
                 next,
             } => {
-                let (messages, action) = action.execute(deps, env);
-                (
+                let (messages, action) = action.execute(deps, env)?;
+                Ok((
                     messages,
                     Node::Action {
                         action,
                         index,
                         next,
                     },
-                )
+                ))
             }
             Node::Condition {
                 condition,
@@ -160,8 +160,8 @@ impl Operation<Node> for Node {
                 on_success,
                 on_failure,
             } => {
-                let (messages, condition) = condition.execute(deps, env);
-                (
+                let (messages, condition) = condition.execute(deps, env)?;
+                Ok((
                     messages,
                     Node::Condition {
                         condition,
@@ -169,7 +169,7 @@ impl Operation<Node> for Node {
                         on_success,
                         on_failure,
                     },
-                )
+                ))
             }
         }
     }
