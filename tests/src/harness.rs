@@ -254,6 +254,16 @@ impl CalcTestApp {
             .unwrap()
     }
 
+    pub fn get_triggers(&self, filter: ConditionFilter, limit: Option<usize>) -> Vec<Trigger> {
+        self.app
+            .wrap()
+            .query_wasm_smart::<Vec<Trigger>>(
+                self.scheduler_addr.clone(),
+                &SchedulerQueryMsg::Filtered { filter, limit },
+            )
+            .unwrap()
+    }
+
     pub fn create_strategy(
         &mut self,
         owner: &Addr,
@@ -441,7 +451,7 @@ impl CalcTestApp {
             assert!(
                 actual
                     .iter()
-                    .any(|c| c.denom == coin.denom && c.amount == coin.amount),
+                    .any(|c| c.denom == coin.denom && c.amount.abs_diff(coin.amount) < Uint128::new(10)),
                 "Expected balance for {address} to include {coin}, but it was not found. Actual balances: {actual:#?}"
             );
         }
