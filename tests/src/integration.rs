@@ -185,6 +185,8 @@ mod integration_tests {
                     executors: vec![],
                     jitter: None,
                     next: None,
+                    executions: None,
+                    max_executions: None,
                 }),
                 index: 3,
                 on_success: Some(4),
@@ -3245,6 +3247,8 @@ mod integration_tests {
                         executors: vec![],
                         jitter: None,
                         next: None,
+                        executions: None,
+                        max_executions: None,
                     }),
                     index: 0,
                     on_success: Some(1),
@@ -3281,6 +3285,8 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3327,6 +3333,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3376,6 +3384,8 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3422,6 +3432,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().height),
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3471,6 +3483,8 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3517,6 +3531,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3562,6 +3578,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         let funds = vec![Coin::new(
@@ -3612,6 +3630,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().height),
             },
             execution_rebate: vec![],
+            executions: None,
+            max_executions: None,
         };
 
         let funds = vec![Coin::new(
@@ -3654,6 +3674,64 @@ mod integration_tests {
     }
 
     #[test]
+    fn test_schedule_condition_prevents_executions_after_max() {
+        let mut harness = CalcTestApp::setup();
+        let swap_action = default_swap_action(&harness);
+
+        let schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            executors: vec![],
+            jitter: None,
+            next: None,
+            manager_address: harness.manager_addr.clone(),
+            cadence: Cadence::Blocks {
+                interval: 60,
+                previous: Some(harness.app.block_info().height),
+            },
+            execution_rebate: vec![],
+            executions: None,
+            max_executions: Some(2),
+        };
+
+        let funds = vec![Coin::new(
+            swap_action.swap_amount.amount * Uint128::new(20),
+            swap_action.swap_amount.denom.clone(),
+        )];
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![
+                Node::Condition {
+                    condition: Condition::Schedule(schedule),
+                    index: 0,
+                    on_success: Some(1),
+                    on_failure: None,
+                },
+                Node::Action {
+                    action: Action::Swap(swap_action.clone()),
+                    index: 1,
+                    next: None,
+                },
+            ])
+            .instantiate(&funds);
+
+        let strategy_addr = strategy.strategy_addr.clone();
+
+        strategy
+            .assert_strategy_balances(&funds)
+            .advance_blocks(60)
+            .advance_blocks(60)
+            .advance_blocks(60)
+            .advance_blocks(60)
+            .assert_address_balances(
+                &strategy_addr,
+                &[Coin::new(
+                    funds[0].amount - swap_action.swap_amount.amount * Uint128::new(2),
+                    swap_action.swap_amount.denom.clone(),
+                )],
+            );
+    }
+
+    #[test]
     fn test_schedule_condition_deposits_execution_rebate() {
         let mut harness = CalcTestApp::setup();
         let swap_action = default_swap_action(&harness);
@@ -3669,6 +3747,8 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![Coin::new(1u128, "x/ruji")],
+            executions: None,
+            max_executions: None,
         };
 
         let funds = vec![
