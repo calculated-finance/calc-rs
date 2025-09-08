@@ -15,6 +15,7 @@ pub struct StrategyConfig {
     pub manager: Addr,
     pub owner: Addr,
     pub nodes: Vec<Node>,
+    pub withdrawals: Vec<Coin>,
 }
 
 #[cw_serde]
