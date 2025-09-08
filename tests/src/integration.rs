@@ -185,6 +185,7 @@ mod integration_tests {
                     executors: vec![],
                     jitter: None,
                     next: None,
+                    executions: None,
                 }),
                 index: 3,
                 on_success: Some(4),
@@ -3245,6 +3246,7 @@ mod integration_tests {
                         executors: vec![],
                         jitter: None,
                         next: None,
+                        executions: None,
                     }),
                     index: 0,
                     on_success: Some(1),
@@ -3281,6 +3283,7 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3327,6 +3330,7 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3376,6 +3380,7 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3422,6 +3427,7 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().height),
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3471,6 +3477,7 @@ mod integration_tests {
                 previous: None,
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3517,6 +3524,7 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         StrategyBuilder::new(&mut harness)
@@ -3562,6 +3570,7 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         let funds = vec![Coin::new(
@@ -3612,6 +3621,7 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().height),
             },
             execution_rebate: vec![],
+            executions: None,
         };
 
         let funds = vec![Coin::new(
@@ -3669,6 +3679,7 @@ mod integration_tests {
                 previous: Some(harness.app.block_info().time),
             },
             execution_rebate: vec![Coin::new(1u128, "x/ruji")],
+            executions: None,
         };
 
         let funds = vec![
