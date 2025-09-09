@@ -2,7 +2,7 @@ use std::vec;
 
 use crate::{
     actions::swaps::swap::{Adjusted, Executable, New, SwapQuote, SwapRoute},
-    thorchain::{is_secured_asset, MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
+    thorchain::{MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, CosmosMsg, Deps, Env, StdError, StdResult, Uint128};
@@ -27,17 +27,9 @@ pub struct ThorchainRoute {
 
 impl ThorchainRoute {
     pub fn validate(&self, _deps: Deps, route: &SwapQuote<New>) -> StdResult<()> {
-        if !is_secured_asset(route.swap_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Swap denom must be RUNE or a secured asset",
-            ));
-        }
-
-        if !is_secured_asset(route.minimum_receive_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Target denom must be RUNE or a secured asset",
-            ));
-        }
+        self.get_expected_amount_out(_deps, route).map_err(|e| {
+            StdError::generic_err(format!("Failed to get swap quote for Thorchain route: {e}"))
+        })?;
 
         if let Some(streaming_interval) = self.streaming_interval {
             if streaming_interval == 0 {

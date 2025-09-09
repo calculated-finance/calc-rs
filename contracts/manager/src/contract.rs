@@ -49,7 +49,8 @@ pub fn instantiate(
 pub struct MigrateMsg {}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: ManagerConfig) -> ContractResult {
+    CONFIG.save(_deps.storage, &_msg)?;
     Ok(Response::new())
 }
 

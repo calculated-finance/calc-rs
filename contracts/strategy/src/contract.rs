@@ -296,6 +296,7 @@ pub fn execute(
                                 "{}/process.reply",
                                 env!("CARGO_PKG_NAME")
                             ))
+                            .add_attribute("node_index", index.to_string())
                             .add_attribute("status", "error")
                             .add_attribute("error", err.to_string())])
                             .add_submessage(SubMsg::reply_never(

@@ -86,7 +86,7 @@ impl Condition {
 
                 order.remaining.is_zero()
             }
-            Condition::CanSwap(swap) => swap.best_quote(deps, env)?.is_some(),
+            Condition::CanSwap(swap) => swap.best_quote(deps, env).is_ok(),
             Condition::BalanceAvailable { address, amount } => {
                 let balance = deps.querier.query_balance(
                     address.as_ref().unwrap_or(&env.contract.address),

@@ -2,7 +2,7 @@ use cosmwasm_std::{Addr, Decimal, Deps, StdError, StdResult, Uint128};
 use rujira_rs::fin::{BookResponse, ConfigResponse, QueryMsg, Side};
 
 const MIN_ORDERS: u8 = 4;
-const MIN_VALUE: Uint128 = Uint128::new(10u128.pow(8)); // ~$1 USDC
+const MIN_VALUE: Uint128 = Uint128::new(10u128.pow(2)); // ~$1 USDC
 const LIMIT: u8 = 4;
 const MAX_ITERATIONS: u8 = 2;
 

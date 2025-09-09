@@ -301,7 +301,7 @@ impl Swap {
         }
     }
 
-    pub fn best_quote(&self, deps: Deps, env: &Env) -> StdResult<Option<SwapQuote<Executable>>> {
+    pub fn best_quote(&self, deps: Deps, env: &Env) -> StdResult<SwapQuote<Executable>> {
         let mut best_quote = None;
         let mut best_amount = Uint128::zero();
 
@@ -329,46 +329,37 @@ impl Swap {
             }
         }
 
-        if best_quote.is_none() {
-            return Err(StdError::generic_err(format!(
-                "No valid swap routes: {:?}",
-                quote_errors
-            )));
-        }
-
-        Ok(best_quote)
+        best_quote.ok_or(StdError::generic_err(format!(
+            "No valid swap routes: {:?}",
+            quote_errors
+        )))
     }
 
     pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Swap)> {
         let best_quote = self.best_quote(deps, env)?;
+        let swap_message = best_quote.execute(deps, env)?;
 
-        if let Some(quote) = best_quote {
-            let swap_message = quote.execute(deps, env)?;
+        let updated_routes = self
+            .routes
+            .iter()
+            .map(|r| {
+                if discriminant(r) == discriminant(&best_quote.route) {
+                    best_quote.route.clone()
+                } else {
+                    r.clone()
+                }
+            })
+            .collect::<Vec<_>>();
 
-            let updated_routes = self
-                .routes
-                .iter()
-                .map(|r| {
-                    if discriminant(r) == discriminant(&quote.route) {
-                        quote.route.clone()
-                    } else {
-                        r.clone()
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            Ok((
-                vec![swap_message],
-                Swap {
-                    // Some routes (i.e. Thorchain) may have relevant state that cannot be
-                    // verifiably committed or recreated, so we cache it here.
-                    routes: updated_routes,
-                    ..self
-                },
-            ))
-        } else {
-            Ok((vec![], self))
-        }
+        Ok((
+            vec![swap_message],
+            Swap {
+                // Some routes (i.e. Thorchain) may have relevant state that cannot be
+                // verifiably committed or recreated, so we cache it here.
+                routes: updated_routes,
+                ..self
+            },
+        ))
     }
 }
 
