@@ -818,7 +818,7 @@ mod integration_tests {
         let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
-                    10u128,
+                    10_000_000_000_000u128,
                     default_swap_action.minimum_receive_amount.denom.clone(),
                 ),
                 minimum_swap_amount: None,
@@ -1146,7 +1146,7 @@ mod integration_tests {
         let swap_action = Swap {
             adjustment: SwapAmountAdjustment::LinearScalar {
                 base_receive_amount: Coin::new(
-                    10u128,
+                    10_000_000_000_000u128,
                     default_swap_action.minimum_receive_amount.denom.clone(),
                 ),
                 minimum_swap_amount: None,
