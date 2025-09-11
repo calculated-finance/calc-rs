@@ -154,7 +154,7 @@ impl Operation<Condition> for Condition {
                 Ok(self)
             }
             Condition::CanSwap(ref swap) => {
-                swap.validate(deps)?;
+                swap.validate(deps, env)?;
                 Ok(self)
             }
             Condition::StrategyStatus {

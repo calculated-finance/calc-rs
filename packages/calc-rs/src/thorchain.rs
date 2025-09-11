@@ -17,10 +17,6 @@ use rujira_rs::proto::types::{
 };
 use thiserror::Error;
 
-pub fn is_secured_asset(denom: &str) -> bool {
-    denom.to_lowercase() == "rune" || denom.contains("-")
-}
-
 #[cw_serde]
 pub struct MsgDeposit {
     pub memo: String,
@@ -28,38 +24,51 @@ pub struct MsgDeposit {
     pub signer: CanonicalAddr,
 }
 
+pub fn denom_to_asset_str(denom: &str) -> String {
+    match denom.split_once("-") {
+        Some(_) => denom.to_string(),
+        None => match denom.split_once("/") {
+            Some((_, symbol)) => format!("THOR.{}", symbol.to_ascii_uppercase()),
+            None => format!("THOR.{}", denom.to_ascii_uppercase()),
+        },
+    }
+}
+
+fn secured_denom_to_buf(chain: &str, symbol: &str) -> Anybuf {
+    Anybuf::new()
+        .append_string(1, chain) // chain
+        .append_string(2, symbol) // symbol
+        .append_string(3, symbol.split("-").next().unwrap_or(symbol)) // ticker
+        .append_bool(4, false) // synth
+        .append_bool(5, false) // trade
+        .append_bool(6, true) // secured
+}
+
+fn native_denom_to_buf(symbol: &str) -> Anybuf {
+    Anybuf::new()
+        .append_string(1, "THOR") // chain
+        .append_string(2, symbol) // symbol
+        .append_string(3, symbol.split("-").next().unwrap_or(symbol)) // ticker
+}
+
+pub fn denom_to_buf(denom: &str) -> Anybuf {
+    match denom.split_once("-") {
+        Some((chain, symbol)) => secured_denom_to_buf(chain, symbol),
+        None => match denom {
+            "x/ruji" => native_denom_to_buf("RUJI"),
+            _ => native_denom_to_buf(&denom.to_uppercase()),
+        },
+    }
+}
+
 impl MsgDeposit {
     pub fn into_cosmos_msg(self) -> StdResult<CosmosMsg> {
         let mut coins = Vec::with_capacity(self.coins.len());
 
         for coin in self.coins {
-            let (chain, symbol): (&str, &str);
-
-            if coin.denom.to_ascii_lowercase().contains("rune") {
-                chain = "THOR";
-                symbol = "RUNE";
-            } else if let Some((c, s)) = coin.denom.split_once("-") {
-                chain = c;
-                symbol = s;
-            } else {
-                return Err(StdError::generic_err(format!(
-                    "Cannot use native denom {} in thorchain deposit msg",
-                    coin.denom
-                )));
-            };
-
             coins.push(
                 Anybuf::new()
-                    .append_message(
-                        1,
-                        &Anybuf::new()
-                            .append_string(1, chain)
-                            .append_string(2, symbol)
-                            .append_string(3, symbol)
-                            .append_bool(4, false)
-                            .append_bool(5, false)
-                            .append_bool(6, chain != "THOR" && symbol != "RUNE"),
-                    )
+                    .append_message(1, &denom_to_buf(&coin.denom))
                     .append_string(2, coin.amount.to_string()),
             );
         }
@@ -161,7 +170,6 @@ impl From<SwapQuoteRequest> for QueryQuoteSwapRequest {
             affiliate_bps: value.affiliate_bps.iter().map(|x| x.to_string()).collect(),
             height: "".to_string(),
             tolerance_bps: "".to_string(),
-            liquidity_tolerance_bps: "".to_string(),
         }
     }
 }
@@ -342,7 +350,7 @@ mod msg_deposit_tests {
     use crate::thorchain::MsgDeposit;
 
     #[test]
-    fn encodes_rune_deposit() {
+    fn encodes_native_deposit() {
         let deps = mock_dependencies();
 
         let deposit_msg = MsgDeposit {
@@ -370,10 +378,9 @@ mod msg_deposit_tests {
                                     &Anybuf::new()
                                         .append_string(1, "THOR")
                                         .append_string(2, "RUNE")
-                                        .append_string(3, "RUNE")
-                                        .append_bool(4, false)
-                                        .append_bool(5, false)
-                                        .append_bool(6, false),
+                                        .append_string(3, "RUNE") // .append_bool(4, false)
+                                                                  // .append_bool(5, false)
+                                                                  // .append_bool(6, false),
                                 )
                                 .append_string(2, c.amount.to_string()))
                             .collect::<Vec<_>>()
@@ -429,22 +436,5 @@ mod msg_deposit_tests {
                     .into()
             })
         );
-    }
-
-    #[test]
-    #[should_panic]
-    fn fails_to_encode_native_asset() {
-        let deps = mock_dependencies();
-
-        let deposit_msg = MsgDeposit {
-            memo: "test".to_string(),
-            coins: vec![Coin::new(1000u128, "x/ruji")],
-            signer: deps
-                .api
-                .addr_canonicalize(deps.api.addr_make("test").as_str())
-                .unwrap(),
-        };
-
-        deposit_msg.into_cosmos_msg().unwrap();
     }
 }

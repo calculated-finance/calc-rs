@@ -4,7 +4,7 @@ use std::{
 };
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
+use cosmwasm_std::{Addr, Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
 
 use crate::{
     actions::swaps::{fin::FinRoute, thor::ThorchainRoute},
@@ -93,6 +93,7 @@ pub struct SwapQuote<S> {
     pub maximum_slippage_bps: u64,
     pub adjustment: SwapAmountAdjustment,
     pub route: SwapRoute,
+    pub destination: Addr,
     pub state: S,
 }
 
@@ -163,7 +164,7 @@ impl SwapQuote<New> {
 
                 let new_swap_amount = Coin::new(
                     max(
-                        scaled_swap_amount,
+                        min(scaled_swap_amount, swap_balance.amount),
                         minimum_swap_amount
                             .clone()
                             .unwrap_or(Coin::new(0u128, self.swap_amount.denom.clone()))
@@ -199,6 +200,7 @@ impl SwapQuote<New> {
             maximum_slippage_bps: self.maximum_slippage_bps,
             adjustment: self.adjustment,
             route: self.route,
+            destination: self.destination,
             state: Adjusted,
         })
     }
@@ -227,7 +229,7 @@ pub struct Swap {
 }
 
 impl Swap {
-    pub fn validate(&self, deps: Deps) -> StdResult<()> {
+    pub fn validate(&self, deps: Deps, env: &Env) -> StdResult<()> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
@@ -275,6 +277,7 @@ impl Swap {
                 adjustment: self.adjustment.clone(),
                 route: route.clone(),
                 state: New,
+                destination: env.contract.address.clone(),
             }
             .validate(deps)?;
         }
@@ -290,8 +293,8 @@ impl Swap {
                 .map(|route| match route {
                     SwapRoute::Thorchain(thor_route) => SwapRoute::Thorchain(ThorchainRoute {
                         // As per agreement with Rujira
-                        affiliate_code: Some("rj".to_string()),
-                        affiliate_bps: Some(10),
+                        // affiliate_code: Some("rj".to_string()),
+                        // affiliate_bps: Some(10),
                         ..thor_route
                     }),
                     _ => route,
@@ -314,6 +317,7 @@ impl Swap {
                 maximum_slippage_bps: self.maximum_slippage_bps,
                 adjustment: self.adjustment.clone(),
                 route: route.clone(),
+                destination: env.contract.address.clone(),
                 state: New,
             }
             .adjust(deps, env)
@@ -373,8 +377,8 @@ impl Swap {
 }
 
 impl Operation<Swap> for Swap {
-    fn init(self, deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Swap> {
-        self.validate(deps)?;
+    fn init(self, deps: Deps, env: &Env, _affiliates: &[Affiliate]) -> StdResult<Swap> {
+        self.validate(deps, env)?;
         Ok(self.with_affiliates())
     }
 
@@ -406,7 +410,7 @@ mod tests {
 
         deps.querier
             .bank
-            .update_balance(&env.contract.address, vec![Coin::new(1000u128, "rune")]);
+            .update_balance(&env.contract.address, vec![Coin::new(3000u128, "rune")]);
 
         let quote = SwapQuote {
             swap_amount: Coin::new(1000u128, "rune"),
@@ -420,6 +424,7 @@ mod tests {
             route: SwapRoute::Fin(FinRoute {
                 pair_address: Addr::unchecked("pair_address"),
             }),
+            destination: env.contract.address.clone(),
             state: New,
         };
 
@@ -486,7 +491,7 @@ mod tests {
         deps.querier
             .default
             .bank
-            .update_balance(&env.contract.address, vec![Coin::new(1000u128, "rune")]);
+            .update_balance(&env.contract.address, vec![Coin::new(3000u128, "rune")]);
 
         let quote = SwapQuote {
             swap_amount: Coin::new(1000u128, "rune"),
@@ -504,6 +509,7 @@ mod tests {
                 affiliate_bps: None,
                 latest_swap: None,
             }),
+            destination: env.contract.address.clone(),
             state: New,
         };
 

@@ -32,11 +32,11 @@ pub fn updated_at_cursor(updated_at: u64, contract_address: Option<&Addr>) -> St
 }
 
 pub const STRATEGIES: IndexedMap<Addr, Strategy, StrategyIndexes<'static>> = IndexedMap::new(
-    "strategies",
+    "strategies_v4",
     StrategyIndexes {
         updated_at: UniqueIndex::new(
             |s| updated_at_cursor(s.updated_at, Some(&s.contract_address)),
-            "strategies_updated_at",
+            "strategies_v4__updated_at",
         ),
         owner_updated_at: UniqueIndex::new(
             |s| {
@@ -45,7 +45,7 @@ pub const STRATEGIES: IndexedMap<Addr, Strategy, StrategyIndexes<'static>> = Ind
                     updated_at_cursor(s.updated_at, Some(&s.contract_address)),
                 )
             },
-            "strategies_owner_updated_at",
+            "strategies_v4__owner_updated_at",
         ),
         status_updated_at: UniqueIndex::new(
             |s| {
@@ -54,7 +54,7 @@ pub const STRATEGIES: IndexedMap<Addr, Strategy, StrategyIndexes<'static>> = Ind
                     updated_at_cursor(s.updated_at, Some(&s.contract_address)),
                 )
             },
-            "strategies_status_updated_at",
+            "strategies_v4__status_updated_at",
         ),
         owner_status_updated_at: UniqueIndex::new(
             |s| {
@@ -64,7 +64,7 @@ pub const STRATEGIES: IndexedMap<Addr, Strategy, StrategyIndexes<'static>> = Ind
                     updated_at_cursor(s.updated_at, Some(&s.contract_address)),
                 )
             },
-            "strategies_owner_status_updated_at",
+            "strategies_v4__owner_status_updated_at",
         ),
     },
 );

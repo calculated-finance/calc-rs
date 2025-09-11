@@ -497,48 +497,6 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_instantiate_thor_swap_action_with_non_secured_swap_denom_fails() {
-        let mut harness = CalcTestApp::setup();
-        let default_swap = default_swap_action_thor(&harness);
-
-        let swap_action = Swap {
-            swap_amount: Coin::new(1000u128, "x/ruji".to_string()),
-            ..default_swap
-        };
-
-        let result = StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![Node::Action {
-                action: Action::Swap(swap_action.clone()),
-                index: 0,
-                next: None,
-            }])
-            .try_instantiate(&[swap_action.swap_amount.clone()]);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_instantiate_thor_swap_action_with_non_secured_receive_denom_fails() {
-        let mut harness = CalcTestApp::setup();
-        let default_swap = default_swap_action_thor(&harness);
-
-        let swap_action = Swap {
-            minimum_receive_amount: Coin::new(1000u128, "x/ruji".to_string()),
-            ..default_swap
-        };
-
-        let result = StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![Node::Action {
-                action: Action::Swap(swap_action.clone()),
-                index: 0,
-                next: None,
-            }])
-            .try_instantiate(&[swap_action.swap_amount.clone()]);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_instantiate_thor_swap_action_with_zero_streaming_interval_fails() {
         let mut harness = CalcTestApp::setup();
         let default_swap = default_swap_action_thor(&harness);
@@ -2138,32 +2096,6 @@ mod integration_tests {
             }])
             .try_instantiate(&[])
             .is_err());
-    }
-
-    #[test]
-    fn test_instantiate_distribution_with_native_denom_and_deposit_destination_fails() {
-        let mut harness = CalcTestApp::setup();
-        let distribution_action = Distribution {
-            destinations: vec![Destination {
-                recipient: Recipient::Deposit {
-                    memo: "-secure:eth-usdc".to_string(),
-                },
-                shares: Uint128::new(10_000),
-                label: None,
-                distributions: None,
-            }],
-            denoms: vec!["x/ruji".to_string()],
-        };
-
-        let result = StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![Node::Action {
-                action: Action::Distribute(distribution_action),
-                index: 0,
-                next: None,
-            }])
-            .try_instantiate(&[]);
-
-        assert!(result.is_err());
     }
 
     #[test]

@@ -274,7 +274,7 @@ dependencies = [
  "cron",
  "cw-storage-plus",
  "prost",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
+ "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=bbc9ac14f240cc5692d9486e2b09516b065c9988)",
  "thiserror 1.0.69",
 ]
 
@@ -287,7 +287,7 @@ dependencies = [
  "cosmwasm-std",
  "cw-multi-test",
  "prost",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
+ "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=bbc9ac14f240cc5692d9486e2b09516b065c9988)",
  "serde",
 ]
 
@@ -299,7 +299,7 @@ dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
+ "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=bbc9ac14f240cc5692d9486e2b09516b065c9988)",
 ]
 
 [[package]]
@@ -900,7 +900,7 @@ dependencies = [
  "cosmwasm-std",
  "cw-multi-test",
  "rujira-fin",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7)",
+ "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=bbc9ac14f240cc5692d9486e2b09516b065c9988)",
 ]
 
 [[package]]
@@ -1258,7 +1258,7 @@ dependencies = [
 [[package]]
 name = "rujira-rs"
 version = "0.0.1"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=2c66fcbd88f4287132987362ca18ecd17649d4c7#2c66fcbd88f4287132987362ca18ecd17649d4c7"
+source = "git+https://gitlab.com/thorchain/rujira.git?rev=ad78b65b2913f8bf6e9f2c3c9f67ade10991ff11#ad78b65b2913f8bf6e9f2c3c9f67ade10991ff11"
 dependencies = [
  "anybuf 0.5.2",
  "cosmos-sdk-proto",
@@ -1279,7 +1279,7 @@ dependencies = [
 [[package]]
 name = "rujira-rs"
 version = "0.0.1"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=ad78b65b2913f8bf6e9f2c3c9f67ade10991ff11#ad78b65b2913f8bf6e9f2c3c9f67ade10991ff11"
+source = "git+https://gitlab.com/thorchain/rujira.git?rev=bbc9ac14f240cc5692d9486e2b09516b065c9988#bbc9ac14f240cc5692d9486e2b09516b065c9988"
 dependencies = [
  "anybuf 0.5.2",
  "cosmos-sdk-proto",

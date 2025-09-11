@@ -2,7 +2,9 @@ use std::vec;
 
 use crate::{
     actions::swaps::swap::{Adjusted, Executable, New, SwapQuote, SwapRoute},
-    thorchain::{is_secured_asset, MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
+    thorchain::{
+        denom_to_asset_str, MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest,
+    },
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, CosmosMsg, Deps, Env, StdError, StdResult, Uint128};
@@ -26,19 +28,7 @@ pub struct ThorchainRoute {
 }
 
 impl ThorchainRoute {
-    pub fn validate(&self, _deps: Deps, route: &SwapQuote<New>) -> StdResult<()> {
-        if !is_secured_asset(route.swap_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Swap denom must be RUNE or a secured asset",
-            ));
-        }
-
-        if !is_secured_asset(route.minimum_receive_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Target denom must be RUNE or a secured asset",
-            ));
-        }
-
+    pub fn validate(&self, _deps: Deps, _quote: &SwapQuote<New>) -> StdResult<()> {
         if let Some(streaming_interval) = self.streaming_interval {
             if streaming_interval == 0 {
                 return Err(StdError::generic_err("Streaming interval cannot be zero"));
@@ -74,8 +64,7 @@ impl ThorchainRoute {
         deps: Deps,
         quote: &SwapQuote<New>,
     ) -> StdResult<Uint128> {
-        let quote = get_thorchain_swap_quote(deps, quote)?;
-        Ok(quote.expected_amount_out)
+        get_thorchain_swap_quote(deps, quote).map(|q| q.expected_amount_out)
     }
 
     pub fn validate_adjusted(
@@ -131,6 +120,7 @@ impl ThorchainRoute {
                 }),
                 ..self
             }),
+            destination: quote.destination,
             state: Executable {
                 expected_amount_out: Coin::new(
                     adjusted_quote.expected_amount_out,
@@ -177,8 +167,8 @@ impl<S> TryFrom<&SwapQuote<S>> for SwapQuoteRequest {
                 ..
             }) => {
                 Ok(SwapQuoteRequest {
-                    from_asset: quote.swap_amount.denom.clone(),
-                    to_asset: quote.minimum_receive_amount.denom.clone(),
+                    from_asset: denom_to_asset_str(&quote.swap_amount.denom),
+                    to_asset: denom_to_asset_str(&quote.minimum_receive_amount.denom),
                     amount: quote.swap_amount.amount,
                     streaming_interval: Uint128::new(
                         // Default to swapping every 3 blocks
@@ -189,8 +179,8 @@ impl<S> TryFrom<&SwapQuote<S>> for SwapQuoteRequest {
                         // calculate the maximum streaming quantity
                         max_streaming_quantity.unwrap_or(0) as u128,
                     ),
-                    destination: String::new(), // This will be set later
-                    refund_address: String::new(), // This will be set later
+                    destination: quote.destination.to_string(),
+                    refund_address: quote.destination.to_string(),
                     affiliate: affiliate_code.clone().map_or_else(Vec::new, |c| vec![c]),
                     affiliate_bps: affiliate_bps.map_or_else(Vec::new, |b| vec![b]),
                 })
@@ -202,14 +192,7 @@ impl<S> TryFrom<&SwapQuote<S>> for SwapQuoteRequest {
     }
 }
 
-pub fn get_thorchain_swap_quote<S>(
-    deps: Deps,
-    quote: &SwapQuote<S>,
-) -> StdResult<ThorchainSwapQuote> {
-    ThorchainSwapQuote::get(deps.querier, &SwapQuoteRequest::try_from(quote)?).map_err(|e| {
-        StdError::generic_err(format!(
-            "Failed to get L1 swap quote with {:?}: {e}",
-            quote.route
-        ))
-    })
+fn get_thorchain_swap_quote<S>(deps: Deps, quote: &SwapQuote<S>) -> StdResult<ThorchainSwapQuote> {
+    ThorchainSwapQuote::get(deps.querier, &SwapQuoteRequest::try_from(quote)?)
+        .map_err(|e| StdError::generic_err(format!("Failed to get L1 swap quote: {e}")))
 }
