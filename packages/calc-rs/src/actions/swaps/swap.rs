@@ -162,12 +162,15 @@ impl SwapQuote<New> {
                 };
 
                 let new_swap_amount = Coin::new(
-                    max(
-                        scaled_swap_amount,
-                        minimum_swap_amount
-                            .clone()
-                            .unwrap_or(Coin::new(0u128, self.swap_amount.denom.clone()))
-                            .amount,
+                    min(
+                        swap_balance.amount,
+                        max(
+                            scaled_swap_amount,
+                            minimum_swap_amount
+                                .clone()
+                                .unwrap_or(Coin::new(0u128, self.swap_amount.denom.clone()))
+                                .amount,
+                        ),
                     ),
                     self.swap_amount.denom,
                 );
@@ -406,7 +409,7 @@ mod tests {
 
         deps.querier
             .bank
-            .update_balance(&env.contract.address, vec![Coin::new(1000u128, "rune")]);
+            .update_balance(&env.contract.address, vec![Coin::new(3000u128, "rune")]);
 
         let quote = SwapQuote {
             swap_amount: Coin::new(1000u128, "rune"),
@@ -486,7 +489,7 @@ mod tests {
         deps.querier
             .default
             .bank
-            .update_balance(&env.contract.address, vec![Coin::new(1000u128, "rune")]);
+            .update_balance(&env.contract.address, vec![Coin::new(3000u128, "rune")]);
 
         let quote = SwapQuote {
             swap_amount: Coin::new(1000u128, "rune"),
