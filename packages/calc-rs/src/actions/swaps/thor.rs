@@ -2,7 +2,7 @@ use std::vec;
 
 use crate::{
     actions::swaps::swap::{Adjusted, Executable, New, SwapQuote, SwapRoute},
-    thorchain::{is_secured_asset, MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
+    thorchain::{MsgDeposit, SwapQuote as ThorchainSwapQuote, SwapQuoteRequest},
 };
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Coin, CosmosMsg, Deps, Env, StdError, StdResult, Uint128};
@@ -26,19 +26,7 @@ pub struct ThorchainRoute {
 }
 
 impl ThorchainRoute {
-    pub fn validate(&self, _deps: Deps, route: &SwapQuote<New>) -> StdResult<()> {
-        if !is_secured_asset(route.swap_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Swap denom must be RUNE or a secured asset",
-            ));
-        }
-
-        if !is_secured_asset(route.minimum_receive_amount.denom.as_str()) {
-            return Err(StdError::generic_err(
-                "Target denom must be RUNE or a secured asset",
-            ));
-        }
-
+    pub fn validate(&self, _deps: Deps) -> StdResult<()> {
         if let Some(streaming_interval) = self.streaming_interval {
             if streaming_interval == 0 {
                 return Err(StdError::generic_err("Streaming interval cannot be zero"));
@@ -131,6 +119,7 @@ impl ThorchainRoute {
                 }),
                 ..self
             }),
+            destination: quote.destination,
             state: Executable {
                 expected_amount_out: Coin::new(
                     adjusted_quote.expected_amount_out,
@@ -189,8 +178,8 @@ impl<S> TryFrom<&SwapQuote<S>> for SwapQuoteRequest {
                         // calculate the maximum streaming quantity
                         max_streaming_quantity.unwrap_or(0) as u128,
                     ),
-                    destination: String::new(), // This will be set later
-                    refund_address: String::new(), // This will be set later
+                    destination: quote.destination.to_string(),
+                    refund_address: quote.destination.to_string(),
                     affiliate: affiliate_code.clone().map_or_else(Vec::new, |c| vec![c]),
                     affiliate_bps: affiliate_bps.map_or_else(Vec::new, |b| vec![b]),
                 })

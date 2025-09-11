@@ -9,7 +9,7 @@ use cosmwasm_std::{
 
 use crate::manager::Affiliate;
 use crate::operation::Operation;
-use crate::thorchain::{is_secured_asset, MsgDeposit};
+use crate::thorchain::MsgDeposit;
 
 const MINIMUM_TOTAL_SHARES: Uint128 = Uint128::new(10_000);
 
@@ -192,7 +192,6 @@ impl Operation<Distribution> for Distribution {
             return Err(StdError::generic_err("Denoms cannot contain duplicates"));
         }
 
-        let has_native_denoms = unique_denoms.iter().any(|d| !is_secured_asset(d));
         let mut total_shares = Uint128::zero();
 
         for destination in self.destinations.iter() {
@@ -206,13 +205,7 @@ impl Operation<Distribution> for Distribution {
                         StdError::generic_err(format!("Invalid destination address: {address}"))
                     })?;
                 }
-                Recipient::Deposit { memo } => {
-                    if has_native_denoms {
-                        return Err(StdError::generic_err(format!(
-                            "Only secured assets can be deposited with memo {memo}"
-                        )));
-                    }
-                }
+                Recipient::Deposit { .. } => {}
             }
 
             total_shares += destination.shares;

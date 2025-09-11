@@ -4,7 +4,7 @@ use std::{
 };
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
+use cosmwasm_std::{Addr, Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128};
 
 use crate::{
     actions::swaps::{fin::FinRoute, thor::ThorchainRoute},
@@ -32,7 +32,7 @@ impl SwapRoute {
     pub fn validate(&self, deps: Deps, quote: &SwapQuote<New>) -> StdResult<()> {
         match self {
             SwapRoute::Fin(route) => route.validate(deps, quote),
-            SwapRoute::Thorchain(route) => route.validate(deps, quote),
+            SwapRoute::Thorchain(route) => route.validate(deps),
         }
     }
 
@@ -93,6 +93,7 @@ pub struct SwapQuote<S> {
     pub maximum_slippage_bps: u64,
     pub adjustment: SwapAmountAdjustment,
     pub route: SwapRoute,
+    pub destination: Addr,
     pub state: S,
 }
 
@@ -202,6 +203,7 @@ impl SwapQuote<New> {
             maximum_slippage_bps: self.maximum_slippage_bps,
             adjustment: self.adjustment,
             route: self.route,
+            destination: self.destination,
             state: Adjusted,
         })
     }
@@ -230,7 +232,7 @@ pub struct Swap {
 }
 
 impl Swap {
-    pub fn validate(&self, deps: Deps) -> StdResult<()> {
+    pub fn validate(&self, deps: Deps, env: &Env) -> StdResult<()> {
         if self.swap_amount.amount.is_zero() {
             return Err(StdError::generic_err("Swap amount cannot be zero"));
         }
@@ -277,6 +279,7 @@ impl Swap {
                 maximum_slippage_bps: self.maximum_slippage_bps,
                 adjustment: self.adjustment.clone(),
                 route: route.clone(),
+                destination: env.contract.address.clone(),
                 state: New,
             }
             .validate(deps)?;
@@ -317,6 +320,7 @@ impl Swap {
                 maximum_slippage_bps: self.maximum_slippage_bps,
                 adjustment: self.adjustment.clone(),
                 route: route.clone(),
+                destination: env.contract.address.clone(),
                 state: New,
             }
             .adjust(deps, env)
@@ -376,8 +380,8 @@ impl Swap {
 }
 
 impl Operation<Swap> for Swap {
-    fn init(self, deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<Swap> {
-        self.validate(deps)?;
+    fn init(self, deps: Deps, env: &Env, _affiliates: &[Affiliate]) -> StdResult<Swap> {
+        self.validate(deps, env)?;
         Ok(self.with_affiliates())
     }
 
@@ -423,6 +427,7 @@ mod tests {
             route: SwapRoute::Fin(FinRoute {
                 pair_address: Addr::unchecked("pair_address"),
             }),
+            destination: env.contract.address.clone(),
             state: New,
         };
 
@@ -507,6 +512,7 @@ mod tests {
                 affiliate_bps: None,
                 latest_swap: None,
             }),
+            destination: env.contract.address.clone(),
             state: New,
         };
 
