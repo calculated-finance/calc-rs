@@ -127,6 +127,7 @@ impl FinRoute {
             maximum_slippage_bps: route.maximum_slippage_bps,
             adjustment: route.adjustment,
             route: route.route,
+            destination: route.destination,
             state: Executable {
                 expected_amount_out,
             },
