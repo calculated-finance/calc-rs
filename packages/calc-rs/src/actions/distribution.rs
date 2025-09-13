@@ -184,11 +184,9 @@ impl Operation<Distribution> for Distribution {
             return Err(StdError::generic_err("Destinations cannot be empty"));
         }
 
-        let unique_denoms = HashSet::<String>::from_iter(self.denoms.clone())
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut seen = HashSet::with_capacity(self.denoms.len());
 
-        if unique_denoms.len() != self.denoms.len() {
+        if self.denoms.iter().any(|d| !seen.insert(d)) {
             return Err(StdError::generic_err("Denoms cannot contain duplicates"));
         }
 
