@@ -24,16 +24,6 @@ pub struct MsgDeposit {
     pub signer: CanonicalAddr,
 }
 
-pub fn denom_to_asset_str(denom: &str) -> String {
-    match denom.split_once("-") {
-        Some(_) => denom.to_string(),
-        None => match denom.split_once("/") {
-            Some((_, symbol)) => format!("THOR.{}", symbol.to_ascii_uppercase()),
-            None => format!("THOR.{}", denom.to_ascii_uppercase()),
-        },
-    }
-}
-
 fn secured_denom_to_buf(chain: &str, symbol: &str) -> Anybuf {
     Anybuf::new()
         .append_string(1, chain) // chain

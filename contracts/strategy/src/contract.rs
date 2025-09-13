@@ -255,9 +255,7 @@ pub fn execute(
 
                 let result = match operation {
                     StrategyOperation::Execute => current_node.clone().execute(deps.as_ref(), &env),
-                    StrategyOperation::Cancel {} => {
-                        current_node.clone().cancel(deps.as_ref(), &env)
-                    }
+                    StrategyOperation::Cancel => current_node.clone().cancel(deps.as_ref(), &env),
                 };
 
                 match result {
