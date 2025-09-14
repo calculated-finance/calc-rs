@@ -38,16 +38,6 @@ impl<'a> StrategyHandler<'a> {
         self.harness
             .execute_filtered_triggers(
                 &self.keeper,
-                ConditionFilter::Timestamp {
-                    start: None,
-                    end: None,
-                },
-            )
-            .unwrap();
-
-        self.harness
-            .execute_filtered_triggers(
-                &self.keeper,
                 ConditionFilter::BlockHeight {
                     start: None,
                     end: None,
@@ -72,16 +62,6 @@ impl<'a> StrategyHandler<'a> {
                 ConditionFilter::Timestamp {
                     start: None,
                     end: Some(self.harness.app.block_info().time),
-                },
-            )
-            .unwrap();
-
-        self.harness
-            .execute_filtered_triggers(
-                &self.keeper,
-                ConditionFilter::BlockHeight {
-                    start: None,
-                    end: Some(self.harness.app.block_info().height),
                 },
             )
             .unwrap();
