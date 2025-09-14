@@ -86,7 +86,7 @@ impl Condition {
 
                 order.remaining.is_zero()
             }
-            Condition::CanSwap(swap) => swap.best_quote(deps, env)?.is_some(),
+            Condition::CanSwap(swap) => swap.best_quote(deps, env).is_ok(),
             Condition::BalanceAvailable { address, amount } => {
                 let balance = deps.querier.query_balance(
                     address.as_ref().unwrap_or(&env.contract.address),
@@ -405,7 +405,7 @@ mod conditions_tests {
             .bank
             .update_balance(&env.contract.address, vec![Coin::new(1000u128, "rune")]);
 
-        assert!(Condition::CanSwap(Swap {
+        assert!(!Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
             minimum_receive_amount: Coin::new(101u128, "rune"),
             routes: vec![SwapRoute::Fin(FinRoute {
@@ -415,7 +415,7 @@ mod conditions_tests {
             adjustment: SwapAmountAdjustment::Fixed
         })
         .is_satisfied(deps.as_ref(), &env)
-        .is_err());
+        .unwrap());
 
         assert!(Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
@@ -427,7 +427,7 @@ mod conditions_tests {
             adjustment: SwapAmountAdjustment::Fixed
         })
         .is_satisfied(deps.as_ref(), &env)
-        .is_ok());
+        .unwrap());
 
         assert!(Condition::CanSwap(Swap {
             swap_amount: Coin::new(100u128, "rune"),
@@ -439,7 +439,7 @@ mod conditions_tests {
             adjustment: SwapAmountAdjustment::Fixed
         })
         .is_satisfied(deps.as_ref(), &env)
-        .is_ok());
+        .unwrap());
     }
 
     #[test]
