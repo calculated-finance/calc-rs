@@ -211,7 +211,7 @@ pub fn execute(
 
             let cancel_actions_msg = Contract(env.contract.address.clone()).call(
                 to_json_binary(&StrategyExecuteMsg::Process {
-                    operation: StrategyOperation::Cancel {},
+                    operation: StrategyOperation::Cancel,
                     previous: None,
                 })?,
                 vec![],

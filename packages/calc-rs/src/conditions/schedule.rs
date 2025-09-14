@@ -1,7 +1,7 @@
 use std::{cmp::min, str::FromStr, time::Duration};
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, CosmosMsg, Deps, Env, StdResult};
+use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, CosmosMsg, Deps, Env, StdError, StdResult};
 use cron::Schedule as CronSchedule;
 
 use crate::{
@@ -23,10 +23,31 @@ pub struct Schedule {
     pub executors: Vec<Addr>,
     pub jitter: Option<Duration>,
     pub executions: Option<u32>,
+    pub max_executions: Option<u32>,
 }
 
 impl Schedule {
+    pub fn can_execute(&self, deps: Deps, env: &Env) -> StdResult<bool> {
+        if let Some(max) = self.max_executions {
+            if let Some(executions) = self.executions {
+                if executions >= max {
+                    return Ok(false);
+                }
+            }
+        }
+
+        self.cadence.is_due(deps, env)
+    }
+
     pub fn execute_unsafe(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
+        if let Some(max) = self.max_executions {
+            let executions = self.executions.unwrap_or(0) + 1;
+
+            if executions > max {
+                return Err(StdError::generic_err("Max executions exceeded"));
+            }
+        }
+
         let mut rebate = Coins::default();
 
         for amount in self.execution_rebate.iter() {
@@ -70,10 +91,7 @@ impl Schedule {
 
         Ok((
             vec![create_trigger_msg],
-            Condition::Schedule(Schedule {
-                executions: Some(schedule.executions.unwrap_or(0) + 1),
-                ..schedule
-            }),
+            Condition::Schedule(Schedule { ..schedule }),
         ))
     }
 }
@@ -124,6 +142,7 @@ impl StatefulOperation<Condition> for Schedule {
             Ok(Condition::Schedule(Schedule {
                 cadence: next,
                 next: None,
+                executions: self.executions.map_or(Some(1), |e| Some(e + 1)),
                 ..self
             }))
         } else {

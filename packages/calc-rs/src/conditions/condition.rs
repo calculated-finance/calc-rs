@@ -68,7 +68,7 @@ impl Condition {
         Ok(match self {
             Condition::TimestampElapsed(timestamp) => env.block.time >= *timestamp,
             Condition::BlocksCompleted(height) => env.block.height >= *height,
-            Condition::Schedule(schedule) => schedule.cadence.is_due(deps, env)?,
+            Condition::Schedule(schedule) => schedule.can_execute(deps, env)?,
             Condition::FinLimitOrderFilled {
                 owner,
                 pair_address,
