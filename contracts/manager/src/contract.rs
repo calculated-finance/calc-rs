@@ -46,10 +46,26 @@ pub fn instantiate(
 }
 
 #[cw_serde]
-pub struct MigrateMsg {}
+pub struct MigrateMsg {
+    pub strategy_code_id: u64,
+}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
+pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> ContractResult {
+    deps.querier
+        .query_wasm_code_info(msg.strategy_code_id)
+        .map_err(|_| {
+            ContractError::generic_err(format!(
+                "Invalid strategy code ID: {}",
+                msg.strategy_code_id
+            ))
+        })?;
+
+    CONFIG.update(deps.storage, |mut config| -> StdResult<ManagerConfig> {
+        config.strategy_code_id = msg.strategy_code_id;
+        Ok(config)
+    })?;
+
     Ok(Response::new())
 }
 
