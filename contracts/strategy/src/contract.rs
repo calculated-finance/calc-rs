@@ -12,8 +12,8 @@ use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env, Event, MessageInfo,
-    Reply, Response, StdResult, SubMsg, SubMsgResult,
+    to_json_binary, to_json_string, BankMsg, Binary, Coin, Coins, Decimal, Deps, DepsMut, Env,
+    Event, MessageInfo, Reply, Response, StdResult, SubMsg, SubMsgResult,
 };
 
 use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH, WITHDRAWALS};
@@ -266,6 +266,14 @@ pub fn execute(
                             PATH.save(deps.storage, &path)?;
 
                             return Ok(Response::new()
+                                .add_event(
+                                    Event::new(format!(
+                                        "{}/process-node.messages",
+                                        env!("CARGO_PKG_NAME")
+                                    ))
+                                    .add_attribute("node_index", index.to_string())
+                                    .add_attribute("messages", to_json_string(&messages)?),
+                                )
                                 .add_submessages(
                                     messages
                                         .into_iter()
@@ -290,12 +298,20 @@ pub fn execute(
                         NODES.save(deps.storage, &current_node)?;
 
                         return Ok(Response::new()
-                            .add_events(vec![Event::new(format!(
-                                "{}/process.reply",
-                                env!("CARGO_PKG_NAME")
-                            ))
-                            .add_attribute("status", "error")
-                            .add_attribute("error", err.to_string())])
+                            .add_events(vec![
+                                Event::new(format!(
+                                    "{}/process-node.messages",
+                                    env!("CARGO_PKG_NAME")
+                                ))
+                                .add_attribute("node_index", index.to_string()),
+                                Event::new(format!(
+                                    "{}/process-node.result",
+                                    env!("CARGO_PKG_NAME")
+                                ))
+                                .add_attribute("node_index", index.to_string())
+                                .add_attribute("status", "error")
+                                .add_attribute("error", err.to_string()),
+                            ])
                             .add_submessage(SubMsg::reply_never(
                                 Contract(env.contract.address.clone()).call(
                                     to_json_binary(&StrategyExecuteMsg::Process {
@@ -320,7 +336,7 @@ pub fn execute(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
-    let event = Event::new(format!("{}/process.reply", env!("CARGO_PKG_NAME")))
+    let event = Event::new(format!("{}/process-node.result", env!("CARGO_PKG_NAME")))
         .add_attribute("node_index", reply.id.to_string());
 
     match reply.result {
