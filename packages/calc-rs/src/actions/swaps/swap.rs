@@ -20,6 +20,7 @@ pub enum SwapAmountAdjustment {
         minimum_swap_amount: Option<Coin>,
         scalar: Decimal,
     },
+    BalanceBasisPoints(u64),
 }
 
 #[cw_serde]
@@ -191,6 +192,20 @@ impl SwapQuote<New> {
                         ));
 
                 (new_swap_amount, new_minimum_receive_amount)
+            }
+            SwapAmountAdjustment::BalanceBasisPoints(basis_points) => {
+                let ratio = Decimal::bps(*basis_points) / Decimal::bps(10_000);
+                let swap_amount = swap_balance.amount.mul_floor(ratio);
+
+                let min_return = self
+                    .minimum_receive_amount
+                    .amount
+                    .mul_floor(Decimal::from_ratio(swap_amount, self.swap_amount.amount));
+
+                (
+                    Coin::new(swap_amount, self.swap_amount.denom.clone()),
+                    min_return,
+                )
             }
         };
 

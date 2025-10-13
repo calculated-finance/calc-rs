@@ -1245,11 +1245,41 @@ mod integration_tests {
         strategy.assert_strategy_balances(&[
             Coin::new(
                 swap_action.swap_amount.amount - minimum_swap_amount.amount,
-                swap_action.swap_amount.denom.clone(),
+                swap_action.swap_amount.denom,
             ),
             Coin::new(
                 minimum_swap_amount.amount.mul_floor(Decimal::percent(99)),
-                swap_action.minimum_receive_amount.denom.clone(),
+                swap_action.minimum_receive_amount.denom,
+            ),
+        ]);
+    }
+
+    #[test]
+    fn test_execute_swap_action_with_balance_basis_points_swap_adjustment_executes() {
+        let mut harness = CalcTestApp::setup();
+        let default_swap_action = default_swap_action(&harness);
+
+        let swap_action = Swap {
+            adjustment: SwapAmountAdjustment::BalanceBasisPoints(5000),
+            ..default_swap_action
+        };
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::Swap(swap_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[swap_action.swap_amount.clone()]);
+
+        strategy.assert_strategy_balances(&[
+            Coin::new(
+                swap_action.swap_amount.amount - swap_action.swap_amount.amount / Uint128::new(2),
+                swap_action.swap_amount.denom,
+            ),
+            Coin::new(
+                swap_action.swap_amount.amount / Uint128::new(2),
+                swap_action.minimum_receive_amount.denom,
             ),
         ]);
     }
