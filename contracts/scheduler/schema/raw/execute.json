@@ -161,45 +161,6 @@
             }
           },
           "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "limit_order"
-          ],
-          "properties": {
-            "limit_order": {
-              "type": "object",
-              "required": [
-                "pair_address",
-                "side",
-                "strategy"
-              ],
-              "properties": {
-                "pair_address": {
-                  "$ref": "#/definitions/Addr"
-                },
-                "previous": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/Decimal"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "side": {
-                  "$ref": "#/definitions/Side"
-                },
-                "strategy": {
-                  "$ref": "#/definitions/PriceStrategy"
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
         }
       ]
     },
@@ -493,36 +454,6 @@
       },
       "additionalProperties": false
     },
-    "Offset": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "exact"
-          ],
-          "properties": {
-            "exact": {
-              "$ref": "#/definitions/Decimal"
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "percent"
-          ],
-          "properties": {
-            "percent": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0.0
-            }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
     "PriceSource": {
       "oneOf": [
         {
@@ -554,57 +485,6 @@
         }
       ]
     },
-    "PriceStrategy": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "fixed"
-          ],
-          "properties": {
-            "fixed": {
-              "$ref": "#/definitions/Decimal"
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "offset"
-          ],
-          "properties": {
-            "offset": {
-              "type": "object",
-              "required": [
-                "direction",
-                "offset"
-              ],
-              "properties": {
-                "direction": {
-                  "$ref": "#/definitions/Direction"
-                },
-                "offset": {
-                  "$ref": "#/definitions/Offset"
-                },
-                "tolerance": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/Offset"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
     "Schedule": {
       "type": "object",
       "required": [
@@ -624,6 +504,14 @@
             "$ref": "#/definitions/Coin"
           }
         },
+        "executions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "executors": {
           "type": "array",
           "items": {
@@ -642,6 +530,14 @@
         },
         "manager_address": {
           "$ref": "#/definitions/Addr"
+        },
+        "max_executions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
         },
         "next": {
           "anyOf": [
@@ -670,7 +566,8 @@
       "type": "string",
       "enum": [
         "active",
-        "paused"
+        "paused",
+        "archived"
       ]
     },
     "StreamingSwap": {
@@ -777,6 +674,20 @@
                 }
               },
               "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "balance_basis_points"
+          ],
+          "properties": {
+            "balance_basis_points": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
             }
           },
           "additionalProperties": false

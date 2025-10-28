@@ -13,6 +13,7 @@ mod integration_tests {
             schedule::Schedule,
         },
         constants::BASE_FEE_BPS,
+        core::Amount,
         manager::{Affiliate, StrategyStatus},
         scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
@@ -85,7 +86,7 @@ mod integration_tests {
         FinLimitOrder {
             pair_address: harness.fin_addr.clone(),
             bid_denom: fin_pair.denoms.base().to_string(),
-            bid_amount: None,
+            bid_amount: Amount::Available,
             side: Side::Base,
             strategy: PriceStrategy::Fixed(Decimal::percent(100)),
             min_fill_ratio: None,
@@ -1260,7 +1261,7 @@ mod integration_tests {
         let default_swap_action = default_swap_action(&harness);
 
         let swap_action = Swap {
-            adjustment: SwapAmountAdjustment::BalanceBasisPoints(5000),
+            adjustment: SwapAmountAdjustment::BalancePercent(Decimal::percent(50)),
             ..default_swap_action
         };
 
@@ -1291,7 +1292,7 @@ mod integration_tests {
         let mut harness = CalcTestApp::setup();
 
         let order_action = FinLimitOrder {
-            bid_amount: Some(Uint128::new(999)),
+            bid_amount: Amount::Fixed(Uint128::new(99)),
             ..default_limit_order_action(&harness)
         };
 

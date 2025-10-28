@@ -16,7 +16,7 @@ use cosmwasm_std::{
     Event, MessageInfo, Reply, Response, StdResult, SubMsg, SubMsgResult,
 };
 
-use crate::state::{AFFILIATES, MANAGER, NODES, OWNER, PATH, WITHDRAWALS};
+use crate::state::{AFFILIATES, DEPOSITS, MANAGER, NODES, OWNER, PATH, WITHDRAWALS};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -35,6 +35,7 @@ pub fn instantiate(
     MANAGER.save(deps.storage, &info.sender)?;
     OWNER.save(deps.storage, &msg.owner)?;
     AFFILIATES.save(deps.storage, &msg.affiliates)?;
+    DEPOSITS.save(deps.storage, &vec![])?;
     WITHDRAWALS.save(deps.storage, &vec![])?;
 
     let init_msg = Contract(env.contract.address.clone()).call(
@@ -60,6 +61,18 @@ pub fn execute(
     info: MessageInfo,
     msg: StrategyExecuteMsg,
 ) -> ContractResult {
+    if !info.funds.is_empty() {
+        DEPOSITS.update(deps.storage, |existing| -> StdResult<_> {
+            let mut deposits = Coins::try_from(existing)?;
+
+            for coin in info.funds.iter() {
+                deposits.add(coin.clone())?;
+            }
+
+            Ok(deposits.to_vec())
+        })?;
+    };
+
     match msg {
         StrategyExecuteMsg::Init(nodes) => {
             if info.sender != env.contract.address {
@@ -303,7 +316,8 @@ pub fn execute(
                                     "{}/process-node.messages",
                                     env!("CARGO_PKG_NAME")
                                 ))
-                                .add_attribute("node_index", index.to_string()),
+                                .add_attribute("node_index", index.to_string())
+                                .add_attribute("messages", "[]".to_string()),
                                 Event::new(format!(
                                     "{}/process-node.result",
                                     env!("CARGO_PKG_NAME")

@@ -1,5 +1,5 @@
 export type Addr = string;
-export type StrategyStatus = "active" | "paused";
+export type StrategyStatus = "active" | "paused" | "archived";
 export type ArrayOf_Strategy = Strategy[];
 
 export interface Strategy {
@@ -8,6 +8,7 @@ export interface Strategy {
   id: number;
   label: string;
   owner: Addr;
+  source?: string | null;
   status: StrategyStatus;
   updated_at: number;
 }
@@ -17,7 +18,9 @@ export interface ManagerInstantiateMsg {
   strategy_code_id: number;
 }
 export type ManagerQueryMsg =
-  | ("config" | "count")
+  | {
+      config: {};
+    }
   | {
       strategy: {
         address: Addr;
@@ -30,6 +33,9 @@ export type ManagerQueryMsg =
         start_after?: number | null;
         status?: StrategyStatus | null;
       };
+    }
+  | {
+      count: {};
     };
 export type Uint64 = number;
 export type ManagerExecuteMsg =
@@ -39,6 +45,7 @@ export type ManagerExecuteMsg =
         label: string;
         nodes: Node[];
         owner?: Addr | null;
+        source?: string | null;
       };
     }
   | {
@@ -98,6 +105,9 @@ export type SwapAmountAdjustment =
         minimum_swap_amount?: Coin | null;
         scalar: Decimal;
       };
+    }
+  | {
+      balance_basis_points: number;
     };
 /**
  * A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.
@@ -126,6 +136,14 @@ export type SwapRoute =
   | {
       thorchain: ThorchainRoute;
     };
+export type Amount =
+  | "available"
+  | {
+      fixed: Uint128;
+    }
+  | {
+      percent: Decimal;
+    };
 export type Side = "base" | "quote";
 export type PriceStrategy =
   | {
@@ -135,6 +153,7 @@ export type PriceStrategy =
       offset: {
         direction: Direction;
         offset: Offset;
+        side: Side;
         tolerance?: Offset | null;
       };
     };
@@ -243,14 +262,6 @@ export type Cadence =
         expr: string;
         previous?: Timestamp | null;
       };
-    }
-  | {
-      limit_order: {
-        pair_address: Addr;
-        previous?: Decimal | null;
-        side: Side;
-        strategy: PriceStrategy;
-      };
     };
 export type PriceSource =
   | "thorchain"
@@ -294,9 +305,11 @@ export interface StreamingSwap {
   swap_amount: Coin;
 }
 export interface FinLimitOrder {
-  bid_amount?: Uint128 | null;
+  bid_amount: Amount;
   bid_denom: string;
   current_order?: StaleOrder | null;
+  granter?: Addr | null;
+  min_fill_ratio?: Decimal | null;
   pair_address: Addr;
   side: Side;
   strategy: PriceStrategy;
@@ -309,6 +322,7 @@ export interface Distribution {
   destinations: Destination[];
 }
 export interface Destination {
+  distributions?: Coin[] | null;
   label?: string | null;
   recipient: Recipient;
   shares: Uint128;
@@ -316,9 +330,11 @@ export interface Destination {
 export interface Schedule {
   cadence: Cadence;
   execution_rebate: Coin[];
+  executions?: number | null;
   executors: Addr[];
   jitter?: Duration | null;
   manager_address: Addr;
+  max_executions?: number | null;
   next?: Cadence | null;
   scheduler_address: Addr;
 }
@@ -375,16 +391,6 @@ export type ConditionFilter =
         end?: number | null;
         start?: number | null;
       };
-    }
-  | {
-      limit_order: {
-        pair_address: Addr;
-        /**
-         * @minItems 2
-         * @maxItems 2
-         */
-        price_range?: [Decimal, Decimal] | null;
-      };
     };
 export type Threshold = "all" | "any";
 
@@ -422,17 +428,28 @@ export interface StrategyInstantiateMsg {
   owner: Addr;
 }
 
-export type StrategyQueryMsg = "config" | "balances";
+export type StrategyQueryMsg =
+  | {
+      config: {};
+    }
+  | {
+      balances: {};
+    };
 export type StrategyExecuteMsg =
-  | ("execute" | "cancel")
   | {
       init: Node[];
+    }
+  | {
+      execute: {};
     }
   | {
       withdraw: Coin[];
     }
   | {
       update: Node[];
+    }
+  | {
+      cancel: {};
     }
   | {
       process: {
@@ -447,4 +464,5 @@ export interface StrategyConfig {
   manager: Addr;
   nodes: Node[];
   owner: Addr;
+  withdrawals: Coin[];
 }

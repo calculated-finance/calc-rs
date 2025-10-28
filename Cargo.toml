@@ -23,7 +23,7 @@ anyhow = "1"
 calc-rs = { path = "packages/calc-rs" }
 calc-rs-test = { path = "packages/calc-rs-test" }
 cosmwasm-schema = "2.2.0"
-cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1"] }
+cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1", "stargate"] }
 cosmwasm-storage = "1.5.2"
 cw-multi-test = { version = "2", features = ["cosmwasm_2_1"] }
 cw-storage-plus = "2.0.0"

@@ -96,6 +96,40 @@
       },
       "additionalProperties": false
     },
+    "Amount": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "available"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "fixed"
+          ],
+          "properties": {
+            "fixed": {
+              "$ref": "#/definitions/Uint128"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "percent"
+          ],
+          "properties": {
+            "percent": {
+              "$ref": "#/definitions/Decimal"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "AssetValueRatio": {
       "type": "object",
       "required": [
@@ -216,45 +250,6 @@
                       "type": "null"
                     }
                   ]
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "limit_order"
-          ],
-          "properties": {
-            "limit_order": {
-              "type": "object",
-              "required": [
-                "pair_address",
-                "side",
-                "strategy"
-              ],
-              "properties": {
-                "pair_address": {
-                  "$ref": "#/definitions/Addr"
-                },
-                "previous": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/Decimal"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "side": {
-                  "$ref": "#/definitions/Side"
-                },
-                "strategy": {
-                  "$ref": "#/definitions/PriceStrategy"
                 }
               },
               "additionalProperties": false
@@ -485,6 +480,15 @@
         "shares"
       ],
       "properties": {
+        "distributions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Coin"
+          }
+        },
         "label": {
           "type": [
             "string",
@@ -552,6 +556,7 @@
     "FinLimitOrder": {
       "type": "object",
       "required": [
+        "bid_amount",
         "bid_denom",
         "pair_address",
         "side",
@@ -559,14 +564,7 @@
       ],
       "properties": {
         "bid_amount": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Uint128"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/definitions/Amount"
         },
         "bid_denom": {
           "type": "string"
@@ -575,6 +573,26 @@
           "anyOf": [
             {
               "$ref": "#/definitions/StaleOrder"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "granter": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Addr"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_fill_ratio": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Decimal"
             },
             {
               "type": "null"
@@ -772,7 +790,8 @@
               "type": "object",
               "required": [
                 "direction",
-                "offset"
+                "offset",
+                "side"
               ],
               "properties": {
                 "direction": {
@@ -780,6 +799,9 @@
                 },
                 "offset": {
                   "$ref": "#/definitions/Offset"
+                },
+                "side": {
+                  "$ref": "#/definitions/Side"
                 },
                 "tolerance": {
                   "anyOf": [
@@ -889,6 +911,14 @@
             "$ref": "#/definitions/Coin"
           }
         },
+        "executions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "executors": {
           "type": "array",
           "items": {
@@ -907,6 +937,14 @@
         },
         "manager_address": {
           "$ref": "#/definitions/Addr"
+        },
+        "max_executions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
         },
         "next": {
           "anyOf": [
@@ -947,7 +985,8 @@
       "type": "string",
       "enum": [
         "active",
-        "paused"
+        "paused",
+        "archived"
       ]
     },
     "StreamingSwap": {
@@ -1054,6 +1093,20 @@
                 }
               },
               "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "balance_basis_points"
+          ],
+          "properties": {
+            "balance_basis_points": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
             }
           },
           "additionalProperties": false

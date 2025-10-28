@@ -20,7 +20,7 @@ pub enum SwapAmountAdjustment {
         minimum_swap_amount: Option<Coin>,
         scalar: Decimal,
     },
-    BalanceBasisPoints(u64),
+    BalancePercent(Decimal),
 }
 
 #[cw_serde]
@@ -193,9 +193,10 @@ impl SwapQuote<New> {
 
                 (new_swap_amount, new_minimum_receive_amount)
             }
-            SwapAmountAdjustment::BalanceBasisPoints(basis_points) => {
-                let ratio = Decimal::bps(*basis_points) / Decimal::bps(10_000);
-                let swap_amount = swap_balance.amount.mul_floor(ratio);
+            SwapAmountAdjustment::BalancePercent(percent) => {
+                let swap_amount = swap_balance
+                    .amount
+                    .mul_floor(percent / Decimal::percent(100));
 
                 let min_return = self
                     .minimum_receive_amount
@@ -262,26 +263,35 @@ impl Swap {
             return Err(StdError::generic_err("No swap routes provided"));
         }
 
-        if let SwapAmountAdjustment::LinearScalar {
-            base_receive_amount,
-            minimum_swap_amount,
-            ..
-        } = &self.adjustment
-        {
-            if base_receive_amount.amount.is_zero() {
-                return Err(StdError::generic_err("Base receive amount cannot be zero"));
-            }
+        match &self.adjustment {
+            SwapAmountAdjustment::Fixed => {}
+            SwapAmountAdjustment::LinearScalar {
+                base_receive_amount,
+                minimum_swap_amount,
+                ..
+            } => {
+                if base_receive_amount.amount.is_zero() {
+                    return Err(StdError::generic_err("Base receive amount cannot be zero"));
+                }
 
-            if base_receive_amount.denom != self.minimum_receive_amount.denom {
-                return Err(StdError::generic_err(
-                    "Base receive amount denom must match minimum receive amount denom",
-                ));
-            }
-
-            if let Some(minimum_swap_amount) = minimum_swap_amount {
-                if minimum_swap_amount.denom != self.swap_amount.denom {
+                if base_receive_amount.denom != self.minimum_receive_amount.denom {
                     return Err(StdError::generic_err(
-                        "Minimum swap amount denom must match swap amount denom",
+                        "Base receive amount denom must match minimum receive amount denom",
+                    ));
+                }
+
+                if let Some(minimum_swap_amount) = minimum_swap_amount {
+                    if minimum_swap_amount.denom != self.swap_amount.denom {
+                        return Err(StdError::generic_err(
+                            "Minimum swap amount denom must match swap amount denom",
+                        ));
+                    }
+                }
+            }
+            SwapAmountAdjustment::BalancePercent(percent) => {
+                if percent.is_zero() || percent > &Decimal::percent(100) {
+                    return Err(StdError::generic_err(
+                        "Percent adjustment must be greater than 0% and less than or equal to 100%",
                     ));
                 }
             }

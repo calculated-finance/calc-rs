@@ -7,7 +7,7 @@ use cosmwasm_std::{
 use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side};
 
 use crate::{
-    core::Contract,
+    core::{Amount, Contract},
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
     rujira::get_side_price,
@@ -90,7 +90,7 @@ impl PriceStrategy {
 pub struct FinLimitOrder {
     pub pair_address: Addr,
     pub bid_denom: String,
-    pub bid_amount: Option<Uint128>,
+    pub bid_amount: Amount,
     pub side: Side,
     pub strategy: PriceStrategy,
     pub min_fill_ratio: Option<Decimal>,
@@ -244,7 +244,13 @@ impl FinLimitOrderState<UnsetOrder> {
             .query_balance(&env.contract.address, &self.config.bid_denom)?;
 
         let available = balance.amount + self.state.withdrawing + self.state.remaining;
-        let final_offer = min(available, self.config.bid_amount.unwrap_or(available));
+
+        let final_offer = match self.config.bid_amount {
+            Amount::Available => available,
+            Amount::Fixed(amount) => min(available, amount),
+            Amount::Percent(percent) => available.mul_floor(percent),
+        };
+
         let funding = min(balance.amount + self.state.withdrawing, final_offer);
 
         if funding.is_zero() && !should_reset {
@@ -392,12 +398,22 @@ impl FinLimitOrderState<WithdrawingOrder> {
 
 impl Operation<FinLimitOrder> for FinLimitOrder {
     fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<FinLimitOrder> {
-        if let Some(amount) = self.bid_amount {
-            if amount.lt(&Uint128::new(1_000)) {
+        match self.bid_amount {
+            Amount::Fixed(amount) => {
+                if amount.lt(&Uint128::new(100)) {
+                    return Err(StdError::generic_err(
+                        "Bid amount for limit order must be greater than or equal to 100",
+                    ));
+                }
+            }
+            Amount::Percent(percent)
+                if percent == Decimal::zero() || percent > Decimal::percent(10_000) =>
+            {
                 return Err(StdError::generic_err(
-                    "Bid amount cannot be less than 1,000",
+                    "Bid amount percentage must be between 0 and 100",
                 ));
             }
+            _ => {}
         }
 
         if self.current_order.is_some() {

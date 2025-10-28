@@ -41,6 +41,12 @@
         "owner": {
           "$ref": "#/definitions/Addr"
         },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "status": {
           "$ref": "#/definitions/StrategyStatus"
         },
@@ -56,7 +62,8 @@
       "type": "string",
       "enum": [
         "active",
-        "paused"
+        "paused",
+        "archived"
       ]
     }
   }
