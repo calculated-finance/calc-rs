@@ -151,12 +151,6 @@
     "Amount": {
       "oneOf": [
         {
-          "type": "string",
-          "enum": [
-            "available"
-          ]
-        },
-        {
           "type": "object",
           "required": [
             "fixed"
@@ -171,10 +165,10 @@
         {
           "type": "object",
           "required": [
-            "percent"
+            "fraction"
           ],
           "properties": {
-            "percent": {
+            "fraction": {
               "$ref": "#/definitions/Decimal"
             }
           },
@@ -625,16 +619,6 @@
           "anyOf": [
             {
               "$ref": "#/definitions/StaleOrder"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "granter": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Addr"
             },
             {
               "type": "null"
@@ -1152,20 +1136,6 @@
                 }
               },
               "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "balance_basis_points"
-          ],
-          "properties": {
-            "balance_basis_points": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0.0
             }
           },
           "additionalProperties": false

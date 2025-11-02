@@ -191,7 +191,7 @@ impl Operation<Condition> for Condition {
                 let limit_order = FinLimitOrder {
                     pair_address: pair_address.clone(),
                     side: side.clone(),
-                    bid_amount: Amount::Available,
+                    bid_amount: Amount::Fraction(Decimal::percent(100)),
                     bid_denom: if side == &Side::Base {
                         pair.denoms.base()
                     } else {

@@ -35,6 +35,12 @@ export type ManagerQueryMsg =
       };
     }
   | {
+      strategies_by_id: {
+        limit?: number | null;
+        start_after?: Addr | null;
+      };
+    }
+  | {
       count: {};
     };
 export type Uint64 = number;
@@ -105,9 +111,6 @@ export type SwapAmountAdjustment =
         minimum_swap_amount?: Coin | null;
         scalar: Decimal;
       };
-    }
-  | {
-      balance_basis_points: number;
     };
 /**
  * A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.
@@ -137,12 +140,11 @@ export type SwapRoute =
       thorchain: ThorchainRoute;
     };
 export type Amount =
-  | "available"
   | {
       fixed: Uint128;
     }
   | {
-      percent: Decimal;
+      fraction: Decimal;
     };
 export type Side = "base" | "quote";
 export type PriceStrategy =
@@ -308,7 +310,6 @@ export interface FinLimitOrder {
   bid_amount: Amount;
   bid_denom: string;
   current_order?: StaleOrder | null;
-  granter?: Addr | null;
   min_fill_ratio?: Decimal | null;
   pair_address: Addr;
   side: Side;

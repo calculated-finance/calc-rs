@@ -4,7 +4,9 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128,
 };
-use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side};
+use rujira_rs::fin::{
+    ConfigResponse, ExecuteMsg, OrderResponse, OrdersResponse, Price, QueryMsg, Side,
+};
 
 use crate::{
     core::{Amount, Contract},
@@ -243,12 +245,29 @@ impl FinLimitOrderState<UnsetOrder> {
             .querier
             .query_balance(&env.contract.address, &self.config.bid_denom)?;
 
-        let available = balance.amount + self.state.withdrawing + self.state.remaining;
+        let orders = deps.querier.query_wasm_smart::<OrdersResponse>(
+            &self.config.pair_address,
+            &QueryMsg::Orders {
+                owner: env.contract.address.to_string(),
+                side: None,
+                offset: None,
+                limit: None,
+            },
+        )?;
+
+        let remaining_and_unclaimed = orders.orders.iter().fold(Uint128::zero(), |acc, order| {
+            if order.side == self.config.side {
+                acc + order.remaining
+            } else {
+                acc + order.filled
+            }
+        });
+
+        let available = balance.amount + remaining_and_unclaimed;
 
         let final_offer = match self.config.bid_amount {
-            Amount::Available => available,
             Amount::Fixed(amount) => min(available, amount),
-            Amount::Percent(percent) => available.mul_floor(percent),
+            Amount::Fraction(percent) => available.mul_floor(percent),
         };
 
         let funding = min(balance.amount + self.state.withdrawing, final_offer);
@@ -406,11 +425,11 @@ impl Operation<FinLimitOrder> for FinLimitOrder {
                     ));
                 }
             }
-            Amount::Percent(percent)
-                if percent == Decimal::zero() || percent > Decimal::percent(10_000) =>
+            Amount::Fraction(percent)
+                if percent == Decimal::zero() || percent > Decimal::percent(100) =>
             {
                 return Err(StdError::generic_err(
-                    "Bid amount percentage must be between 0 and 100",
+                    "Bid amount fraction must be between 0 and 1",
                 ));
             }
             _ => {}

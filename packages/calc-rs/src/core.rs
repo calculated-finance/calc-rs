@@ -55,7 +55,6 @@ impl Contract {
 
 #[cw_serde]
 pub enum Amount {
-    Available,
     Fixed(Uint128),
-    Percent(Decimal),
+    Fraction(Decimal),
 }

@@ -615,20 +615,6 @@
             }
           },
           "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "balance_basis_points"
-          ],
-          "properties": {
-            "balance_basis_points": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0.0
-            }
-          },
-          "additionalProperties": false
         }
       ]
     },

@@ -86,7 +86,7 @@ mod integration_tests {
         FinLimitOrder {
             pair_address: harness.fin_addr.clone(),
             bid_denom: fin_pair.denoms.base().to_string(),
-            bid_amount: Amount::Available,
+            bid_amount: Amount::Fraction(Decimal::percent(100)),
             side: Side::Base,
             strategy: PriceStrategy::Fixed(Decimal::percent(100)),
             min_fill_ratio: None,
@@ -1255,44 +1255,54 @@ mod integration_tests {
         ]);
     }
 
-    #[test]
-    fn test_execute_swap_action_with_balance_basis_points_swap_adjustment_executes() {
-        let mut harness = CalcTestApp::setup();
-        let default_swap_action = default_swap_action(&harness);
-
-        let swap_action = Swap {
-            adjustment: SwapAmountAdjustment::BalancePercent(Decimal::percent(50)),
-            ..default_swap_action
-        };
-
-        let mut strategy = StrategyBuilder::new(&mut harness)
-            .with_nodes(vec![Node::Action {
-                action: Action::Swap(swap_action.clone()),
-                index: 0,
-                next: None,
-            }])
-            .instantiate(&[swap_action.swap_amount.clone()]);
-
-        strategy.assert_strategy_balances(&[
-            Coin::new(
-                swap_action.swap_amount.amount - swap_action.swap_amount.amount / Uint128::new(2),
-                swap_action.swap_amount.denom,
-            ),
-            Coin::new(
-                swap_action.swap_amount.amount / Uint128::new(2),
-                swap_action.minimum_receive_amount.denom,
-            ),
-        ]);
-    }
-
     // FIN limit order action tests
 
     #[test]
-    fn test_instantiate_limit_order_action_with_bid_amount_too_small_fails() {
+    fn test_instantiate_limit_order_action_with_fixed_bid_amount_too_small_fails() {
         let mut harness = CalcTestApp::setup();
 
         let order_action = FinLimitOrder {
             bid_amount: Amount::Fixed(Uint128::new(99)),
+            ..default_limit_order_action(&harness)
+        };
+
+        let result = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .try_instantiate(&[Coin::new(1000000u128, order_action.bid_denom.clone())]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_instantiate_limit_order_action_with_fraction_bid_amount_too_high_fails() {
+        let mut harness = CalcTestApp::setup();
+
+        let order_action = FinLimitOrder {
+            bid_amount: Amount::Fraction(Decimal::percent(101)),
+            ..default_limit_order_action(&harness)
+        };
+
+        let result = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .try_instantiate(&[Coin::new(1000000u128, order_action.bid_denom.clone())]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_instantiate_limit_order_action_with_fraction_bid_amount_zero_fails() {
+        let mut harness = CalcTestApp::setup();
+
+        let order_action = FinLimitOrder {
+            bid_amount: Amount::Fraction(Decimal::zero()),
             ..default_limit_order_action(&harness)
         };
 

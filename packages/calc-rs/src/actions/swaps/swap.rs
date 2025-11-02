@@ -20,7 +20,6 @@ pub enum SwapAmountAdjustment {
         minimum_swap_amount: Option<Coin>,
         scalar: Decimal,
     },
-    BalancePercent(Decimal),
 }
 
 #[cw_serde]
@@ -193,21 +192,6 @@ impl SwapQuote<New> {
 
                 (new_swap_amount, new_minimum_receive_amount)
             }
-            SwapAmountAdjustment::BalancePercent(percent) => {
-                let swap_amount = swap_balance
-                    .amount
-                    .mul_floor(percent / Decimal::percent(100));
-
-                let min_return = self
-                    .minimum_receive_amount
-                    .amount
-                    .mul_floor(Decimal::from_ratio(swap_amount, self.swap_amount.amount));
-
-                (
-                    Coin::new(swap_amount, self.swap_amount.denom.clone()),
-                    min_return,
-                )
-            }
         };
 
         Ok(SwapQuote {
@@ -286,13 +270,6 @@ impl Swap {
                             "Minimum swap amount denom must match swap amount denom",
                         ));
                     }
-                }
-            }
-            SwapAmountAdjustment::BalancePercent(percent) => {
-                if percent.is_zero() || percent > &Decimal::percent(100) {
-                    return Err(StdError::generic_err(
-                        "Percent adjustment must be greater than 0% and less than or equal to 100%",
-                    ));
                 }
             }
         }
