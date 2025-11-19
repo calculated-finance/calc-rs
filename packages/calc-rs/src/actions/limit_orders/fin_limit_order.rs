@@ -4,10 +4,12 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     to_json_binary, Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128,
 };
-use rujira_rs::fin::{ConfigResponse, ExecuteMsg, OrderResponse, Price, QueryMsg, Side};
+use rujira_rs::fin::{
+    ConfigResponse, ExecuteMsg, OrderResponse, OrdersResponse, Price, QueryMsg, Side,
+};
 
 use crate::{
-    core::Contract,
+    core::{Amount, Contract},
     manager::Affiliate,
     operation::{Operation, StatefulOperation},
     rujira::get_side_price,
@@ -90,7 +92,7 @@ impl PriceStrategy {
 pub struct FinLimitOrder {
     pub pair_address: Addr,
     pub bid_denom: String,
-    pub bid_amount: Option<Uint128>,
+    pub bid_amount: Amount,
     pub side: Side,
     pub strategy: PriceStrategy,
     pub min_fill_ratio: Option<Decimal>,
@@ -243,8 +245,31 @@ impl FinLimitOrderState<UnsetOrder> {
             .querier
             .query_balance(&env.contract.address, &self.config.bid_denom)?;
 
-        let available = balance.amount + self.state.withdrawing + self.state.remaining;
-        let final_offer = min(available, self.config.bid_amount.unwrap_or(available));
+        let orders = deps.querier.query_wasm_smart::<OrdersResponse>(
+            &self.config.pair_address,
+            &QueryMsg::Orders {
+                owner: env.contract.address.to_string(),
+                side: None,
+                offset: None,
+                limit: None,
+            },
+        )?;
+
+        let remaining_and_unclaimed = orders.orders.iter().fold(Uint128::zero(), |acc, order| {
+            if order.side == self.config.side {
+                acc + order.remaining
+            } else {
+                acc + order.filled
+            }
+        });
+
+        let available = balance.amount + remaining_and_unclaimed;
+
+        let final_offer = match self.config.bid_amount {
+            Amount::Fixed(amount) => min(available, amount),
+            Amount::Fraction(percent) => available.mul_floor(percent),
+        };
+
         let funding = min(balance.amount + self.state.withdrawing, final_offer);
 
         if funding.is_zero() && !should_reset {
@@ -392,12 +417,22 @@ impl FinLimitOrderState<WithdrawingOrder> {
 
 impl Operation<FinLimitOrder> for FinLimitOrder {
     fn init(self, _deps: Deps, _env: &Env, _affiliates: &[Affiliate]) -> StdResult<FinLimitOrder> {
-        if let Some(amount) = self.bid_amount {
-            if amount.lt(&Uint128::new(1_000)) {
+        match self.bid_amount {
+            Amount::Fixed(amount) => {
+                if amount.lt(&Uint128::new(100)) {
+                    return Err(StdError::generic_err(
+                        "Bid amount for limit order must be greater than or equal to 100",
+                    ));
+                }
+            }
+            Amount::Fraction(percent)
+                if percent == Decimal::zero() || percent > Decimal::percent(100) =>
+            {
                 return Err(StdError::generic_err(
-                    "Bid amount cannot be less than 1,000",
+                    "Bid amount fraction must be between 0 and 1",
                 ));
             }
+            _ => {}
         }
 
         if self.current_order.is_some() {

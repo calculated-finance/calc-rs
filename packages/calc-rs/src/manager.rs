@@ -14,6 +14,7 @@ pub struct ManagerConfig {
 pub enum StrategyStatus {
     Active,
     Paused,
+    Archived,
 }
 
 impl StrategyStatus {
@@ -21,6 +22,7 @@ impl StrategyStatus {
         match self {
             StrategyStatus::Active => "active",
             StrategyStatus::Paused => "paused",
+            StrategyStatus::Archived => "archived",
         }
     }
 }
@@ -99,6 +101,11 @@ pub enum ManagerQueryMsg {
         owner: Option<Addr>,
         status: Option<StrategyStatus>,
         start_after: Option<u64>,
+        limit: Option<u16>,
+    },
+    #[returns(Vec<Strategy>)]
+    StrategiesById {
+        start_after: Option<Addr>,
         limit: Option<u16>,
     },
     #[returns(u64)]

@@ -11,6 +11,7 @@ use cw_storage_plus::{Item, Map};
 pub const MANAGER: Item<Addr> = Item::new("manager");
 pub const OWNER: Item<Addr> = Item::new("owner");
 pub const AFFILIATES: Item<Vec<Affiliate>> = Item::new("affiliates");
+pub const DEPOSITS: Item<Vec<Coin>> = Item::new("deposits");
 pub const WITHDRAWALS: Item<Vec<Coin>> = Item::new("withdrawals");
 
 pub struct NodeStore {

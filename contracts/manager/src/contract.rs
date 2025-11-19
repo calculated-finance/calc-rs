@@ -305,7 +305,9 @@ pub fn execute(
             let strategy_msg = Contract(contract_address.clone()).call(
                 to_json_binary(&match status {
                     StrategyStatus::Active => StrategyExecuteMsg::Execute {},
-                    StrategyStatus::Paused => StrategyExecuteMsg::Cancel {},
+                    StrategyStatus::Paused | StrategyStatus::Archived => {
+                        StrategyExecuteMsg::Cancel {}
+                    }
                 })?,
                 info.funds,
             );
@@ -392,6 +394,20 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
                 .collect();
 
             to_json_binary(&strategies?)
+        }
+        ManagerQueryMsg::StrategiesById { start_after, limit } => {
+            let strategies: Vec<Strategy> = STRATEGIES
+                .range(
+                    deps.storage,
+                    start_after.map(Bound::exclusive),
+                    None,
+                    Order::Ascending,
+                )
+                .filter_map(|item| item.ok().map(|(_, strategy)| strategy))
+                .take(limit.unwrap_or(30) as usize)
+                .collect();
+
+            to_json_binary(&strategies)
         }
         ManagerQueryMsg::Count {} => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
     }

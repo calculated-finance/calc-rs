@@ -13,6 +13,7 @@ mod integration_tests {
             schedule::Schedule,
         },
         constants::BASE_FEE_BPS,
+        core::Amount,
         manager::{Affiliate, StrategyStatus},
         scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
@@ -85,7 +86,7 @@ mod integration_tests {
         FinLimitOrder {
             pair_address: harness.fin_addr.clone(),
             bid_denom: fin_pair.denoms.base().to_string(),
-            bid_amount: None,
+            bid_amount: Amount::Fraction(Decimal::percent(100)),
             side: Side::Base,
             strategy: PriceStrategy::Fixed(Decimal::percent(100)),
             min_fill_ratio: None,
@@ -1245,11 +1246,11 @@ mod integration_tests {
         strategy.assert_strategy_balances(&[
             Coin::new(
                 swap_action.swap_amount.amount - minimum_swap_amount.amount,
-                swap_action.swap_amount.denom.clone(),
+                swap_action.swap_amount.denom,
             ),
             Coin::new(
                 minimum_swap_amount.amount.mul_floor(Decimal::percent(99)),
-                swap_action.minimum_receive_amount.denom.clone(),
+                swap_action.minimum_receive_amount.denom,
             ),
         ]);
     }
@@ -1257,11 +1258,51 @@ mod integration_tests {
     // FIN limit order action tests
 
     #[test]
-    fn test_instantiate_limit_order_action_with_bid_amount_too_small_fails() {
+    fn test_instantiate_limit_order_action_with_fixed_bid_amount_too_small_fails() {
         let mut harness = CalcTestApp::setup();
 
         let order_action = FinLimitOrder {
-            bid_amount: Some(Uint128::new(999)),
+            bid_amount: Amount::Fixed(Uint128::new(99)),
+            ..default_limit_order_action(&harness)
+        };
+
+        let result = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .try_instantiate(&[Coin::new(1000000u128, order_action.bid_denom.clone())]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_instantiate_limit_order_action_with_fraction_bid_amount_too_high_fails() {
+        let mut harness = CalcTestApp::setup();
+
+        let order_action = FinLimitOrder {
+            bid_amount: Amount::Fraction(Decimal::percent(101)),
+            ..default_limit_order_action(&harness)
+        };
+
+        let result = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::LimitOrder(order_action.clone()),
+                index: 0,
+                next: None,
+            }])
+            .try_instantiate(&[Coin::new(1000000u128, order_action.bid_denom.clone())]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_instantiate_limit_order_action_with_fraction_bid_amount_zero_fails() {
+        let mut harness = CalcTestApp::setup();
+
+        let order_action = FinLimitOrder {
+            bid_amount: Amount::Fraction(Decimal::zero()),
             ..default_limit_order_action(&harness)
         };
 

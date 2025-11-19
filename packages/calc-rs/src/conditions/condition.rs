@@ -16,6 +16,7 @@ use crate::{
         swaps::swap::Swap,
     },
     conditions::{asset_value_ratio::AssetValueRatio, schedule::Schedule},
+    core::Amount,
     manager::{Affiliate, ManagerQueryMsg, Strategy, StrategyStatus},
     operation::{Operation, StatefulOperation},
 };
@@ -190,7 +191,7 @@ impl Operation<Condition> for Condition {
                 let limit_order = FinLimitOrder {
                     pair_address: pair_address.clone(),
                     side: side.clone(),
-                    bid_amount: None,
+                    bid_amount: Amount::Fraction(Decimal::percent(100)),
                     bid_denom: if side == &Side::Base {
                         pair.denoms.base()
                     } else {

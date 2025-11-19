@@ -247,27 +247,29 @@ impl Swap {
             return Err(StdError::generic_err("No swap routes provided"));
         }
 
-        if let SwapAmountAdjustment::LinearScalar {
-            base_receive_amount,
-            minimum_swap_amount,
-            ..
-        } = &self.adjustment
-        {
-            if base_receive_amount.amount.is_zero() {
-                return Err(StdError::generic_err("Base receive amount cannot be zero"));
-            }
+        match &self.adjustment {
+            SwapAmountAdjustment::Fixed => {}
+            SwapAmountAdjustment::LinearScalar {
+                base_receive_amount,
+                minimum_swap_amount,
+                ..
+            } => {
+                if base_receive_amount.amount.is_zero() {
+                    return Err(StdError::generic_err("Base receive amount cannot be zero"));
+                }
 
-            if base_receive_amount.denom != self.minimum_receive_amount.denom {
-                return Err(StdError::generic_err(
-                    "Base receive amount denom must match minimum receive amount denom",
-                ));
-            }
-
-            if let Some(minimum_swap_amount) = minimum_swap_amount {
-                if minimum_swap_amount.denom != self.swap_amount.denom {
+                if base_receive_amount.denom != self.minimum_receive_amount.denom {
                     return Err(StdError::generic_err(
-                        "Minimum swap amount denom must match swap amount denom",
+                        "Base receive amount denom must match minimum receive amount denom",
                     ));
+                }
+
+                if let Some(minimum_swap_amount) = minimum_swap_amount {
+                    if minimum_swap_amount.denom != self.swap_amount.denom {
+                        return Err(StdError::generic_err(
+                            "Minimum swap amount denom must match swap amount denom",
+                        ));
+                    }
                 }
             }
         }
