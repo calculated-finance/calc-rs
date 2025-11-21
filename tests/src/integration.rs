@@ -134,7 +134,6 @@ mod integration_tests {
                 index: 0,
                 next: None,
             }],
-            withdrawals: vec![],
         });
     }
 
@@ -759,7 +758,6 @@ mod integration_tests {
                     index: 0,
                     next: None,
                 }],
-                withdrawals: vec![],
             })
             .assert_strategy_balances(&[Coin::new(
                 swap_action
@@ -2556,7 +2554,6 @@ mod integration_tests {
                 index: 0,
                 next: None,
             }],
-            withdrawals: vec![],
         });
 
         strategy.deposit(&starting_balances.clone()).execute();
@@ -2609,7 +2606,6 @@ mod integration_tests {
                 index: 0,
                 next: None,
             }],
-            withdrawals: vec![],
         });
     }
 

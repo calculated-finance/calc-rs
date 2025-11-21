@@ -386,6 +386,20 @@ impl CalcTestApp {
             .unwrap()
     }
 
+    pub fn query_strategy_deposits(&self, strategy_addr: &Addr) -> Vec<Coin> {
+        self.app
+            .wrap()
+            .query_wasm_smart::<Vec<Coin>>(strategy_addr, &StrategyQueryMsg::Deposits {})
+            .unwrap()
+    }
+
+    pub fn query_strategy_withdrawals(&self, strategy_addr: &Addr) -> Vec<Coin> {
+        self.app
+            .wrap()
+            .query_wasm_smart::<Vec<Coin>>(strategy_addr, &StrategyQueryMsg::Withdrawals {})
+            .unwrap()
+    }
+
     pub fn query_balances(&self, addr: &Addr) -> Vec<Coin> {
         #[allow(deprecated)]
         self.app.wrap().query_all_balances(addr).unwrap()

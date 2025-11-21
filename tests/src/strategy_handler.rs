@@ -233,13 +233,24 @@ impl<'a> StrategyHandler<'a> {
         self
     }
 
+    pub fn assert_deposits(&mut self, expected_deposits: Vec<Coin>) -> &mut Self {
+        println!("[StrategyHandler] Asserting strategy deposits are {expected_deposits:#?}");
+        let deposits = self.harness.query_strategy_deposits(&self.strategy_addr);
+        assert_eq!(
+            deposits, expected_deposits,
+            "Expected deposits do not match current deposits: expected {expected_deposits:#?}, got {:#?}",
+            deposits
+        );
+        self
+    }
+
     pub fn assert_withdrawals(&mut self, expected_withdrawals: Vec<Coin>) -> &mut Self {
         println!("[StrategyHandler] Asserting strategy withdrawals are {expected_withdrawals:#?}");
-        let config = self.harness.query_strategy_config(&self.strategy_addr);
+        let withdrawals = self.harness.query_strategy_withdrawals(&self.strategy_addr);
         assert_eq!(
-            config.withdrawals, expected_withdrawals,
+            withdrawals, expected_withdrawals,
             "Expected withdrawals do not match current withdrawals: expected {expected_withdrawals:#?}, got {:#?}",
-            config.withdrawals
+            withdrawals
         );
         self
     }

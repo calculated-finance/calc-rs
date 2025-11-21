@@ -371,7 +371,7 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
         StrategyQueryMsg::Config {} => to_json_binary(&StrategyConfig {
             manager: MANAGER.load(deps.storage)?,
             owner: OWNER.load(deps.storage)?,
-            nodes: NODES.all(deps.storage)?
+            nodes: NODES.all(deps.storage)?,
         }),
         StrategyQueryMsg::Balances {} => {
             let mut balances = NODES.all(deps.storage)?.iter().try_fold(
