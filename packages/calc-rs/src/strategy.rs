@@ -15,7 +15,6 @@ pub struct StrategyConfig {
     pub manager: Addr,
     pub owner: Addr,
     pub nodes: Vec<Node>,
-    pub withdrawals: Vec<Coin>,
 }
 
 #[cw_serde]
@@ -61,6 +60,10 @@ pub enum StrategyQueryMsg {
     Config {},
     #[returns(Vec<Coin>)]
     Balances {},
+    #[returns(Vec<Coin>)]
+    Deposits {},
+    #[returns(Vec<Coin>)]
+    Withdrawals {},
 }
 
 #[cw_serde]

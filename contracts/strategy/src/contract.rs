@@ -371,8 +371,7 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
         StrategyQueryMsg::Config {} => to_json_binary(&StrategyConfig {
             manager: MANAGER.load(deps.storage)?,
             owner: OWNER.load(deps.storage)?,
-            nodes: NODES.all(deps.storage)?,
-            withdrawals: WITHDRAWALS.load(deps.storage)?,
+            nodes: NODES.all(deps.storage)?
         }),
         StrategyQueryMsg::Balances {} => {
             let mut balances = NODES.all(deps.storage)?.iter().try_fold(
@@ -393,6 +392,8 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
 
             to_json_binary(&balances.to_vec())
         }
+        StrategyQueryMsg::Deposits {} => to_json_binary(&DEPOSITS.load(deps.storage)?),
+        StrategyQueryMsg::Withdrawals {} => to_json_binary(&WITHDRAWALS.load(deps.storage)?),
     }
 }
 
