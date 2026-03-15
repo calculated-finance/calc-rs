@@ -142,8 +142,8 @@ impl FinRoute {
         minimum_receive_amount: &Coin,
     ) -> StdResult<CosmosMsg> {
         let swap_msg = Contract(self.pair_address.clone()).call(
-            to_json_binary(&ExecuteMsg::Swap(SwapRequest {
-                min_return: Some(minimum_receive_amount.amount),
+            to_json_binary(&ExecuteMsg::Swap(SwapRequest::Min {
+                min_return: minimum_receive_amount.amount,
                 to: None,
                 callback: None,
             }))?,

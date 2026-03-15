@@ -7,7 +7,7 @@ use cosmwasm_std::{
 use rujira_rs::{
     fin::{ConfigResponse, OrderResponse, Price, QueryMsg, Side},
     query::Pool,
-    Layer1Asset,
+    Asset,
 };
 
 use crate::{
@@ -113,11 +113,13 @@ impl Condition {
                 direction,
                 price,
             } => {
-                let layer_1_asset = Layer1Asset::from_native(asset.clone()).map_err(|e| {
-                    StdError::generic_err(format!(
-                        "Denom ({asset}) not a secured asset, error: {e}"
-                    ))
-                })?;
+                let layer_1_asset = Asset::from_denom(&asset)
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Denom ({asset}) not a valid asset: {e}"
+                        ))
+                    })?
+                    .to_layer_1();
 
                 let oracle_price = Pool::load(deps.querier, &layer_1_asset)
                     .map_err(|e| {
@@ -208,9 +210,9 @@ impl Operation<Condition> for Condition {
                 Ok(self)
             }
             Condition::OraclePrice { ref asset, .. } => {
-                Layer1Asset::from_native(asset.clone()).map_err(|e| {
+                Asset::from_denom(asset).map_err(|e| {
                     StdError::generic_err(format!(
-                        "Denom ({asset}) not a secured asset, error: {e}"
+                        "Denom ({asset}) not a valid asset: {e}"
                     ))
                 })?;
 
@@ -372,10 +374,12 @@ mod conditions_tests {
                     QueryMsg::Config {} => to_json_binary(&ConfigResponse {
                         denoms: Denoms::new("rune", "x/ruji"),
                         oracles: None,
-                        market_maker: None,
+                        market_makers: vec![],
                         tick: Tick::new(6),
+                        range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
+                        fee_amm: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),

@@ -160,7 +160,6 @@ impl From<SwapQuoteRequest> for QueryQuoteSwapRequest {
             affiliate_bps: value.affiliate_bps.iter().map(|x| x.to_string()).collect(),
             height: "".to_string(),
             tolerance_bps: "".to_string(),
-            liquidity_tolerance_bps: "".to_string(),
         }
     }
 }

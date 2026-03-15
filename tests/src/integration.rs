@@ -1387,19 +1387,23 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(7_999_999_994);
+        // New FIN crosses orders immediately on placement - the quote-side
+        // liquidity (1B at 0.99 + dust) gets filled instantly, returning eth-usdc
+        // to the strategy bank. Only the remaining rune becomes a resting order.
+        let resting_amount = Uint128::new(8_989_898_987);
+        let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
 
         strategy
-            .assert_strategy_balance(&Coin::new(remaining_amount, order_action.bid_denom.clone()))
+            .assert_strategy_balance(&Coin::new(resting_amount, order_action.bid_denom.clone()))
+            .assert_strategy_balance(&crossed_return)
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
-                    Decimal::percent(50),    // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
+                    Decimal::percent(50), // price
+                    resting_amount,       // offer
+                    resting_amount,       // remaining
+                    Uint128::zero(),      // filled
                 )],
             );
     }
@@ -1462,32 +1466,33 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(7_999_999_994);
+        // New FIN crosses immediately: ~1B quote filled at 0.99, returning eth-usdc to bank
+        let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
+        let resting_amount = Uint128::new(8_989_898_987);
 
         let strategy_address = strategy.strategy_addr.clone();
 
         strategy
-            .assert_address_balances(&strategy_address, &[])
-            .assert_strategy_fin_orders(
-                &order_action.pair_address,
-                vec![(
-                    order_action.side.clone(),
-                    Decimal::percent(50),    // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
-                )],
-            )
-            .execute()
-            .assert_address_balances(&strategy_address, &[filled_amount.clone()])
+            .assert_address_balances(&strategy_address, &[crossed_return.clone()])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
                     Decimal::percent(50), // price
-                    remaining_amount,     // offer
-                    remaining_amount,     // remaining
+                    resting_amount,       // offer
+                    resting_amount,       // remaining
+                    Uint128::zero(),      // filled
+                )],
+            )
+            .execute()
+            .assert_address_balances(&strategy_address, &[crossed_return])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(50), // price
+                    resting_amount,       // offer
+                    resting_amount,       // remaining
                     Uint128::zero(),      // filled
                 )],
             );
@@ -1514,33 +1519,34 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(7_999_999_994);
+        // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
+        let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
+        let resting_amount = Uint128::new(8_989_898_987);
 
         let strategy_address = strategy.strategy_addr.clone();
 
         strategy
-            .assert_address_balances(&strategy_address, &[])
+            .assert_address_balances(&strategy_address, &[crossed_return.clone()])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
-                    Decimal::percent(50),    // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
+                    Decimal::percent(50), // price
+                    resting_amount,       // offer
+                    resting_amount,       // remaining
+                    Uint128::zero(),      // filled
                 )],
             )
             .execute()
-            .assert_address_balances(&strategy_address, &[])
+            .assert_address_balances(&strategy_address, &[crossed_return])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
-                    Decimal::percent(50),    // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
+                    Decimal::percent(50), // price
+                    resting_amount,       // offer
+                    resting_amount,       // remaining
+                    Uint128::zero(),      // filled
                 )],
             );
     }
@@ -1566,32 +1572,33 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(7_999_999_994);
+        // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
+        let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
+        let resting_amount = Uint128::new(8_989_898_987);
 
         let strategy_address = strategy.strategy_addr.clone();
 
         strategy
-            .assert_address_balances(&strategy_address, &[])
-            .assert_strategy_fin_orders(
-                &order_action.pair_address,
-                vec![(
-                    order_action.side.clone(),
-                    Decimal::percent(50),    // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
-                )],
-            )
-            .execute()
-            .assert_address_balances(&strategy_address, &[filled_amount.clone()])
+            .assert_address_balances(&strategy_address, &[crossed_return.clone()])
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
                     Decimal::percent(50), // price
-                    remaining_amount,     // offer
-                    remaining_amount,     // remaining
+                    resting_amount,       // offer
+                    resting_amount,       // remaining
+                    Uint128::zero(),      // filled
+                )],
+            )
+            .execute()
+            .assert_address_balances(&strategy_address, &[crossed_return])
+            .assert_strategy_fin_orders(
+                &order_action.pair_address,
+                vec![(
+                    order_action.side.clone(),
+                    Decimal::percent(50), // price
+                    resting_amount,       // offer
+                    resting_amount,       // remaining
                     Uint128::zero(),      // filled
                 )],
             );
@@ -1618,25 +1625,16 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let filled_amount = Coin::new(50u128, pair.denoms.ask(&order_action.side));
-        let remaining_amount = Uint128::new(0);
+        // New FIN crosses entire order immediately at market (~0.99), returning 990 eth-usdc
+        let crossed_return = Coin::new(990u128, pair.denoms.ask(&order_action.side));
 
         let strategy_address = strategy.strategy_addr.clone();
 
         strategy
-            .assert_address_balances(&strategy_address, &[])
-            .assert_strategy_fin_orders(
-                &order_action.pair_address,
-                vec![(
-                    order_action.side.clone(),
-                    Decimal::percent(5),     // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
-                )],
-            )
+            .assert_address_balances(&strategy_address, &[crossed_return.clone()])
+            .assert_strategy_fin_orders(&order_action.pair_address, vec![])
             .execute()
-            .assert_address_balances(&strategy_address, &[filled_amount])
+            .assert_address_balances(&strategy_address, &[crossed_return])
             .assert_strategy_fin_orders(&order_action.pair_address, vec![]);
     }
 
@@ -1708,23 +1706,15 @@ mod integration_tests {
 
         let strategy_address = strategy.strategy_addr.clone();
 
+        // New FIN crosses entire order immediately at market (~0.99), returning 990 eth-usdc
         strategy
-            .assert_address_balances(&strategy_address, &[])
-            .assert_strategy_fin_orders(
-                &order_action.pair_address,
-                vec![(
-                    order_action.side.clone(),
-                    Decimal::from_str("0.1").unwrap(), // price
-                    starting_balance.amount,           // offer
-                    Uint128::zero(),                   // remaining
-                    Uint128::new(100),                 // filled
-                )],
-            )
+            .assert_address_balances(&strategy_address, &[Coin::new(990_u128, ask_denom.clone())])
+            .assert_strategy_fin_orders(&order_action.pair_address, vec![])
             .execute()
             .assert_address_balances(
                 &strategy_address,
                 &[
-                    Coin::new(100_u128, ask_denom),
+                    Coin::new(990_u128, ask_denom),
                     Coin::new(0_u128, order_action.bid_denom.clone()),
                 ],
             )
@@ -1796,7 +1786,7 @@ mod integration_tests {
                 &order_action.pair_address,
                 vec![(
                     order_action.side,
-                    Decimal::from_str("0.479118").unwrap(), // price
+                    Decimal::from_str("0.47764").unwrap(), // price
                     starting_balance.amount,                // offer
                     starting_balance.amount,                // remaining
                     Uint128::zero(),                        // filled
@@ -1897,25 +1887,26 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let remaining_amount = Uint128::new(7_999_999_994);
-        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
+        // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
+        let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
+        let resting_amount = Uint128::new(8_989_898_987);
 
         strategy
             .assert_strategy_fin_orders(
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
-                    price,                   // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
+                    price,          // price
+                    resting_amount, // offer
+                    resting_amount, // remaining
+                    Uint128::zero(), // filled
                 )],
             )
             .pause()
             .assert_strategy_fin_orders(&order_action.pair_address, vec![])
             .assert_strategy_balances(&[
-                filled_amount,
-                Coin::new(remaining_amount, order_action.bid_denom.clone()),
+                crossed_return,
+                Coin::new(resting_amount, order_action.bid_denom.clone()),
             ]);
     }
 
@@ -1939,8 +1930,9 @@ mod integration_tests {
             }])
             .instantiate(&[starting_balance.clone()]);
 
-        let remaining_amount = Uint128::new(7_999_999_994);
-        let filled_amount = Coin::new(1_000_000_002u128, pair.denoms.ask(&order_action.side));
+        // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
+        let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
+        let resting_amount = Uint128::new(8_989_898_987);
 
         let strategy_address = strategy.strategy_addr.clone();
 
@@ -1949,10 +1941,10 @@ mod integration_tests {
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
-                    price,                   // price
-                    starting_balance.amount, // offer
-                    remaining_amount,        // remaining
-                    filled_amount.amount,    // filled
+                    price,          // price
+                    resting_amount, // offer
+                    resting_amount, // remaining
+                    Uint128::zero(), // filled
                 )],
             )
             .pause()
@@ -1960,8 +1952,8 @@ mod integration_tests {
             .assert_address_balances(
                 &strategy_address,
                 &[
-                    filled_amount.clone(),
-                    Coin::new(remaining_amount, order_action.bid_denom.clone()),
+                    crossed_return.clone(),
+                    Coin::new(resting_amount, order_action.bid_denom.clone()),
                 ],
             )
             .resume()
@@ -1969,17 +1961,17 @@ mod integration_tests {
                 &order_action.pair_address,
                 vec![(
                     order_action.side,
-                    price,            // price
-                    remaining_amount, // offer
-                    remaining_amount, // remaining
-                    Uint128::zero(),  // filled
+                    price,          // price
+                    resting_amount, // offer
+                    resting_amount, // remaining
+                    Uint128::zero(), // filled
                 )],
             )
             .assert_address_balances(
                 &strategy_address,
                 &[
                     Coin::new(0u128, order_action.bid_denom.clone()),
-                    filled_amount,
+                    crossed_return,
                 ],
             );
     }
@@ -3088,7 +3080,7 @@ mod integration_tests {
             .with_nodes(vec![
                 Node::Condition {
                     condition: Condition::OraclePrice {
-                        asset: "BTC-BTC".to_string(),
+                        asset: "btc-btc".to_string(),
                         direction: Direction::Below,
                         price: Decimal::from_str("100000").unwrap(),
                     },
@@ -3109,7 +3101,7 @@ mod integration_tests {
             .with_nodes(vec![
                 Node::Condition {
                     condition: Condition::OraclePrice {
-                        asset: "BTC-BTC".to_string(),
+                        asset: "btc-btc".to_string(),
                         direction: Direction::Above,
                         price: Decimal::from_str("100000").unwrap(),
                     },
@@ -3136,7 +3128,7 @@ mod integration_tests {
             .with_nodes(vec![
                 Node::Condition {
                     condition: Condition::OraclePrice {
-                        asset: "BTC-BTC".to_string(),
+                        asset: "btc-btc".to_string(),
                         direction: Direction::Above,
                         price: Decimal::from_str("100200").unwrap(),
                     },
@@ -3157,7 +3149,7 @@ mod integration_tests {
             .with_nodes(vec![
                 Node::Condition {
                     condition: Condition::OraclePrice {
-                        asset: "BTC-BTC".to_string(),
+                        asset: "btc-btc".to_string(),
                         direction: Direction::Below,
                         price: Decimal::from_str("100200").unwrap(),
                     },
@@ -3271,17 +3263,19 @@ mod integration_tests {
             )],
         );
 
-        let usdc = "ETH-USDC".to_string();
-        let btc = "BTC-BTC".to_string();
+        let usdc = "eth-usdc".to_string();
+        let btc = "btc-btc".to_string();
 
+        // eth-usdc is both the FIN pair quote denom and the Thorchain secured asset denom,
+        // so bank balances combine: 1000 (FIN quote) + 100_100 (Thorchain) = 101_100
+        let combined_usdc = swap_action.swap_amount.amount + Uint128::new(100_100);
         let funds = vec![
             Coin::new(swap_action.swap_amount.amount, fin_pair.denoms.base()),
-            Coin::new(swap_action.swap_amount.amount, fin_pair.denoms.quote()),
-            Coin::new(100_100_u128, &usdc),
+            Coin::new(combined_usdc, &usdc),
             Coin::new(1_u128, &btc),
         ];
 
-        // BTC-BTC oracle price stubbed at $100,100.00
+        // btc-btc oracle price stubbed at $100,100.00
 
         let mut strategy = StrategyBuilder::new(strategy.harness)
             .with_nodes(vec![
@@ -3336,15 +3330,14 @@ mod integration_tests {
         strategy.assert_address_balances(
             &strategy_addr,
             &[
-                Coin::new(100_100_u128, &usdc),
                 Coin::new(1_u128, &btc),
                 Coin::new(
                     swap_action
                         .swap_amount
                         .amount
                         .mul_floor(Decimal::percent(99))
-                        + swap_action.swap_amount.amount,
-                    swap_action.minimum_receive_amount.denom.clone(),
+                        + combined_usdc,
+                    &usdc,
                 ),
             ],
         );

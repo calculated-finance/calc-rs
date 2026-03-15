@@ -29,7 +29,7 @@ cw-multi-test = { version = "2", features = ["cosmwasm_2_1"] }
 cw-storage-plus = "2.0.0"
 calc-manager = { path = "contracts/manager" }
 prost = "0.13"
-rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "2c66fcbd88f4287132987362ca18ecd17649d4c7" }
+rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "aa0d3bfe64fbd07fa02adf26d47d0e002dd45720", features = ["interface-fin", "query", "oracle"] }
 calc-scheduler = { path = "contracts/scheduler" }
 calc-strategy = { path = "contracts/strategy" }
 serde = { version = "1.0.197", default-features = false, features = ["derive"] }

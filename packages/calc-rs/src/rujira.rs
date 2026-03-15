@@ -267,10 +267,12 @@ mod tests {
                     QueryMsg::Config {} => to_json_binary(&ConfigResponse {
                         denoms: Denoms::new("rune", "x/ruji"),
                         oracles: None,
-                        market_maker: None,
+                        market_makers: vec![],
                         tick: Tick::new(6),
+                        range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
+                        fee_amm: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
@@ -328,10 +330,12 @@ mod tests {
                     QueryMsg::Config {} => to_json_binary(&ConfigResponse {
                         denoms: Denoms::new("rune", "x/ruji"),
                         oracles: None,
-                        market_maker: None,
+                        market_makers: vec![],
                         tick: Tick::new(6),
+                        range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
+                        fee_amm: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
@@ -389,10 +393,12 @@ mod tests {
                     QueryMsg::Config {} => to_json_binary(&ConfigResponse {
                         denoms: Denoms::new("rune", "x/ruji"),
                         oracles: None,
-                        market_maker: None,
+                        market_makers: vec![],
                         tick: Tick::new(6),
+                        range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
+                        fee_amm: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
@@ -472,10 +478,12 @@ mod tests {
                     QueryMsg::Config {} => to_json_binary(&ConfigResponse {
                         denoms: Denoms::new("rune", "x/ruji"),
                         oracles: None,
-                        market_maker: None,
+                        market_makers: vec![],
                         tick: Tick::new(10),
+                        range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
+                        fee_amm: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
