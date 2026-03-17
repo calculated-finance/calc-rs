@@ -3,7 +3,7 @@ use cosmwasm_std::{Addr, Decimal, Deps, Env, StdError, StdResult};
 use rujira_rs::{
     fin::{ConfigResponse, QueryMsg},
     query::Pool,
-    Layer1Asset,
+    Asset,
 };
 
 use crate::rujira::get_mid_price;
@@ -116,8 +116,11 @@ impl AssetValueRatio {
 }
 
 fn fetch_l1_asset_price(deps: Deps, asset: &str) -> StdResult<Decimal> {
-    let layer_1_asset = Layer1Asset::from_native(asset.to_string())
-        .map_err(|e| StdError::generic_err(format!("'{asset}' is not a secured asset: {e}")))?;
+    let layer_1_asset = Asset::from_denom(&asset.to_string())
+        .map_err(|e| {
+            StdError::generic_err(format!("'{asset}' is not a valid asset: {e}"))
+        })?
+        .to_layer_1();
 
     Pool::load(deps.querier, &layer_1_asset)
         .map_err(|e| {
@@ -156,10 +159,12 @@ mod tests {
                             "usdc", // quote
                         ),
                         oracles: None,
-                        market_maker: None,
+                        market_makers: vec![],
                         tick: Tick::new(1),
+                        range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
+                        fee_amm: Decimal::zero(),
                         fee_address: Addr::unchecked("ruji1feeaddress").to_string(),
                     })
                     .unwrap(),
@@ -303,14 +308,14 @@ mod tests {
         deps.querier.default.bank.update_balance(
             &env.contract.address,
             vec![
-                Coin::new(200_000_u128, "ETH-USDC"),
-                Coin::new(1_u128, "BTC-BTC"),
+                Coin::new(200_000_u128, "eth-usdc"),
+                Coin::new(1_u128, "btc-btc"),
             ],
         );
 
         assert!(AssetValueRatio {
-            numerator: "ETH-USDC".to_string(),
-            denominator: "BTC-BTC".to_string(),
+            numerator: "eth-usdc".to_string(),
+            denominator: "btc-btc".to_string(),
             ratio: Decimal::from_str("2").unwrap(),
             tolerance: Decimal::percent(10),
             oracle: PriceSource::Thorchain,
@@ -319,8 +324,8 @@ mod tests {
         .unwrap());
 
         assert!(!AssetValueRatio {
-            numerator: "ETH-USDC".to_string(),
-            denominator: "BTC-BTC".to_string(),
+            numerator: "eth-usdc".to_string(),
+            denominator: "btc-btc".to_string(),
             ratio: Decimal::from_str("2.25").unwrap(),
             tolerance: Decimal::percent(10),
             oracle: PriceSource::Thorchain,
@@ -329,8 +334,8 @@ mod tests {
         .unwrap());
 
         assert!(AssetValueRatio {
-            numerator: "BTC-BTC".to_string(),
-            denominator: "ETH-USDC".to_string(),
+            numerator: "btc-btc".to_string(),
+            denominator: "eth-usdc".to_string(),
             ratio: Decimal::from_str("0.5").unwrap(),
             tolerance: Decimal::percent(10),
             oracle: PriceSource::Thorchain,
@@ -339,8 +344,8 @@ mod tests {
         .unwrap());
 
         assert!(!AssetValueRatio {
-            numerator: "BTC-BTC".to_string(),
-            denominator: "ETH-USDC".to_string(),
+            numerator: "btc-btc".to_string(),
+            denominator: "eth-usdc".to_string(),
             ratio: Decimal::from_str("0.4").unwrap(),
             tolerance: Decimal::percent(10),
             oracle: PriceSource::Thorchain,

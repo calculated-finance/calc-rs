@@ -74,11 +74,13 @@ impl CalcTestApp {
                 admin.clone(),
                 &InstantiateMsg {
                     denoms: Denoms::new(base_denom, quote_denom),
-                    market_maker: None,
+                    market_makers: vec![],
                     oracles: None,
                     tick: Tick::new(6u8),
+                    range_delta: Decimal::permille(50),
                     fee_taker: Decimal::zero(),
                     fee_maker: Decimal::zero(),
+                    fee_amm: Decimal::zero(),
                     fee_address: app.api().addr_make("fee").to_string(),
                 },
                 &[],
@@ -122,8 +124,8 @@ impl CalcTestApp {
                         Coin::new(100_000_000_000u128, base_denom),
                         Coin::new(100_000_000_000u128, quote_denom),
                         Coin::new(100_000_000_000u128, "x/ruji"),
-                        Coin::new(100_000_000_000u128, "ETH-USDC"),
-                        Coin::new(100_000_000_000u128, "BTC-BTC"),
+                        Coin::new(100_000_000_000u128, "eth-usdc"),
+                        Coin::new(100_000_000_000u128, "btc-btc"),
                     ],
                 )
                 .unwrap();
