@@ -80,6 +80,7 @@ impl Stargate for RujiraStargate {
             "/types.MsgDeposit" => Ok(AppResponse {
                 events: vec![],
                 data: None,
+                msg_responses: vec![],
             }),
 
             _ => {

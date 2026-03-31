@@ -18,7 +18,7 @@ pub fn get_side_price(deps: Deps, pair_address: &Addr, side: &Side) -> StdResult
             pair_address,
             &QueryMsg::Book {
                 limit: Some(LIMIT),
-                offset: Some(orders),
+                offset: Some(orders.into()),
             },
         )?;
 
@@ -272,7 +272,7 @@ mod tests {
                         range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
-                        fee_amm: Decimal::zero(),
+                        fee_range: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
@@ -335,7 +335,7 @@ mod tests {
                         range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
-                        fee_amm: Decimal::zero(),
+                        fee_range: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
@@ -398,7 +398,7 @@ mod tests {
                         range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
-                        fee_amm: Decimal::zero(),
+                        fee_range: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
@@ -483,7 +483,7 @@ mod tests {
                         range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
-                        fee_amm: Decimal::zero(),
+                        fee_range: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
