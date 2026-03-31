@@ -248,9 +248,9 @@ impl FinLimitOrderState<UnsetOrder> {
         let orders = deps.querier.query_wasm_smart::<OrdersResponse>(
             &self.config.pair_address,
             &QueryMsg::Orders {
-                owner: env.contract.address.to_string(),
+                owner: Some(env.contract.address.to_string()),
                 side: None,
-                offset: None,
+                start_after: None,
                 limit: None,
             },
         )?;

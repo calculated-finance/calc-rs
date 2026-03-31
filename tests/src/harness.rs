@@ -80,7 +80,7 @@ impl CalcTestApp {
                     range_delta: Decimal::permille(50),
                     fee_taker: Decimal::zero(),
                     fee_maker: Decimal::zero(),
-                    fee_amm: Decimal::zero(),
+                    fee_range: Decimal::zero(),
                     fee_address: app.api().addr_make("fee").to_string(),
                 },
                 &[],
@@ -239,7 +239,7 @@ impl CalcTestApp {
         pair_address: &Addr,
         owner: &Addr,
         side: Option<Side>,
-        offset: Option<u8>,
+        start_after: Option<(String, Side, Price)>,
         limit: Option<u8>,
     ) -> OrdersResponse {
         self.app
@@ -247,9 +247,9 @@ impl CalcTestApp {
             .query_wasm_smart::<OrdersResponse>(
                 pair_address,
                 &QueryMsg::Orders {
-                    owner: owner.to_string(),
+                    owner: Some(owner.to_string()),
                     side,
-                    offset,
+                    start_after,
                     limit,
                 },
             )

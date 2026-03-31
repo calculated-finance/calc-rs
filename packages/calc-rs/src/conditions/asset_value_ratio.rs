@@ -164,7 +164,7 @@ mod tests {
                         range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
-                        fee_amm: Decimal::zero(),
+                        fee_range: Decimal::zero(),
                         fee_address: Addr::unchecked("ruji1feeaddress").to_string(),
                     })
                     .unwrap(),

@@ -379,7 +379,7 @@ mod conditions_tests {
                         range_delta: Decimal::zero(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
-                        fee_amm: Decimal::zero(),
+                        fee_range: Decimal::zero(),
                         fee_address: "feetaker".to_string(),
                     })
                     .unwrap(),
