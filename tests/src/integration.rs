@@ -1390,7 +1390,7 @@ mod integration_tests {
         // New FIN crosses orders immediately on placement - the quote-side
         // liquidity (1B at 0.99 + dust) gets filled instantly, returning eth-usdc
         // to the strategy bank. Only the remaining rune becomes a resting order.
-        let resting_amount = Uint128::new(8_989_898_987);
+        let resting_amount = Uint128::new(8_989_898_983);
         let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
 
         strategy
@@ -1468,7 +1468,7 @@ mod integration_tests {
 
         // New FIN crosses immediately: ~1B quote filled at 0.99, returning eth-usdc to bank
         let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
-        let resting_amount = Uint128::new(8_989_898_987);
+        let resting_amount = Uint128::new(8_989_898_983);
 
         let strategy_address = strategy.strategy_addr.clone();
 
@@ -1521,7 +1521,7 @@ mod integration_tests {
 
         // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
         let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
-        let resting_amount = Uint128::new(8_989_898_987);
+        let resting_amount = Uint128::new(8_989_898_983);
 
         let strategy_address = strategy.strategy_addr.clone();
 
@@ -1574,7 +1574,7 @@ mod integration_tests {
 
         // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
         let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
-        let resting_amount = Uint128::new(8_989_898_987);
+        let resting_amount = Uint128::new(8_989_898_983);
 
         let strategy_address = strategy.strategy_addr.clone();
 
@@ -1889,7 +1889,7 @@ mod integration_tests {
 
         // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
         let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
-        let resting_amount = Uint128::new(8_989_898_987);
+        let resting_amount = Uint128::new(8_989_898_983);
 
         strategy
             .assert_strategy_fin_orders(
@@ -1932,7 +1932,7 @@ mod integration_tests {
 
         // New FIN crosses immediately: ~1B quote filled, returning eth-usdc to bank
         let crossed_return = Coin::new(1_000_000_003u128, pair.denoms.ask(&order_action.side));
-        let resting_amount = Uint128::new(8_989_898_987);
+        let resting_amount = Uint128::new(8_989_898_983);
 
         let strategy_address = strategy.strategy_addr.clone();
 

@@ -377,6 +377,7 @@ mod conditions_tests {
                         market_makers: vec![],
                         tick: Tick::new(6),
                         range_delta: Decimal::zero(),
+                        range_min: Decimal::one(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
                         fee_range: Decimal::zero(),
@@ -460,7 +461,7 @@ mod conditions_tests {
                     owner: "owner".to_string(),
                     side: Side::Base,
                     price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-                    rate: Decimal::from_str("1.0").unwrap(),
+                    rate: Some(Decimal::from_str("1.0").unwrap()),
                     updated_at: Timestamp::from_seconds(env.block.time.seconds()),
                     offer: Uint128::new(21029),
                 })
@@ -485,7 +486,7 @@ mod conditions_tests {
                     owner: "owner".to_string(),
                     side: Side::Base,
                     price: Price::Fixed(Decimal::from_str("1.0").unwrap()),
-                    rate: Decimal::from_str("1.0").unwrap(),
+                    rate: Some(Decimal::from_str("1.0").unwrap()),
                     updated_at: Timestamp::from_seconds(env.block.time.seconds()),
                     offer: Uint128::new(21029),
                 })

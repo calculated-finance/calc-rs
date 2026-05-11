@@ -78,6 +78,7 @@ impl CalcTestApp {
                     oracles: None,
                     tick: Tick::new(6u8),
                     range_delta: Decimal::permille(50),
+                    range_min: Decimal::one(),
                     fee_taker: Decimal::zero(),
                     fee_maker: Decimal::zero(),
                     fee_range: Decimal::zero(),
