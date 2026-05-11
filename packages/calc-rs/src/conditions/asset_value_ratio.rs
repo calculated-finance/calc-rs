@@ -162,6 +162,7 @@ mod tests {
                         market_makers: vec![],
                         tick: Tick::new(1),
                         range_delta: Decimal::zero(),
+                        range_min: Decimal::one(),
                         fee_taker: Decimal::percent(1),
                         fee_maker: Decimal::percent(1),
                         fee_range: Decimal::zero(),

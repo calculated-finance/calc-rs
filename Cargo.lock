@@ -1207,8 +1207,8 @@ dependencies = [
 
 [[package]]
 name = "rujira-fin"
-version = "2.0.3"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=359e9661bb5231e8aa89aff9a4ac6bd92fc3507d#359e9661bb5231e8aa89aff9a4ac6bd92fc3507d"
+version = "2.1.6"
+source = "git+https://gitlab.com/thorchain/rujira.git?rev=a5634d42df58da51f03c8e54eca818708d2aa2ce#a5634d42df58da51f03c8e54eca818708d2aa2ce"
 dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -1225,7 +1225,7 @@ dependencies = [
 [[package]]
 name = "rujira-rs"
 version = "0.0.1"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=359e9661bb5231e8aa89aff9a4ac6bd92fc3507d#359e9661bb5231e8aa89aff9a4ac6bd92fc3507d"
+source = "git+https://gitlab.com/thorchain/rujira.git?rev=a5634d42df58da51f03c8e54eca818708d2aa2ce#a5634d42df58da51f03c8e54eca818708d2aa2ce"
 dependencies = [
  "anybuf 0.5.2",
  "cosmos-sdk-proto",
