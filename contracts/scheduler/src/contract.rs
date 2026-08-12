@@ -145,9 +145,6 @@ pub fn execute(
 ) -> ContractResult {
     match msg {
         SchedulerExecuteMsg::Create(create_command) => {
-            let config = CONFIG.load(deps.storage)?;
-            let execution_rebate = normalize_and_validate_rebate(&config, info.funds.clone())?;
-
             if create_command.executors.len() > MAX_EXECUTORS {
                 return Err(ContractError::generic_err(format!(
                     "Cannot specify more than {MAX_EXECUTORS} executors"
@@ -166,14 +163,20 @@ pub fn execute(
 
             let mut sub_messages = Vec::with_capacity(2);
             let trigger_id = create_command.id(&info.sender)?;
+            let existing_trigger = TRIGGERS.load(deps.storage, trigger_id).ok();
 
-            if let Ok(existing_trigger) = TRIGGERS.load(deps.storage, trigger_id) {
+            if let Some(existing_trigger) = &existing_trigger {
                 if info.sender != existing_trigger.owner {
                     return Err(ContractError::generic_err(
                         "Only the owner can update an existing trigger",
                     ));
                 }
+            }
 
+            let config = CONFIG.load(deps.storage)?;
+            let execution_rebate = normalize_and_validate_rebate(&config, info.funds.clone())?;
+
+            if let Some(existing_trigger) = existing_trigger {
                 TRIGGERS.delete(deps.storage, existing_trigger.id.into())?;
 
                 if !existing_trigger.execution_rebate.is_empty() {
@@ -892,7 +895,7 @@ mod create_trigger_tests {
     }
 
     #[test]
-    fn cannot_overwrite_trigger_with_different_owner() {
+    fn checks_existing_trigger_owner_before_rebate_policy() {
         let mut deps = mock_dependencies();
         initialize_test_config(deps.as_mut());
         let env = mock_env();
@@ -925,6 +928,11 @@ mod create_trigger_tests {
                 },
             )
             .unwrap();
+
+        let mut config = CONFIG.load(deps.as_ref().storage).unwrap();
+        config.enforcement_enabled = true;
+        config.accepted_rebate_minimums = vec![Coin::new(100u128, "x/ruji")];
+        CONFIG.save(deps.as_mut().storage, &config).unwrap();
 
         let err = execute(
             deps.as_mut(),
