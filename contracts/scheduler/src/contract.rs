@@ -127,21 +127,8 @@ fn execute_triggers(
     env: &Env,
     info: &MessageInfo,
     ids: Vec<Uint64>,
-    rebate_receiver: Option<Addr>,
+    rebate_receiver: Addr,
 ) -> ContractResult {
-    let rebate_receiver = match rebate_receiver {
-        Some(rebate_receiver) => {
-            deps.api
-                .addr_validate(rebate_receiver.as_str())
-                .map_err(|_| {
-                    ContractError::generic_err(format!(
-                        "Invalid rebate receiver address: {rebate_receiver}"
-                    ))
-                })?
-        }
-        None => info.sender.clone(),
-    };
-
     let mut sub_messages = Vec::with_capacity(ids.len() * 2);
 
     for id in ids {
@@ -244,11 +231,25 @@ pub fn execute(
 
             Ok(Response::new().add_submessages(sub_messages))
         }
-        SchedulerExecuteMsg::Execute(ids) => execute_triggers(deps, &env, &info, ids, None),
+        SchedulerExecuteMsg::Execute(ids) => {
+            let rebate_receiver = info.sender.clone();
+            execute_triggers(deps, &env, &info, ids, rebate_receiver)
+        }
         SchedulerExecuteMsg::ExecuteWithRebateReceiver {
             ids,
             rebate_receiver,
-        } => execute_triggers(deps, &env, &info, ids, Some(rebate_receiver)),
+        } => {
+            let rebate_receiver = deps
+                .api
+                .addr_validate(rebate_receiver.as_str())
+                .map_err(|_| {
+                    ContractError::generic_err(format!(
+                        "Invalid rebate receiver address: {rebate_receiver}"
+                    ))
+                })?;
+
+            execute_triggers(deps, &env, &info, ids, rebate_receiver)
+        }
         SchedulerExecuteMsg::UpdateConfig {
             enforcement_enabled,
             accepted_rebate_minimums,
