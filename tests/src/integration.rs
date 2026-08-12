@@ -4079,10 +4079,7 @@ mod integration_tests {
                 duration: Duration::from_secs(60),
                 previous: None,
             },
-            execution_rebate: vec![
-                Coin::new(60u128, "x/ruji"),
-                Coin::new(60u128, "x/ruji"),
-            ],
+            execution_rebate: vec![Coin::new(60u128, "x/ruji"), Coin::new(60u128, "x/ruji")],
             executions: None,
             max_executions: None,
         };

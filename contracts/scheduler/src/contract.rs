@@ -64,20 +64,6 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> ContractResult {
 
 const MAX_EXECUTORS: usize = 10;
 
-#[cfg(test)]
-fn initialize_test_config(deps: DepsMut) {
-    CONFIG
-        .save(
-            deps.storage,
-            &SchedulerConfig {
-                owner: Addr::unchecked("scheduler-owner"),
-                enforcement_enabled: false,
-                accepted_rebate_minimums: vec![],
-            },
-        )
-        .unwrap();
-}
-
 fn validate_owner(deps: Deps, owner: Addr) -> Result<Addr, ContractError> {
     deps.api
         .addr_validate(owner.as_str())
@@ -144,14 +130,15 @@ fn execute_triggers(
     rebate_receiver: Option<Addr>,
 ) -> ContractResult {
     let rebate_receiver = match rebate_receiver {
-        Some(rebate_receiver) => deps
-            .api
-            .addr_validate(rebate_receiver.as_str())
-            .map_err(|_| {
-                ContractError::generic_err(format!(
-                    "Invalid rebate receiver address: {rebate_receiver}"
-                ))
-            })?,
+        Some(rebate_receiver) => {
+            deps.api
+                .addr_validate(rebate_receiver.as_str())
+                .map_err(|_| {
+                    ContractError::generic_err(format!(
+                        "Invalid rebate receiver address: {rebate_receiver}"
+                    ))
+                })?
+        }
         None => info.sender.clone(),
     };
 
@@ -316,6 +303,20 @@ pub fn reply(_deps: DepsMut, _env: Env, reply: Reply) -> ContractResult {
         SubMsgResult::Ok(_) => Ok(Response::new()),
         SubMsgResult::Err(err) => Ok(Response::new().add_attribute("msg_error", err)),
     }
+}
+
+#[cfg(test)]
+fn initialize_test_config(deps: DepsMut) {
+    CONFIG
+        .save(
+            deps.storage,
+            &SchedulerConfig {
+                owner: Addr::unchecked("scheduler-owner"),
+                enforcement_enabled: false,
+                accepted_rebate_minimums: vec![],
+            },
+        )
+        .unwrap();
 }
 
 #[cfg(test)]
@@ -1212,9 +1213,7 @@ mod execute_trigger_tests {
         )
         .unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("Invalid rebate receiver address"));
+        assert!(err.to_string().contains("Invalid rebate receiver address"));
     }
 
     #[test]
