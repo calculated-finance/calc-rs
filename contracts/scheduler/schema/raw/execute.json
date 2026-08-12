@@ -32,6 +32,34 @@
     {
       "type": "object",
       "required": [
+        "execute_with_rebate_receiver"
+      ],
+      "properties": {
+        "execute_with_rebate_receiver": {
+          "type": "object",
+          "required": [
+            "ids",
+            "rebate_receiver"
+          ],
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Uint64"
+              }
+            },
+            "rebate_receiver": {
+              "$ref": "#/definitions/Addr"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
         "update_config"
       ],
       "properties": {

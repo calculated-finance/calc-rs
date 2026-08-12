@@ -12,7 +12,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, Addr, BankMsg, Binary, Coin, Coins, Deps, DepsMut, Env, MessageInfo, Reply,
-    Response, StdResult, SubMsg, SubMsgResult,
+    Response, StdResult, SubMsg, SubMsgResult, Uint64,
 };
 
 use crate::state::{CONFIG, TRIGGERS};
@@ -136,6 +136,60 @@ fn normalize_and_validate_rebate(
     Ok(funds)
 }
 
+fn execute_triggers(
+    deps: DepsMut,
+    env: &Env,
+    info: &MessageInfo,
+    ids: Vec<Uint64>,
+    rebate_receiver: Option<Addr>,
+) -> ContractResult {
+    let rebate_receiver = match rebate_receiver {
+        Some(rebate_receiver) => deps
+            .api
+            .addr_validate(rebate_receiver.as_str())
+            .map_err(|_| {
+                ContractError::generic_err(format!(
+                    "Invalid rebate receiver address: {rebate_receiver}"
+                ))
+            })?,
+        None => info.sender.clone(),
+    };
+
+    let mut sub_messages = Vec::with_capacity(ids.len() * 2);
+
+    for id in ids {
+        let trigger = match TRIGGERS.load(deps.storage, id) {
+            Ok(trigger) => trigger,
+            Err(_) => continue,
+        };
+
+        if !trigger.executors.is_empty() && !trigger.executors.contains(&info.sender) {
+            continue;
+        }
+
+        match trigger.condition.is_satisfied(deps.as_ref(), env) {
+            Ok(true) => {}
+            _ => continue,
+        }
+
+        TRIGGERS.delete(deps.storage, trigger.id.into())?;
+
+        sub_messages.push(SubMsg::reply_on_error(
+            Contract(trigger.contract_address).call(trigger.msg, vec![]),
+            0,
+        ));
+
+        if !trigger.execution_rebate.is_empty() {
+            sub_messages.push(SubMsg::reply_never(BankMsg::Send {
+                to_address: rebate_receiver.to_string(),
+                amount: trigger.execution_rebate,
+            }));
+        }
+    }
+
+    Ok(Response::new().add_submessages(sub_messages))
+}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
@@ -203,45 +257,11 @@ pub fn execute(
 
             Ok(Response::new().add_submessages(sub_messages))
         }
-        SchedulerExecuteMsg::Execute(ids) => {
-            let mut sub_messages = Vec::with_capacity(ids.len() * 2);
-
-            for id in ids {
-                let trigger = match TRIGGERS.load(deps.storage, id) {
-                    Ok(trigger) => trigger,
-                    Err(_) => continue,
-                };
-
-                if !trigger.executors.is_empty() && !trigger.executors.contains(&info.sender) {
-                    continue;
-                }
-
-                match trigger.condition.is_satisfied(deps.as_ref(), &env) {
-                    Ok(true) => {}
-                    _ => continue,
-                }
-
-                TRIGGERS.delete(deps.storage, trigger.id.into())?;
-
-                let execute_trigger_msg = SubMsg::reply_on_error(
-                    Contract(trigger.contract_address).call(trigger.msg, vec![]),
-                    0,
-                );
-
-                sub_messages.push(execute_trigger_msg);
-
-                if !trigger.execution_rebate.is_empty() {
-                    let rebate_msg = SubMsg::reply_never(BankMsg::Send {
-                        to_address: info.sender.to_string(),
-                        amount: trigger.execution_rebate,
-                    });
-
-                    sub_messages.push(rebate_msg);
-                }
-            }
-
-            Ok(Response::new().add_submessages(sub_messages))
-        }
+        SchedulerExecuteMsg::Execute(ids) => execute_triggers(deps, &env, &info, ids, None),
+        SchedulerExecuteMsg::ExecuteWithRebateReceiver {
+            ids,
+            rebate_receiver,
+        } => execute_triggers(deps, &env, &info, ids, Some(rebate_receiver)),
         SchedulerExecuteMsg::UpdateConfig {
             enforcement_enabled,
             accepted_rebate_minimums,
@@ -1129,6 +1149,72 @@ mod execute_trigger_tests {
                 to_address: executor.to_string(),
                 amount: create_trigger_info.funds.clone(),
             })));
+    }
+
+    #[test]
+    fn sends_rebate_to_nominated_receiver() {
+        let mut deps = mock_dependencies();
+        initialize_test_config(deps.as_mut());
+        let env = mock_env();
+        let owner = deps.api.addr_make("creator");
+        let executor = deps.api.addr_make("executor");
+        let rebate_receiver = deps.api.addr_make("rebate-receiver");
+        let create_trigger_info = message_info(&owner, &[Coin::new(235463u128, "rune")]);
+        let create_trigger_msg = CreateTriggerMsg {
+            condition: Condition::BlocksCompleted(env.block.height - 10),
+            msg: Binary::default(),
+            contract_address: owner.clone(),
+            executors: vec![executor.clone()],
+            jitter: None,
+        };
+
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            create_trigger_info.clone(),
+            SchedulerExecuteMsg::Create(Box::new(create_trigger_msg.clone())),
+        )
+        .unwrap();
+
+        let response = execute(
+            deps.as_mut(),
+            env,
+            message_info(&executor, &[]),
+            SchedulerExecuteMsg::ExecuteWithRebateReceiver {
+                ids: vec![create_trigger_msg.id(&owner).unwrap()],
+                rebate_receiver: rebate_receiver.clone(),
+            },
+        )
+        .unwrap();
+
+        assert!(response
+            .messages
+            .contains(&SubMsg::reply_never(BankMsg::Send {
+                to_address: rebate_receiver.to_string(),
+                amount: create_trigger_info.funds,
+            })));
+    }
+
+    #[test]
+    fn rejects_invalid_rebate_receiver() {
+        let mut deps = mock_dependencies();
+        initialize_test_config(deps.as_mut());
+        let executor = deps.api.addr_make("executor");
+
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            message_info(&executor, &[]),
+            SchedulerExecuteMsg::ExecuteWithRebateReceiver {
+                ids: vec![],
+                rebate_receiver: Addr::unchecked(""),
+            },
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Invalid rebate receiver address"));
     }
 
     #[test]

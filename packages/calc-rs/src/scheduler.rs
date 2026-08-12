@@ -88,6 +88,10 @@ impl CreateTriggerMsg {
 pub enum SchedulerExecuteMsg {
     Create(Box<CreateTriggerMsg>),
     Execute(Vec<Uint64>),
+    ExecuteWithRebateReceiver {
+        ids: Vec<Uint64>,
+        rebate_receiver: Addr,
+    },
     UpdateConfig {
         enforcement_enabled: bool,
         accepted_rebate_minimums: Vec<Coin>,

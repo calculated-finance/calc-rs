@@ -417,6 +417,12 @@ export type SchedulerExecuteMsg =
       execute: Uint64[];
     }
   | {
+      execute_with_rebate_receiver: {
+        ids: Uint64[];
+        rebate_receiver: Addr;
+      };
+    }
+  | {
       update_config: {
         accepted_rebate_minimums: Coin[];
         enforcement_enabled: boolean;

@@ -1,6 +1,6 @@
 # Scheduler Contract
 
-The scheduler stores off-chain CALC triggers for block-height and timestamp conditions. Time and cron schedules resolve to timestamp triggers. Keepers execute satisfied triggers and receive every coin escrowed on that trigger as its execution rebate.
+The scheduler stores off-chain CALC triggers for block-height and timestamp conditions. Time and cron schedules resolve to timestamp triggers. Keepers execute satisfied triggers and direct every coin escrowed on that trigger to themselves or a nominated rebate receiver.
 
 ## Instantiate and migrate
 
@@ -78,7 +78,11 @@ Creates or replaces a block-height or timestamp trigger. Trigger ID derives from
 
 ### `Execute(Vec<Uint64>)`
 
-Executes satisfied triggers. Optional executor restrictions apply. Successful selection deletes the trigger, calls its target, and pays all stored rebate coins to the keeper. Downstream target errors are captured by reply handling.
+Executes satisfied triggers and sends all stored rebate coins to the transaction sender.
+
+### `ExecuteWithRebateReceiver { ids, rebate_receiver }`
+
+Executes satisfied triggers and sends all stored rebate coins to the validated nominated receiver. This additive message preserves the original `Execute` wire format for existing keepers. Optional executor restrictions always apply to the transaction sender, not the rebate receiver. Successful selection deletes the trigger and calls its target. Downstream target errors are captured by reply handling.
 
 ## Trigger queries
 
