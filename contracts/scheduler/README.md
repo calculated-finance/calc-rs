@@ -62,7 +62,7 @@ With enforcement disabled, trigger creation preserves legacy behavior: arbitrary
 
 ## Schedule escrow
 
-`Schedule.execution_rebate` remains caller-nominated. When a strategy creates its next schedule trigger, it checks its balance for every nominated coin. Sufficient balances send the exact nominated amounts to the scheduler. Any insufficient balance returns a condition error and creates no partially funded trigger.
+`Schedule.execution_rebate` remains caller-nominated. When a strategy creates its next schedule trigger, it aggregates duplicate denoms before checking each total against its balance. Sufficient balances send the exact nominated totals to the scheduler. Any insufficient balance returns a condition error and creates no partially funded trigger.
 
 Users should deposit enough funds for expected executions, commonly:
 

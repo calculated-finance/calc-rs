@@ -51,6 +51,10 @@ impl Schedule {
         let mut rebate = Coins::default();
 
         for amount in self.execution_rebate.iter() {
+            rebate.add(amount.clone())?;
+        }
+
+        for amount in rebate.iter() {
             let balance = deps
                 .querier
                 .query_balance(&env.contract.address, &amount.denom)?;
@@ -61,8 +65,6 @@ impl Schedule {
                     amount.denom, amount.amount, balance.amount
                 )));
             }
-
-            rebate.add(amount.clone())?;
         }
 
         let (condition, schedule) = if self.cadence.is_due(deps, env)? {

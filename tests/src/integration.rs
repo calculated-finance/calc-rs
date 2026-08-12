@@ -4064,6 +4064,108 @@ mod integration_tests {
     }
 
     #[test]
+    fn test_schedule_checks_aggregate_balance_for_duplicate_rebate_denoms() {
+        let mut harness = CalcTestApp::setup();
+        let strategy_owner = harness.owner.clone();
+        let manager_addr = harness.manager_addr.clone();
+        let available_rebate = Coin::new(100u128, "x/ruji");
+        let schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            executors: vec![],
+            jitter: None,
+            next: None,
+            manager_address: manager_addr.clone(),
+            cadence: Cadence::Time {
+                duration: Duration::from_secs(60),
+                previous: None,
+            },
+            execution_rebate: vec![
+                Coin::new(60u128, "x/ruji"),
+                Coin::new(60u128, "x/ruji"),
+            ],
+            executions: None,
+            max_executions: None,
+        };
+
+        let response = harness
+            .app
+            .execute_contract(
+                strategy_owner.clone(),
+                manager_addr,
+                &ManagerExecuteMsg::Instantiate {
+                    source: None,
+                    owner: Some(strategy_owner),
+                    label: "Duplicate rebate denom strategy".to_string(),
+                    affiliates: vec![],
+                    nodes: vec![Node::Condition {
+                        condition: Condition::Schedule(schedule),
+                        index: 0,
+                        on_success: None,
+                        on_failure: None,
+                    }],
+                },
+                &[available_rebate.clone()],
+            )
+            .unwrap();
+
+        assert!(response.events.iter().any(|event| {
+            event.attributes.iter().any(|attribute| {
+                attribute.key == "error"
+                    && attribute.value.contains(
+                        "Insufficient strategy balance for execution rebate in x/ruji: required 120, available 100",
+                    )
+            })
+        }));
+
+        let strategy_addr = response
+            .events
+            .iter()
+            .find(|event| event.ty == "instantiate")
+            .and_then(|event| {
+                event
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.key == "_contract_address")
+            })
+            .map(|attribute| Addr::unchecked(attribute.value.clone()))
+            .unwrap();
+
+        assert_eq!(
+            harness
+                .app
+                .wrap()
+                .query_balance(strategy_addr.clone(), available_rebate.denom.clone())
+                .unwrap(),
+            available_rebate
+        );
+        assert!(harness
+            .get_triggers(
+                ConditionFilter::Timestamp {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .is_empty());
+
+        let config = harness.query_strategy_config(&strategy_addr);
+        match &config.nodes[0] {
+            Node::Condition {
+                condition: Condition::Schedule(schedule),
+                ..
+            } => {
+                assert!(schedule.next.is_none());
+                assert_eq!(schedule.executions, None);
+                assert!(matches!(
+                    &schedule.cadence,
+                    Cadence::Time { previous: None, .. }
+                ));
+            }
+            node => panic!("Expected schedule condition, got {node:?}"),
+        }
+    }
+
+    #[test]
     fn test_scheduler_enforcement_accepts_compliant_schedule_and_rejects_under_minimum() {
         let mut harness = CalcTestApp::setup();
         harness
