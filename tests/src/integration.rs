@@ -14,8 +14,8 @@ mod integration_tests {
         },
         constants::BASE_FEE_BPS,
         core::Amount,
-        manager::{Affiliate, StrategyStatus},
-        scheduler::{CreateTriggerMsg, SchedulerExecuteMsg},
+        manager::{Affiliate, ManagerExecuteMsg, StrategyStatus},
+        scheduler::{ConditionFilter, CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
     };
 
@@ -29,6 +29,7 @@ mod integration_tests {
         strategy::StrategyConfig,
     };
     use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Coins, Decimal, Timestamp, Uint128};
+    use cw_multi_test::Executor;
     use rujira_rs::fin::{Price, Side};
 
     use calc_rs::actions::limit_orders::fin_limit_order::{FinLimitOrder, PriceStrategy};
@@ -3919,6 +3920,335 @@ mod integration_tests {
             .unwrap();
 
         assert_eq!(keeper_balance, Coin::new(5u128, "x/ruji"));
+    }
+
+    #[test]
+    fn test_schedule_escrows_exact_nominated_rebate() {
+        let mut harness = CalcTestApp::setup();
+        let nominated_rebate = Coin::new(100u128, "x/ruji");
+        let starting_rebate_balance = Coin::new(500u128, "x/ruji");
+        let schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            executors: vec![],
+            jitter: None,
+            next: None,
+            manager_address: harness.manager_addr.clone(),
+            cadence: Cadence::Time {
+                duration: Duration::from_secs(60),
+                previous: Some(harness.app.block_info().time),
+            },
+            execution_rebate: vec![nominated_rebate.clone()],
+            executions: None,
+            max_executions: None,
+        };
+
+        let strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Condition {
+                condition: Condition::Schedule(schedule),
+                index: 0,
+                on_success: None,
+                on_failure: None,
+            }])
+            .instantiate(&[starting_rebate_balance.clone()]);
+        let strategy_addr = strategy.strategy_addr.clone();
+
+        let strategy_balance = strategy
+            .harness
+            .app
+            .wrap()
+            .query_balance(strategy_addr.clone(), nominated_rebate.denom.clone())
+            .unwrap();
+        assert_eq!(
+            strategy_balance,
+            Coin::new(
+                starting_rebate_balance.amount - nominated_rebate.amount,
+                nominated_rebate.denom.clone(),
+            )
+        );
+
+        let triggers = strategy.harness.get_triggers(
+            ConditionFilter::Timestamp {
+                start: None,
+                end: None,
+            },
+            None,
+        );
+        let trigger = triggers
+            .iter()
+            .find(|trigger| trigger.owner == strategy_addr)
+            .unwrap();
+        assert_eq!(trigger.execution_rebate, vec![nominated_rebate]);
+    }
+
+    #[test]
+    fn test_schedule_with_insufficient_rebate_balance_reports_error_without_partial_trigger() {
+        let mut harness = CalcTestApp::setup();
+        let strategy_owner = harness.owner.clone();
+        let manager_addr = harness.manager_addr.clone();
+        let nominated_rebate = Coin::new(100u128, "x/ruji");
+        let available_rebate = Coin::new(50u128, "x/ruji");
+        let schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            executors: vec![],
+            jitter: None,
+            next: None,
+            manager_address: manager_addr.clone(),
+            cadence: Cadence::Time {
+                duration: Duration::from_secs(60),
+                previous: Some(harness.app.block_info().time),
+            },
+            execution_rebate: vec![nominated_rebate],
+            executions: None,
+            max_executions: None,
+        };
+
+        let response = harness
+            .app
+            .execute_contract(
+                strategy_owner.clone(),
+                manager_addr,
+                &ManagerExecuteMsg::Instantiate {
+                    source: None,
+                    owner: Some(strategy_owner),
+                    label: "Insufficient rebate strategy".to_string(),
+                    affiliates: vec![],
+                    nodes: vec![Node::Condition {
+                        condition: Condition::Schedule(schedule),
+                        index: 0,
+                        on_success: None,
+                        on_failure: None,
+                    }],
+                },
+                &[available_rebate.clone()],
+            )
+            .unwrap();
+
+        assert!(response.events.iter().any(|event| {
+            event.attributes.iter().any(|attribute| {
+                attribute.key == "error"
+                    && attribute.value.contains(
+                        "Insufficient strategy balance for execution rebate in x/ruji: required 100, available 50",
+                    )
+            })
+        }));
+
+        let strategy_addr = response
+            .events
+            .iter()
+            .find(|event| event.ty == "instantiate")
+            .and_then(|event| {
+                event
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.key == "_contract_address")
+            })
+            .map(|attribute| Addr::unchecked(attribute.value.clone()))
+            .unwrap();
+        assert_eq!(
+            harness
+                .app
+                .wrap()
+                .query_balance(strategy_addr, available_rebate.denom.clone())
+                .unwrap(),
+            available_rebate
+        );
+        assert!(harness
+            .get_triggers(
+                ConditionFilter::Timestamp {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn test_schedule_checks_aggregate_balance_for_duplicate_rebate_denoms() {
+        let mut harness = CalcTestApp::setup();
+        let strategy_owner = harness.owner.clone();
+        let manager_addr = harness.manager_addr.clone();
+        let available_rebate = Coin::new(100u128, "x/ruji");
+        let schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            executors: vec![],
+            jitter: None,
+            next: None,
+            manager_address: manager_addr.clone(),
+            cadence: Cadence::Time {
+                duration: Duration::from_secs(60),
+                previous: None,
+            },
+            execution_rebate: vec![Coin::new(60u128, "x/ruji"), Coin::new(60u128, "x/ruji")],
+            executions: None,
+            max_executions: None,
+        };
+
+        let response = harness
+            .app
+            .execute_contract(
+                strategy_owner.clone(),
+                manager_addr,
+                &ManagerExecuteMsg::Instantiate {
+                    source: None,
+                    owner: Some(strategy_owner),
+                    label: "Duplicate rebate denom strategy".to_string(),
+                    affiliates: vec![],
+                    nodes: vec![Node::Condition {
+                        condition: Condition::Schedule(schedule),
+                        index: 0,
+                        on_success: None,
+                        on_failure: None,
+                    }],
+                },
+                &[available_rebate.clone()],
+            )
+            .unwrap();
+
+        assert!(response.events.iter().any(|event| {
+            event.attributes.iter().any(|attribute| {
+                attribute.key == "error"
+                    && attribute.value.contains(
+                        "Insufficient strategy balance for execution rebate in x/ruji: required 120, available 100",
+                    )
+            })
+        }));
+
+        let strategy_addr = response
+            .events
+            .iter()
+            .find(|event| event.ty == "instantiate")
+            .and_then(|event| {
+                event
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.key == "_contract_address")
+            })
+            .map(|attribute| Addr::unchecked(attribute.value.clone()))
+            .unwrap();
+
+        assert_eq!(
+            harness
+                .app
+                .wrap()
+                .query_balance(strategy_addr.clone(), available_rebate.denom.clone())
+                .unwrap(),
+            available_rebate
+        );
+        assert!(harness
+            .get_triggers(
+                ConditionFilter::Timestamp {
+                    start: None,
+                    end: None,
+                },
+                None,
+            )
+            .is_empty());
+
+        let config = harness.query_strategy_config(&strategy_addr);
+        match &config.nodes[0] {
+            Node::Condition {
+                condition: Condition::Schedule(schedule),
+                ..
+            } => {
+                assert!(schedule.next.is_none());
+                assert_eq!(schedule.executions, None);
+                assert!(matches!(
+                    &schedule.cadence,
+                    Cadence::Time { previous: None, .. }
+                ));
+            }
+            node => panic!("Expected schedule condition, got {node:?}"),
+        }
+    }
+
+    #[test]
+    fn test_scheduler_enforcement_accepts_compliant_schedule_and_rejects_under_minimum() {
+        let mut harness = CalcTestApp::setup();
+        harness
+            .app
+            .execute_contract(
+                harness.admin.clone(),
+                harness.scheduler_addr.clone(),
+                &SchedulerExecuteMsg::UpdateConfig {
+                    enforcement_enabled: true,
+                    accepted_rebate_minimums: vec![Coin::new(100u128, "x/ruji")],
+                },
+                &[],
+            )
+            .unwrap();
+
+        let compliant_schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            executors: vec![],
+            jitter: None,
+            next: None,
+            manager_address: harness.manager_addr.clone(),
+            cadence: Cadence::Blocks {
+                interval: 10,
+                previous: Some(harness.app.block_info().height),
+            },
+            execution_rebate: vec![Coin::new(100u128, "x/ruji")],
+            executions: None,
+            max_executions: None,
+        };
+        StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Condition {
+                condition: Condition::Schedule(compliant_schedule),
+                index: 0,
+                on_success: None,
+                on_failure: None,
+            }])
+            .instantiate(&[Coin::new(100u128, "x/ruji")]);
+
+        let triggers_after_compliant = harness.get_triggers(
+            ConditionFilter::BlockHeight {
+                start: None,
+                end: None,
+            },
+            None,
+        );
+        assert_eq!(triggers_after_compliant.len(), 1);
+        assert_eq!(
+            triggers_after_compliant[0].execution_rebate,
+            vec![Coin::new(100u128, "x/ruji")]
+        );
+
+        let under_minimum_schedule = Schedule {
+            scheduler_address: harness.scheduler_addr.clone(),
+            executors: vec![],
+            jitter: None,
+            next: None,
+            manager_address: harness.manager_addr.clone(),
+            cadence: Cadence::Blocks {
+                interval: 20,
+                previous: Some(harness.app.block_info().height),
+            },
+            execution_rebate: vec![Coin::new(99u128, "x/ruji")],
+            executions: None,
+            max_executions: None,
+        };
+        StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Condition {
+                condition: Condition::Schedule(under_minimum_schedule),
+                index: 0,
+                on_success: None,
+                on_failure: None,
+            }])
+            .instantiate(&[Coin::new(99u128, "x/ruji")]);
+
+        assert_eq!(
+            harness
+                .get_triggers(
+                    ConditionFilter::BlockHeight {
+                        start: None,
+                        end: None,
+                    },
+                    None,
+                )
+                .len(),
+            1
+        );
     }
 
     #[test]

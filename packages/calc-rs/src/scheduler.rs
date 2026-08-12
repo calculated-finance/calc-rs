@@ -21,7 +21,16 @@ pub struct Trigger {
 }
 
 #[cw_serde]
-pub struct SchedulerInstantiateMsg {}
+pub struct SchedulerInstantiateMsg {
+    pub owner: Addr,
+}
+
+#[cw_serde]
+pub struct SchedulerConfig {
+    pub owner: Addr,
+    pub enforcement_enabled: bool,
+    pub accepted_rebate_minimums: Vec<Coin>,
+}
 
 #[cw_serde]
 pub struct CreateTriggerMsg {
@@ -79,6 +88,14 @@ impl CreateTriggerMsg {
 pub enum SchedulerExecuteMsg {
     Create(Box<CreateTriggerMsg>),
     Execute(Vec<Uint64>),
+    ExecuteWithRebateReceiver {
+        ids: Vec<Uint64>,
+        rebate_receiver: Addr,
+    },
+    UpdateConfig {
+        enforcement_enabled: bool,
+        accepted_rebate_minimums: Vec<Coin>,
+    },
 }
 
 #[cw_serde]
@@ -96,6 +113,8 @@ pub enum ConditionFilter {
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum SchedulerQueryMsg {
+    #[returns(SchedulerConfig)]
+    Config {},
     #[returns(Vec<Trigger>)]
     Filtered {
         filter: ConditionFilter,

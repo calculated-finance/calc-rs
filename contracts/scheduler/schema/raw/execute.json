@@ -28,6 +28,62 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "execute_with_rebate_receiver"
+      ],
+      "properties": {
+        "execute_with_rebate_receiver": {
+          "type": "object",
+          "required": [
+            "ids",
+            "rebate_receiver"
+          ],
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Uint64"
+              }
+            },
+            "rebate_receiver": {
+              "$ref": "#/definitions/Addr"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "update_config"
+      ],
+      "properties": {
+        "update_config": {
+          "type": "object",
+          "required": [
+            "accepted_rebate_minimums",
+            "enforcement_enabled"
+          ],
+          "properties": {
+            "accepted_rebate_minimums": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Coin"
+              }
+            },
+            "enforcement_enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   ],
   "definitions": {

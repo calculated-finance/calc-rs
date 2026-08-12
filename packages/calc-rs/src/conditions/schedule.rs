@@ -1,4 +1,4 @@
-use std::{cmp::min, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Addr, Coin, Coins, CosmosMsg, Deps, Env, StdError, StdResult};
@@ -51,14 +51,20 @@ impl Schedule {
         let mut rebate = Coins::default();
 
         for amount in self.execution_rebate.iter() {
+            rebate.add(amount.clone())?;
+        }
+
+        for amount in rebate.iter() {
             let balance = deps
                 .querier
                 .query_balance(&env.contract.address, &amount.denom)?;
 
-            rebate.add(Coin {
-                denom: amount.denom.clone(),
-                amount: min(amount.amount, balance.amount),
-            })?;
+            if balance.amount < amount.amount {
+                return Err(StdError::generic_err(format!(
+                    "Insufficient strategy balance for execution rebate in {}: required {}, available {}",
+                    amount.denom, amount.amount, balance.amount
+                )));
+            }
         }
 
         let (condition, schedule) = if self.cadence.is_due(deps, env)? {

@@ -21,6 +21,7 @@ use calc_rs_test::stargate::{RujiraApp, RujiraStargate};
 
 pub struct CalcTestApp {
     pub app: RujiraApp,
+    pub admin: Addr,
     pub fin_addr: Addr,
     pub manager_addr: Addr,
     pub scheduler_addr: Addr,
@@ -108,7 +109,9 @@ impl CalcTestApp {
             .instantiate_contract(
                 scheduler_code_id,
                 admin.clone(),
-                &SchedulerInstantiateMsg {},
+                &SchedulerInstantiateMsg {
+                    owner: admin.clone(),
+                },
                 &[],
                 "calc-scheduler",
                 Some(admin.clone().to_string()),
@@ -200,6 +203,7 @@ impl CalcTestApp {
 
         Self {
             app,
+            admin,
             fin_addr,
             manager_addr,
             scheduler_addr,

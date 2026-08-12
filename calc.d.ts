@@ -369,8 +369,13 @@ export interface Trigger {
   owner: Addr;
 }
 
-export interface SchedulerInstantiateMsg {}
+export interface SchedulerInstantiateMsg {
+  owner: Addr;
+}
 export type SchedulerQueryMsg =
+  | {
+      config: {};
+    }
   | {
       filtered: {
         filter: ConditionFilter;
@@ -399,12 +404,29 @@ export interface CompositeCondition {
   conditions: Condition[];
   threshold: Threshold;
 }
+export interface SchedulerConfig {
+  accepted_rebate_minimums: Coin[];
+  enforcement_enabled: boolean;
+  owner: Addr;
+}
 export type SchedulerExecuteMsg =
   | {
       create: CreateTriggerMsg;
     }
   | {
       execute: Uint64[];
+    }
+  | {
+      execute_with_rebate_receiver: {
+        ids: Uint64[];
+        rebate_receiver: Addr;
+      };
+    }
+  | {
+      update_config: {
+        accepted_rebate_minimums: Coin[];
+        enforcement_enabled: boolean;
+      };
     };
 
 export interface CreateTriggerMsg {
