@@ -1,11 +1,12 @@
 use calc_rs::{
     conditions::condition::Condition,
-    scheduler::{ConditionFilter, Trigger},
+    scheduler::{ConditionFilter, SchedulerConfig, Trigger},
 };
 use cosmwasm_std::{Addr, Order, StdResult, Storage, Uint64};
 use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, Item, MultiIndex};
 
 pub const MANAGER: Item<Addr> = Item::new("manager");
+pub const CONFIG: Item<SchedulerConfig> = Item::new("config");
 
 pub struct TriggerIndexes<'a> {
     pub timestamp: MultiIndex<'a, u64, Trigger, u64>,
