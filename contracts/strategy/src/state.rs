@@ -199,35 +199,19 @@ impl NodeStore {
             return self.load(deps.storage, current.index() + 1);
         }
 
-        let next = match current {
-            Node::Action { next, .. } => *next,
-            Node::Condition {
-                condition,
-                on_success,
-                on_failure,
-                ..
-            } => {
-                let satisfied = match condition {
-                    Condition::External(external) => deps
-                        .querier
-                        .query_wasm_smart::<bool>(
-                            &external.contract_address,
-                            &NodeQueryMsg::IsSatisfied {
-                                strategy: env.contract.address.clone(),
-                                strategy_revision: REVISION.load(deps.storage)?,
-                                node_index: current.index(),
-                            },
-                        )
-                        .unwrap_or(false),
-                    _ => condition.is_satisfied(deps, env).unwrap_or(false),
-                };
-                if satisfied {
-                    *on_success
-                } else {
-                    *on_failure
-                }
-            }
-        };
+        let next = current.next_index_with_external(deps, env, |external| {
+            Ok(deps
+                .querier
+                .query_wasm_smart::<bool>(
+                    &external.contract_address,
+                    &NodeQueryMsg::IsSatisfied {
+                        strategy: env.contract.address.clone(),
+                        strategy_revision: REVISION.load(deps.storage)?,
+                        node_index: current.index(),
+                    },
+                )
+                .unwrap_or(false))
+        })?;
 
         if let Some(next) = next {
             return self.load(deps.storage, next);

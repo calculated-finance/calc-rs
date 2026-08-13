@@ -132,26 +132,37 @@ impl Node {
     }
 
     pub fn next_index(&self, deps: Deps, env: &Env) -> StdResult<Option<u16>> {
-        Ok(match self {
-            Node::Action { next, .. } => *next,
+        self.next_index_with_external(deps, env, |_| {
+            Err(cosmwasm_std::StdError::generic_err(
+                "External condition traversal must be handled by the strategy adapter",
+            ))
+        })
+    }
+
+    pub fn next_index_with_external<F>(
+        &self,
+        deps: Deps,
+        env: &Env,
+        external_is_satisfied: F,
+    ) -> StdResult<Option<u16>>
+    where
+        F: FnOnce(&calc_node_interface::ExternalNode) -> StdResult<bool>,
+    {
+        match self {
+            Node::Action { next, .. } => Ok(*next),
             Node::Condition {
                 condition,
-                on_failure,
                 on_success,
+                on_failure,
                 ..
             } => {
-                if matches!(condition, Condition::External(_)) {
-                    return Err(cosmwasm_std::StdError::generic_err(
-                        "External condition traversal must be handled by the strategy adapter",
-                    ));
-                }
-                if condition.is_satisfied(deps, env).unwrap_or(false) {
-                    *on_success
-                } else {
-                    *on_failure
-                }
+                let satisfied = match condition {
+                    Condition::External(external) => external_is_satisfied(external)?,
+                    _ => condition.is_satisfied(deps, env).unwrap_or(false),
+                };
+                Ok(if satisfied { *on_success } else { *on_failure })
             }
-        })
+        }
     }
 }
 
@@ -314,5 +325,15 @@ mod tests {
         };
 
         assert!(node.next_index(deps.as_ref(), &mock_env()).is_err());
+        assert_eq!(
+            node.next_index_with_external(deps.as_ref(), &mock_env(), |_| Ok(true))
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            node.next_index_with_external(deps.as_ref(), &mock_env(), |_| Ok(false))
+                .unwrap(),
+            Some(2)
+        );
     }
 }
