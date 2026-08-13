@@ -1,5 +1,6 @@
 use std::vec;
 
+use calc_node_interface::ExternalNode;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     Addr, Coin, Coins, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Timestamp,
@@ -48,6 +49,7 @@ pub enum Condition {
         price: Decimal,
     },
     AssetValueRatio(AssetValueRatio),
+    External(ExternalNode),
 }
 
 impl Condition {
@@ -62,6 +64,7 @@ impl Condition {
             Condition::StrategyStatus { .. } => 2,
             Condition::OraclePrice { .. } => 2,
             Condition::AssetValueRatio(_) => 2,
+            Condition::External(_) => 0,
         }
     }
 
@@ -113,7 +116,7 @@ impl Condition {
                 direction,
                 price,
             } => {
-                let layer_1_asset = Asset::from_denom(&asset)
+                let layer_1_asset = Asset::from_denom(asset)
                     .map_err(|e| {
                         StdError::generic_err(format!(
                             "Denom ({asset}) not a valid asset: {e}"
@@ -136,6 +139,11 @@ impl Condition {
             }
             Condition::AssetValueRatio(asset_value_ratio) => {
                 asset_value_ratio.is_satisfied(deps, env)?
+            }
+            Condition::External(_) => {
+                return Err(StdError::generic_err(
+                    "External conditions must be queried by the strategy adapter",
+                ));
             }
         })
     }
@@ -223,12 +231,16 @@ impl Operation<Condition> for Condition {
                 Ok(self)
             }
             Condition::BlocksCompleted(_) | Condition::TimestampElapsed(_) => Ok(self),
+            Condition::External(_) => Ok(self),
         }
     }
 
     fn execute(self, deps: Deps, env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
         match self {
             Condition::Schedule(schedule) => schedule.execute(deps, env),
+            Condition::External(_) => Err(StdError::generic_err(
+                "External conditions must be executed by the strategy adapter",
+            )),
             _ => Ok((vec![], self)),
         }
     }
@@ -238,6 +250,9 @@ impl StatefulOperation<Condition> for Condition {
     fn commit(self, deps: Deps, env: &Env) -> StdResult<Condition> {
         match self {
             Condition::Schedule(schedule) => schedule.commit(deps, env),
+            Condition::External(_) => Err(StdError::generic_err(
+                "External conditions must be committed by the strategy adapter",
+            )),
             _ => Ok(self),
         }
     }
@@ -247,7 +262,12 @@ impl StatefulOperation<Condition> for Condition {
     }
 
     fn cancel(self, _deps: Deps, _env: &Env) -> StdResult<(Vec<CosmosMsg>, Condition)> {
-        Ok((vec![], self))
+        match self {
+            Condition::External(_) => Err(StdError::generic_err(
+                "External conditions must be cancelled by the strategy adapter",
+            )),
+            _ => Ok((vec![], self)),
+        }
     }
 }
 

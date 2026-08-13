@@ -11,7 +11,7 @@ It automatically handles affiliate fee integration, validates strategy parameter
 - Deploys new strategy contracts using deterministic `instantiate2_address` addresses
 - Maintains searchable registry with multi-indexed storage for efficient queries
 - Integration of affiliate fees with CALC protocol base fees
-- Strategy status management (`Active` | `Paused`)
+- Strategy status management (`Active` | `Paused` | `Archived`)
 - Owner-based authorization for sensitive operations
 - Tracking of creation & update timestamps
 - Input validation for strategy parameters, labels, and affiliate configurations
@@ -48,9 +48,88 @@ Example 3: 50 bps affiliate fee
 
 ```rust
 pub struct ManagerConfig {
+    pub owner: Addr,            // Immutable owner of singleton-node registry
     pub fee_collector: Addr,    // Address receiving protocol fees
     pub strategy_code_id: u64,  // Code ID for strategy contract instantiation
 }
+```
+
+`owner` controls only singleton-node registry operations. Existing sudo governance continues to control `fee_collector` and `strategy_code_id`; sudo cannot replace `owner`. Existing deployments set the first owner through manager migration.
+
+```rust
+MigrateMsg {
+    owner: Addr,
+    strategy_code_id: u64,
+}
+```
+
+Later migrations must supply same owner. Contract rejects ownership replacement.
+
+## External Node Registry
+
+Manager maintains curated singleton node implementations. Registry entries are keyed by contract address:
+
+```rust
+pub struct RegisteredNode {
+    pub address: Addr,
+    pub code_id: u64,
+    pub checksum: HexBinary,
+    pub status: NodeStatus,
+    pub size_weight: u16,
+}
+
+pub enum NodeStatus {
+    Active,
+    Deprecated,
+    Disabled,
+}
+```
+
+- **Active:** new and existing strategies may use node.
+- **Deprecated:** existing strategies may retain or reconfigure references, but cannot increase reference count. New strategies reject it.
+- **Disabled:** execution, cancellation, creation, and update fail. Read queries remain available.
+
+Strategy creation and update validate every external singleton against this registry. Runtime execution checks registry status again. Registry entries are never deleted.
+
+### `DeployNode`
+
+Owner-only atomic singleton deployment and approval:
+
+```rust
+DeployNode {
+    code_id: u64,
+    label: String,
+    instantiate_msg: Binary,
+    size_weight: u16,
+}
+```
+
+Manager queries code checksum, generates salt from incrementing counter, deploys with `Instantiate2`, records node as Active, and makes manager its contract admin.
+
+### `UpdateNodeStatus`
+
+Owner-only status replacement. Code ID, checksum, and size weight remain unchanged.
+
+### `MigrateNode`
+
+Owner-only atomic migration and approval:
+
+```rust
+MigrateNode {
+    address: Addr,
+    new_code_id: u64,
+    migrate_msg: Binary,
+    new_size_weight: u16,
+}
+```
+
+Manager queries new checksum, replaces registry code metadata and size weight, then migrates singleton. Failure rolls back both changes. Node repository owns migration payload and state-schema handling.
+
+### Registry queries
+
+```rust
+Node { address: Addr } -> RegisteredNode
+Nodes { start_after: Option<Addr>, limit: Option<u16> } -> Vec<RegisteredNode>
 ```
 
 ## Strategy Registry
@@ -75,6 +154,7 @@ pub struct Strategy {
 pub enum StrategyStatus {
     Active,    // Strategy executes normally
     Paused,    // Strategy execution suspended, can be reactivated
+    Archived,  // Strategy cancelled and archived
 }
 ```
 
@@ -150,7 +230,7 @@ Changes the operational status of a strategy.
 ```rust
 UpdateStatus {
     contract_address: Addr,       // Strategy contract to update
-    status: StrategyStatus,       // New status (Active/Paused)
+    status: StrategyStatus,       // New status (Active/Paused/Archived)
 }
 ```
 
@@ -160,7 +240,7 @@ UpdateStatus {
   2. **Registry Update:** Updates status and timestamp in registry
   3. **Contract Notification:** Dispatches appropriate message based on status:
      - Active: StrategyExecuteMsg::Execute
-     - Paused: StrategyExecuteMsg::Cancel
+     - Paused/Archived: StrategyExecuteMsg::Cancel
 
 ### `UpdateLabel`
 

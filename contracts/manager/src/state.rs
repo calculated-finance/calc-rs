@@ -1,9 +1,11 @@
-use calc_rs::manager::{ManagerConfig, Strategy};
+use calc_rs::manager::{ManagerConfig, RegisteredNode, Strategy};
 use cosmwasm_std::Addr;
-use cw_storage_plus::{Index, IndexList, IndexedMap, Item, UniqueIndex};
+use cw_storage_plus::{Index, IndexList, IndexedMap, Item, Map, UniqueIndex};
 
 pub const CONFIG: Item<ManagerConfig> = Item::new("config");
 pub const STRATEGY_COUNTER: Item<u64> = Item::new("strategy_counter");
+pub const NODE_COUNTER: Item<u64> = Item::new("node_counter");
+pub const NODES: Map<Addr, RegisteredNode> = Map::new("registered_nodes");
 
 pub struct StrategyIndexes<'a> {
     pub updated_at: UniqueIndex<'a, String, Strategy, Addr>,

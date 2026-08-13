@@ -15,6 +15,15 @@ export interface Strategy {
 
 export interface ManagerInstantiateMsg {
   fee_collector: Addr;
+  owner: Addr;
+  strategy_code_id: number;
+}
+export interface ManagerMigrateMsg {
+  owner: Addr;
+  strategy_code_id: number;
+}
+export interface ManagerSudoMsg {
+  fee_collector: Addr;
   strategy_code_id: number;
 }
 export type ManagerQueryMsg =
@@ -42,6 +51,17 @@ export type ManagerQueryMsg =
     }
   | {
       count: {};
+    }
+  | {
+      node: {
+        address: Addr;
+      };
+    }
+  | {
+      nodes: {
+        limit?: number | null;
+        start_after?: Addr | null;
+      };
     };
 export type Uint64 = number;
 export type ManagerExecuteMsg =
@@ -76,6 +96,28 @@ export type ManagerExecuteMsg =
         contract_address: Addr;
         label: string;
       };
+    }
+  | {
+      deploy_node: {
+        code_id: number;
+        instantiate_msg: Binary;
+        label: string;
+        size_weight: number;
+      };
+    }
+  | {
+      update_node_status: {
+        address: Addr;
+        status: NodeStatus;
+      };
+    }
+  | {
+      migrate_node: {
+        address: Addr;
+        migrate_msg: Binary;
+        new_code_id: number;
+        new_size_weight: number;
+      };
     };
 export type Node =
   | {
@@ -102,6 +144,9 @@ export type Action =
     }
   | {
       distribute: Distribution;
+    }
+  | {
+      external: ExternalNode;
     };
 export type SwapAmountAdjustment =
   | "fixed"
@@ -233,6 +278,9 @@ export type Condition =
     }
   | {
       asset_value_ratio: AssetValueRatio;
+    }
+  | {
+      external: ExternalNode;
     };
 /**
  * A point in time in nanosecond precision.
@@ -353,7 +401,72 @@ export interface AssetValueRatio {
 
 export interface ManagerConfig {
   fee_collector: Addr;
+  owner: Addr;
   strategy_code_id: number;
+}
+export type NodeStatus = "active" | "deprecated" | "disabled";
+export type HexBinary = string;
+export interface RegisteredNode {
+  address: Addr;
+  checksum: HexBinary;
+  code_id: number;
+  size_weight: number;
+  status: NodeStatus;
+}
+export interface ExternalNode {
+  config: Binary;
+  contract_address: Addr;
+}
+export type NodeExecuteMsg =
+  | {
+      register: {
+        config: Binary;
+        node_index: number;
+        strategy_revision: number;
+      };
+    }
+  | {
+      execute: {
+        node_index: number;
+        strategy_revision: number;
+      };
+    }
+  | {
+      commit: {
+        node_index: number;
+        strategy_revision: number;
+      };
+    }
+  | {
+      cancel: {
+        node_index: number;
+        strategy_revision: number;
+      };
+    };
+export type NodeQueryMsg =
+  | {
+      details: {
+        node_index: number;
+        strategy: Addr;
+        strategy_revision: number;
+      };
+    }
+  | {
+      is_satisfied: {
+        node_index: number;
+        strategy: Addr;
+        strategy_revision: number;
+      };
+    }
+  | {
+      balances: {
+        node_index: number;
+        strategy: Addr;
+        strategy_revision: number;
+      };
+    };
+export interface NodeDetailsResponse {
+  config: Binary;
 }
 
 export type ArrayOf_Trigger = Trigger[];
@@ -478,6 +591,18 @@ export type StrategyExecuteMsg =
       process: {
         operation: StrategyOperation;
         previous?: number | null;
+      };
+    }
+  | {
+      process_without_commit: {
+        operation: StrategyOperation;
+        previous: number;
+      };
+    }
+  | {
+      process_at: {
+        next?: number | null;
+        operation: StrategyOperation;
       };
     };
 export type StrategyOperation = "execute" | "cancel";

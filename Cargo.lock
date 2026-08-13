@@ -241,6 +241,7 @@ dependencies = [
 name = "calc-manager"
 version = "0.1.0"
 dependencies = [
+ "calc-node-interface",
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -248,10 +249,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "calc-node-interface"
+version = "0.1.0"
+dependencies = [
+ "cosmwasm-schema",
+ "cosmwasm-std",
+]
+
+[[package]]
 name = "calc-rs"
 version = "0.0.1"
 dependencies = [
  "anybuf 1.0.0",
+ "calc-node-interface",
  "calc-rs-test",
  "chrono",
  "cosmwasm-schema",
@@ -291,10 +301,12 @@ dependencies = [
 name = "calc-strategy"
 version = "0.1.0"
 dependencies = [
+ "calc-node-interface",
  "calc-rs",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",
+ "cw-utils",
 ]
 
 [[package]]
@@ -884,12 +896,15 @@ name = "integration"
 version = "0.0.1"
 dependencies = [
  "calc-manager",
+ "calc-node-interface",
  "calc-rs",
  "calc-rs-test",
  "calc-scheduler",
  "calc-strategy",
+ "cosmwasm-schema",
  "cosmwasm-std",
  "cw-multi-test",
+ "cw-storage-plus",
  "rujira-fin",
  "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=6039721871f46cfb927d94c6d68dc1354a8cc443)",
 ]

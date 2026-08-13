@@ -1,13 +1,46 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, Binary, HexBinary};
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 
 use crate::strategy::Node;
 
 #[cw_serde]
 pub struct ManagerConfig {
+    pub owner: Addr,
     pub fee_collector: Addr,
     pub strategy_code_id: u64,
+}
+
+#[cw_serde]
+pub struct ManagerSudoMsg {
+    pub fee_collector: Addr,
+    pub strategy_code_id: u64,
+}
+
+#[cw_serde]
+pub enum NodeStatus {
+    Active,
+    Deprecated,
+    Disabled,
+}
+
+impl NodeStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            NodeStatus::Active => "active",
+            NodeStatus::Deprecated => "deprecated",
+            NodeStatus::Disabled => "disabled",
+        }
+    }
+}
+
+#[cw_serde]
+pub struct RegisteredNode {
+    pub address: Addr,
+    pub code_id: u64,
+    pub checksum: HexBinary,
+    pub status: NodeStatus,
+    pub size_weight: u16,
 }
 
 #[cw_serde]
@@ -28,7 +61,7 @@ impl StrategyStatus {
 }
 
 impl<'a> Prefixer<'a> for StrategyStatus {
-    fn prefix(&self) -> Vec<Key> {
+    fn prefix(&self) -> Vec<Key<'_>> {
         vec![Key::Val8([self.clone() as u8])]
     }
 }
@@ -39,7 +72,7 @@ impl<'a> PrimaryKey<'a> for StrategyStatus {
     type Suffix = ();
     type SuperSuffix = ();
 
-    fn key(&self) -> Vec<Key> {
+    fn key(&self) -> Vec<Key<'_>> {
         vec![Key::Val8([self.clone() as u8])]
     }
 }
@@ -87,6 +120,22 @@ pub enum ManagerExecuteMsg {
         contract_address: Addr,
         label: String,
     },
+    DeployNode {
+        code_id: u64,
+        label: String,
+        instantiate_msg: Binary,
+        size_weight: u16,
+    },
+    UpdateNodeStatus {
+        address: Addr,
+        status: NodeStatus,
+    },
+    MigrateNode {
+        address: Addr,
+        new_code_id: u64,
+        migrate_msg: Binary,
+        new_size_weight: u16,
+    },
 }
 
 #[cw_serde]
@@ -110,4 +159,11 @@ pub enum ManagerQueryMsg {
     },
     #[returns(u64)]
     Count {},
+    #[returns(RegisteredNode)]
+    Node { address: Addr },
+    #[returns(Vec<RegisteredNode>)]
+    Nodes {
+        start_after: Option<Addr>,
+        limit: Option<u16>,
+    },
 }

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod integration_tests {
+    use calc_node_interface::{ExternalNode, NodeExecuteMsg};
     use calc_rs::{
         actions::{
             distribution::{Destination, Distribution, Recipient},
@@ -14,7 +15,10 @@ mod integration_tests {
         },
         constants::BASE_FEE_BPS,
         core::Amount,
-        manager::{Affiliate, ManagerExecuteMsg, StrategyStatus},
+        manager::{
+            Affiliate, ManagerExecuteMsg, ManagerQueryMsg, NodeStatus, RegisteredNode,
+            StrategyStatus,
+        },
         scheduler::{ConditionFilter, CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
     };
@@ -28,14 +32,22 @@ mod integration_tests {
         },
         strategy::StrategyConfig,
     };
-    use cosmwasm_std::{to_json_binary, Addr, Binary, Coin, Coins, Decimal, Timestamp, Uint128};
-    use cw_multi_test::Executor;
+    use cosmwasm_std::{
+        to_json_binary, Addr, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal, Timestamp, Uint128,
+    };
+    use cw_multi_test::{ContractWrapper, Executor};
     use rujira_rs::fin::{Price, Side};
 
     use calc_rs::actions::limit_orders::fin_limit_order::{FinLimitOrder, PriceStrategy};
 
-    use crate::harness::CalcTestApp;
     use crate::strategy_builder::StrategyBuilder;
+    use crate::{
+        harness::CalcTestApp,
+        mock_node::{
+            self, InstantiateMsg as MockNodeInstantiateMsg, MigrateMsg as MockNodeMigrateMsg,
+            MockNodeConfig,
+        },
+    };
 
     // Test helpers
 
@@ -107,6 +119,43 @@ mod integration_tests {
             }],
             denoms: vec![default_swap_action(harness).swap_amount.denom.clone()],
         }
+    }
+
+    fn deploy_mock_node(harness: &mut CalcTestApp, size_weight: u16) -> Addr {
+        let code_id = harness.app.store_code(Box::new(
+            ContractWrapper::new(mock_node::execute, mock_node::instantiate, mock_node::query)
+                .with_migrate(mock_node::migrate),
+        ));
+        harness
+            .app
+            .execute_contract(
+                harness.admin.clone(),
+                harness.manager_addr.clone(),
+                &ManagerExecuteMsg::DeployNode {
+                    code_id,
+                    label: "mock-node".to_string(),
+                    instantiate_msg: to_json_binary(&MockNodeInstantiateMsg {}).unwrap(),
+                    size_weight,
+                },
+                &[],
+            )
+            .unwrap();
+
+        harness
+            .app
+            .wrap()
+            .query_wasm_smart::<Vec<RegisteredNode>>(
+                harness.manager_addr.clone(),
+                &ManagerQueryMsg::Nodes {
+                    start_after: None,
+                    limit: None,
+                },
+            )
+            .unwrap()
+            .into_iter()
+            .last()
+            .unwrap()
+            .address
     }
 
     // Instantiate Strategy tests
@@ -1788,9 +1837,9 @@ mod integration_tests {
                 vec![(
                     order_action.side,
                     Decimal::from_str("0.47764").unwrap(), // price
-                    starting_balance.amount,                // offer
-                    starting_balance.amount,                // remaining
-                    Uint128::zero(),                        // filled
+                    starting_balance.amount,               // offer
+                    starting_balance.amount,               // remaining
+                    Uint128::zero(),                       // filled
                 )],
             );
     }
@@ -1897,9 +1946,9 @@ mod integration_tests {
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
-                    price,          // price
-                    resting_amount, // offer
-                    resting_amount, // remaining
+                    price,           // price
+                    resting_amount,  // offer
+                    resting_amount,  // remaining
                     Uint128::zero(), // filled
                 )],
             )
@@ -1942,9 +1991,9 @@ mod integration_tests {
                 &order_action.pair_address,
                 vec![(
                     order_action.side.clone(),
-                    price,          // price
-                    resting_amount, // offer
-                    resting_amount, // remaining
+                    price,           // price
+                    resting_amount,  // offer
+                    resting_amount,  // remaining
                     Uint128::zero(), // filled
                 )],
             )
@@ -1962,9 +2011,9 @@ mod integration_tests {
                 &order_action.pair_address,
                 vec![(
                     order_action.side,
-                    price,          // price
-                    resting_amount, // offer
-                    resting_amount, // remaining
+                    price,           // price
+                    resting_amount,  // offer
+                    resting_amount,  // remaining
                     Uint128::zero(), // filled
                 )],
             )
@@ -4296,5 +4345,342 @@ mod integration_tests {
                 (withdrawal + new_withdrawal).u128(),
                 "x/ruji",
             )]);
+    }
+
+    #[test]
+    fn test_external_action_round_trips_executes_and_obeys_registry_status() {
+        let mut harness = CalcTestApp::setup();
+        let node_address = deploy_mock_node(&mut harness, 2);
+        assert!(harness
+            .app
+            .execute_contract(
+                harness.unknown.clone(),
+                node_address.clone(),
+                &NodeExecuteMsg::Register {
+                    strategy_revision: 1,
+                    node_index: 0,
+                    config: to_json_binary(&MockNodeConfig::default()).unwrap(),
+                },
+                &[],
+            )
+            .is_err());
+        let replacement_code_id = harness.app.store_code(Box::new(
+            ContractWrapper::new(mock_node::execute, mock_node::instantiate, mock_node::query)
+                .with_migrate(mock_node::migrate),
+        ));
+        assert!(harness
+            .app
+            .execute_contract(
+                harness.unknown.clone(),
+                harness.manager_addr.clone(),
+                &ManagerExecuteMsg::MigrateNode {
+                    address: node_address.clone(),
+                    new_code_id: replacement_code_id,
+                    migrate_msg: to_json_binary(&MockNodeMigrateMsg {}).unwrap(),
+                    new_size_weight: 3,
+                },
+                &[],
+            )
+            .is_err());
+        harness
+            .app
+            .execute_contract(
+                harness.admin.clone(),
+                harness.manager_addr.clone(),
+                &ManagerExecuteMsg::MigrateNode {
+                    address: node_address.clone(),
+                    new_code_id: replacement_code_id,
+                    migrate_msg: to_json_binary(&MockNodeMigrateMsg {}).unwrap(),
+                    new_size_weight: 3,
+                },
+                &[],
+            )
+            .unwrap();
+        let migrated = harness
+            .app
+            .wrap()
+            .query_wasm_smart::<RegisteredNode>(
+                harness.manager_addr.clone(),
+                &ManagerQueryMsg::Node {
+                    address: node_address.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(migrated.code_id, replacement_code_id);
+        assert_eq!(migrated.size_weight, 3);
+
+        let receiver = harness.app.api().addr_make("external-action-receiver");
+        let config = MockNodeConfig {
+            messages: vec![CosmosMsg::Bank(BankMsg::Send {
+                to_address: receiver.to_string(),
+                amount: vec![Coin::new(10u128, "rune")],
+            })],
+            balances: vec![Coin::new(5u128, "rune")],
+            ..Default::default()
+        };
+        let external = ExternalNode {
+            contract_address: node_address.clone(),
+            config: to_json_binary(&config).unwrap(),
+        };
+        let nodes = vec![Node::Action {
+            action: Action::External(external.clone()),
+            index: 0,
+            next: None,
+        }];
+        let owner = harness.owner.clone();
+        let strategy = harness
+            .create_strategy(
+                &owner,
+                "external-action",
+                vec![],
+                nodes.clone(),
+                &[Coin::new(100u128, "rune")],
+            )
+            .unwrap();
+
+        assert_eq!(
+            harness.query_balance(&receiver, "rune").amount,
+            Uint128::new(10)
+        );
+        assert_eq!(harness.query_strategy_config(&strategy).nodes, nodes);
+        assert_eq!(
+            harness.query_strategy_balances(&strategy),
+            vec![Coin::new(95u128, "rune")]
+        );
+
+        harness
+            .app
+            .execute_contract(
+                harness.admin.clone(),
+                harness.manager_addr.clone(),
+                &ManagerExecuteMsg::UpdateNodeStatus {
+                    address: node_address.clone(),
+                    status: NodeStatus::Deprecated,
+                },
+                &[],
+            )
+            .unwrap();
+
+        assert!(harness
+            .create_strategy(&owner, "deprecated-node", vec![], nodes.clone(), &[])
+            .is_err());
+        harness
+            .app
+            .execute_contract(
+                owner.clone(),
+                harness.manager_addr.clone(),
+                &ManagerExecuteMsg::Update {
+                    contract_address: strategy.clone(),
+                    nodes: nodes.clone(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        harness
+            .app
+            .execute_contract(
+                harness.admin.clone(),
+                harness.manager_addr.clone(),
+                &ManagerExecuteMsg::UpdateNodeStatus {
+                    address: node_address,
+                    status: NodeStatus::Disabled,
+                },
+                &[],
+            )
+            .unwrap();
+        assert!(harness.execute_strategy(&owner, &strategy).is_err());
+        assert!(harness
+            .update_strategy_status(&owner, &strategy, StrategyStatus::Paused)
+            .is_err());
+        assert!(harness
+            .app
+            .execute_contract(
+                owner,
+                harness.manager_addr.clone(),
+                &ManagerExecuteMsg::Update {
+                    contract_address: strategy,
+                    nodes,
+                },
+                &[],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_external_condition_uses_singleton_result_for_branching() {
+        let mut harness = CalcTestApp::setup();
+        let node_address = deploy_mock_node(&mut harness, 1);
+        let success = harness.app.api().addr_make("external-condition-success");
+        let failure = harness.app.api().addr_make("external-condition-failure");
+        let condition = ExternalNode {
+            contract_address: node_address.clone(),
+            config: to_json_binary(&MockNodeConfig {
+                satisfied: false,
+                ..Default::default()
+            })
+            .unwrap(),
+        };
+        let action = |receiver: &Addr| ExternalNode {
+            contract_address: node_address.clone(),
+            config: to_json_binary(&MockNodeConfig {
+                messages: vec![CosmosMsg::Bank(BankMsg::Send {
+                    to_address: receiver.to_string(),
+                    amount: vec![Coin::new(7u128, "rune")],
+                })],
+                ..Default::default()
+            })
+            .unwrap(),
+        };
+        let nodes = vec![
+            Node::Condition {
+                condition: Condition::External(condition),
+                index: 0,
+                on_success: Some(1),
+                on_failure: Some(2),
+            },
+            Node::Action {
+                action: Action::External(action(&success)),
+                index: 1,
+                next: None,
+            },
+            Node::Action {
+                action: Action::External(action(&failure)),
+                index: 2,
+                next: None,
+            },
+        ];
+        let owner = harness.owner.clone();
+        harness
+            .create_strategy(
+                &owner,
+                "external-condition",
+                vec![],
+                nodes,
+                &[Coin::new(20u128, "rune")],
+            )
+            .unwrap();
+
+        assert_eq!(
+            harness.query_balance(&success, "rune").amount,
+            Uint128::zero()
+        );
+        assert_eq!(
+            harness.query_balance(&failure, "rune").amount,
+            Uint128::new(7)
+        );
+    }
+
+    #[test]
+    fn test_external_node_size_weight_counts_toward_strategy_limit() {
+        let mut harness = CalcTestApp::setup();
+        let node_address = deploy_mock_node(&mut harness, 51);
+        let nodes = vec![Node::Action {
+            action: Action::External(ExternalNode {
+                contract_address: node_address,
+                config: to_json_binary(&MockNodeConfig::default()).unwrap(),
+            }),
+            index: 0,
+            next: None,
+        }];
+        let owner = harness.owner.clone();
+
+        assert!(harness
+            .create_strategy(&owner, "oversized-external", vec![], nodes, &[])
+            .is_err());
+    }
+
+    #[test]
+    fn test_external_node_error_semantics_match_internal_nodes() {
+        let mut harness = CalcTestApp::setup();
+        let node_address = deploy_mock_node(&mut harness, 1);
+        let failure_receiver = harness.app.api().addr_make("external-error-failure");
+        let nodes = vec![
+            Node::Condition {
+                condition: Condition::External(ExternalNode {
+                    contract_address: node_address.clone(),
+                    config: to_json_binary(&MockNodeConfig {
+                        satisfied: false,
+                        fail_execute: true,
+                        ..Default::default()
+                    })
+                    .unwrap(),
+                }),
+                index: 0,
+                on_success: None,
+                on_failure: Some(1),
+            },
+            Node::Action {
+                action: Action::External(ExternalNode {
+                    contract_address: node_address.clone(),
+                    config: to_json_binary(&MockNodeConfig {
+                        messages: vec![CosmosMsg::Bank(BankMsg::Send {
+                            to_address: failure_receiver.to_string(),
+                            amount: vec![Coin::new(1u128, "rune")],
+                        })],
+                        ..Default::default()
+                    })
+                    .unwrap(),
+                }),
+                index: 1,
+                next: None,
+            },
+        ];
+        let owner = harness.owner.clone();
+        harness
+            .create_strategy(
+                &owner,
+                "external-calculation-error",
+                vec![],
+                nodes,
+                &[Coin::new(2u128, "rune")],
+            )
+            .unwrap();
+        assert_eq!(
+            harness.query_balance(&failure_receiver, "rune").amount,
+            Uint128::new(1)
+        );
+
+        let malformed = vec![Node::Action {
+            action: Action::External(ExternalNode {
+                contract_address: node_address.clone(),
+                config: to_json_binary(&MockNodeConfig {
+                    malformed_response: true,
+                    ..Default::default()
+                })
+                .unwrap(),
+            }),
+            index: 0,
+            next: None,
+        }];
+        assert!(harness
+            .create_strategy(&owner, "malformed-external", vec![], malformed, &[])
+            .is_err());
+
+        let commit_failure = vec![Node::Action {
+            action: Action::External(ExternalNode {
+                contract_address: node_address,
+                config: to_json_binary(&MockNodeConfig {
+                    messages: vec![CosmosMsg::Bank(BankMsg::Send {
+                        to_address: failure_receiver.to_string(),
+                        amount: vec![Coin::new(1u128, "rune")],
+                    })],
+                    fail_commit: true,
+                    ..Default::default()
+                })
+                .unwrap(),
+            }),
+            index: 0,
+            next: None,
+        }];
+        assert!(harness
+            .create_strategy(
+                &owner,
+                "external-commit-error",
+                vec![],
+                commit_failure,
+                &[Coin::new(1u128, "rune")],
+            )
+            .is_err());
     }
 }

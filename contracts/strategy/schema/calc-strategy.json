@@ -71,6 +71,18 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "external"
+            ],
+            "properties": {
+              "external": {
+                "$ref": "#/definitions/ExternalNode"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -464,6 +476,18 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "external"
+            ],
+            "properties": {
+              "external": {
+                "$ref": "#/definitions/ExternalNode"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -547,6 +571,22 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0.0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExternalNode": {
+        "type": "object",
+        "required": [
+          "config",
+          "contract_address"
+        ],
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/Binary"
+          },
+          "contract_address": {
+            "$ref": "#/definitions/Addr"
           }
         },
         "additionalProperties": false
@@ -1282,6 +1322,62 @@
           }
         },
         "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "process_without_commit"
+        ],
+        "properties": {
+          "process_without_commit": {
+            "type": "object",
+            "required": [
+              "operation",
+              "previous"
+            ],
+            "properties": {
+              "operation": {
+                "$ref": "#/definitions/StrategyOperation"
+              },
+              "previous": {
+                "type": "integer",
+                "format": "uint16",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "process_at"
+        ],
+        "properties": {
+          "process_at": {
+            "type": "object",
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "next": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint16",
+                "minimum": 0.0
+              },
+              "operation": {
+                "$ref": "#/definitions/StrategyOperation"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       }
     ],
     "definitions": {
@@ -1319,6 +1415,18 @@
             "properties": {
               "distribute": {
                 "$ref": "#/definitions/Distribution"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "external"
+            ],
+            "properties": {
+              "external": {
+                "$ref": "#/definitions/ExternalNode"
               }
             },
             "additionalProperties": false
@@ -1693,6 +1801,18 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "external"
+            ],
+            "properties": {
+              "external": {
+                "$ref": "#/definitions/ExternalNode"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -1776,6 +1896,22 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0.0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExternalNode": {
+        "type": "object",
+        "required": [
+          "config",
+          "contract_address"
+        ],
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/Binary"
+          },
+          "contract_address": {
+            "$ref": "#/definitions/Addr"
           }
         },
         "additionalProperties": false
@@ -2549,6 +2685,18 @@
                 }
               },
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "external"
+              ],
+              "properties": {
+                "external": {
+                  "$ref": "#/definitions/ExternalNode"
+                }
+              },
+              "additionalProperties": false
             }
           ]
         },
@@ -2920,6 +3068,18 @@
                 }
               },
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "external"
+              ],
+              "properties": {
+                "external": {
+                  "$ref": "#/definitions/ExternalNode"
+                }
+              },
+              "additionalProperties": false
             }
           ]
         },
@@ -3003,6 +3163,22 @@
               "type": "integer",
               "format": "uint64",
               "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        },
+        "ExternalNode": {
+          "type": "object",
+          "required": [
+            "config",
+            "contract_address"
+          ],
+          "properties": {
+            "config": {
+              "$ref": "#/definitions/Binary"
+            },
+            "contract_address": {
+              "$ref": "#/definitions/Addr"
             }
           },
           "additionalProperties": false

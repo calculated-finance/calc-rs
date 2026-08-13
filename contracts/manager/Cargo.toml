@@ -22,6 +22,7 @@ overflow-checks = true
 library = []
 
 [dependencies]
+calc-node-interface = { workspace = true }
 calc-rs = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }

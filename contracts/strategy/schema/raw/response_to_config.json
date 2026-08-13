@@ -67,6 +67,18 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "external"
+          ],
+          "properties": {
+            "external": {
+              "$ref": "#/definitions/ExternalNode"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -438,6 +450,18 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "external"
+          ],
+          "properties": {
+            "external": {
+              "$ref": "#/definitions/ExternalNode"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -521,6 +545,22 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExternalNode": {
+      "type": "object",
+      "required": [
+        "config",
+        "contract_address"
+      ],
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/Binary"
+        },
+        "contract_address": {
+          "$ref": "#/definitions/Addr"
         }
       },
       "additionalProperties": false

@@ -96,6 +96,8 @@ Strategies contain a set of nodes, each representing a specific action or condit
 - **Condition nodes:** Check if a condition is met and control the flow of execution
 - **Action nodes:** Execute an action and pass control to the next node
 
+Action and condition implementations may be built into strategy contract or supplied by manager-approved singleton node contracts. External nodes preserve same graph interface while storing configuration and mutable state by strategy address, revision, and node index.
+
 **Condition nodes** can be:
 
 - `TimestampElapsed`: Check if a specific time has passed

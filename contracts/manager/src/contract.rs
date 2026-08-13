@@ -1,12 +1,18 @@
-use std::hash::{DefaultHasher, Hasher};
+use std::{
+    collections::BTreeMap,
+    hash::{DefaultHasher, Hasher},
+};
 
 use calc_rs::{
     constants::{BASE_FEE_BPS, MAX_TOTAL_AFFILIATE_BPS, MIN_FEE_BPS},
     core::{Contract, ContractError, ContractResult},
     manager::{
-        Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, Strategy, StrategyStatus,
+        Affiliate, ManagerConfig, ManagerExecuteMsg, ManagerQueryMsg, ManagerSudoMsg, NodeStatus,
+        RegisteredNode, Strategy, StrategyStatus,
     },
-    strategy::{StrategyExecuteMsg, StrategyInstantiateMsg},
+    strategy::{
+        Node, StrategyConfig, StrategyExecuteMsg, StrategyInstantiateMsg, StrategyQueryMsg,
+    },
 };
 use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
@@ -15,9 +21,9 @@ use cosmwasm_std::{
     instantiate2_address, to_json_binary, Binary, Deps, DepsMut, Env, Event, MessageInfo, Order,
     Response, StdError, StdResult, WasmMsg,
 };
-use cw_storage_plus::Bound;
+use cw_storage_plus::{Bound, Item};
 
-use crate::state::{updated_at_cursor, CONFIG, STRATEGIES, STRATEGY_COUNTER};
+use crate::state::{updated_at_cursor, CONFIG, NODES, NODE_COUNTER, STRATEGIES, STRATEGY_COUNTER};
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -26,6 +32,10 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: ManagerConfig,
 ) -> ContractResult {
+    deps.api
+        .addr_validate(msg.owner.as_str())
+        .map_err(|_| ContractError::generic_err("Invalid owner address"))?;
+
     deps.api
         .addr_validate(msg.fee_collector.as_str())
         .map_err(|_| ContractError::generic_err("Invalid fee collector address"))?;
@@ -41,17 +51,30 @@ pub fn instantiate(
 
     CONFIG.save(deps.storage, &msg)?;
     STRATEGY_COUNTER.save(deps.storage, &0)?;
+    NODE_COUNTER.save(deps.storage, &0)?;
 
     Ok(Response::new())
 }
 
 #[cw_serde]
 pub struct MigrateMsg {
+    pub owner: cosmwasm_std::Addr,
+    pub strategy_code_id: u64,
+}
+
+#[cw_serde]
+struct MigrationManagerConfig {
+    pub owner: Option<cosmwasm_std::Addr>,
+    pub fee_collector: cosmwasm_std::Addr,
     pub strategy_code_id: u64,
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> ContractResult {
+    deps.api
+        .addr_validate(msg.owner.as_str())
+        .map_err(|_| ContractError::generic_err("Invalid owner address"))?;
+
     deps.querier
         .query_wasm_code_info(msg.strategy_code_id)
         .map_err(|_| {
@@ -61,16 +84,31 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> ContractResult {
             ))
         })?;
 
-    CONFIG.update(deps.storage, |mut config| -> StdResult<ManagerConfig> {
-        config.strategy_code_id = msg.strategy_code_id;
-        Ok(config)
-    })?;
+    let current = Item::<MigrationManagerConfig>::new("config").load(deps.storage)?;
+    let owner = match current.owner {
+        Some(owner) if owner != msg.owner => {
+            return Err(ContractError::generic_err("Manager owner is immutable"));
+        }
+        Some(owner) => owner,
+        None => msg.owner,
+    };
+    CONFIG.save(
+        deps.storage,
+        &ManagerConfig {
+            owner,
+            fee_collector: current.fee_collector,
+            strategy_code_id: msg.strategy_code_id,
+        },
+    )?;
+    if NODE_COUNTER.may_load(deps.storage)?.is_none() {
+        NODE_COUNTER.save(deps.storage, &0)?;
+    }
 
     Ok(Response::new())
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
+pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerSudoMsg) -> ContractResult {
     deps.api
         .addr_validate(msg.fee_collector.as_str())
         .map_err(|_| ContractError::generic_err("Invalid fee collector address"))?;
@@ -84,7 +122,13 @@ pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
             ))
         })?;
 
-    CONFIG.save(deps.storage, &msg)?;
+    CONFIG.update(deps.storage, |config| -> StdResult<_> {
+        Ok(ManagerConfig {
+            owner: config.owner,
+            fee_collector: msg.fee_collector,
+            strategy_code_id: msg.strategy_code_id,
+        })
+    })?;
     Ok(Response::new())
 }
 
@@ -105,6 +149,8 @@ pub fn execute(
             affiliates,
             nodes,
         } => {
+            validate_external_nodes(deps.as_ref(), &nodes, None)?;
+
             let owner = owner.unwrap_or(info.sender);
 
             if deps.api.addr_validate(owner.as_str()).is_err() {
@@ -261,6 +307,19 @@ pub fn execute(
                 return Err(ContractError::Unauthorized {});
             }
 
+            if nodes.iter().any(|node| node.external().is_some())
+                || NODES
+                    .range(deps.storage, None, None, Order::Ascending)
+                    .next()
+                    .is_some()
+            {
+                let existing = deps.querier.query_wasm_smart::<StrategyConfig>(
+                    &contract_address,
+                    &StrategyQueryMsg::Config {},
+                )?;
+                validate_external_nodes(deps.as_ref(), &nodes, Some(&existing.nodes))?;
+            }
+
             STRATEGIES.save(
                 deps.storage,
                 contract_address.clone(),
@@ -351,6 +410,132 @@ pub fn execute(
                     .add_attribute("strategy_address", contract_address.as_str()),
             ))
         }
+        ManagerExecuteMsg::DeployNode {
+            code_id,
+            label,
+            instantiate_msg,
+            size_weight,
+        } => {
+            let config = CONFIG.load(deps.storage)?;
+            if info.sender != config.owner {
+                return Err(ContractError::Unauthorized {});
+            }
+            validate_node_weight(size_weight)?;
+            if label.is_empty() || label.len() > MAX_LABEL_LENGTH {
+                return Err(ContractError::generic_err(format!(
+                    "Node label must be between 1 and {MAX_LABEL_LENGTH} characters"
+                )));
+            }
+
+            let code_info = deps.querier.query_wasm_code_info(code_id).map_err(|_| {
+                ContractError::generic_err(format!("Invalid node code ID: {code_id}"))
+            })?;
+            let counter = NODE_COUNTER.update(deps.storage, |id| Ok::<_, StdError>(id + 1))?;
+            let salt = counter.to_le_bytes();
+            let address = deps.api.addr_humanize(
+                &instantiate2_address(
+                    code_info.checksum.as_slice(),
+                    &deps.api.addr_canonicalize(env.contract.address.as_str())?,
+                    &salt,
+                )
+                .map_err(|e| {
+                    ContractError::generic_err(format!("Failed to instantiate node address: {e}"))
+                })?,
+            )?;
+
+            NODES.save(
+                deps.storage,
+                address.clone(),
+                &RegisteredNode {
+                    address: address.clone(),
+                    code_id,
+                    checksum: cosmwasm_std::HexBinary::from(code_info.checksum.as_slice()),
+                    status: NodeStatus::Active,
+                    size_weight,
+                },
+            )?;
+
+            Ok(Response::new()
+                .add_event(
+                    Event::new(format!("{}/node.deploy", env!("CARGO_PKG_NAME")))
+                        .add_attribute("address", address.as_str())
+                        .add_attribute("code_id", code_id.to_string())
+                        .add_attribute("size_weight", size_weight.to_string()),
+                )
+                .add_message(WasmMsg::Instantiate2 {
+                    admin: Some(env.contract.address.to_string()),
+                    code_id,
+                    label,
+                    msg: instantiate_msg,
+                    funds: info.funds,
+                    salt: salt.into(),
+                }))
+        }
+        ManagerExecuteMsg::UpdateNodeStatus { address, status } => {
+            let config = CONFIG.load(deps.storage)?;
+            if info.sender != config.owner {
+                return Err(ContractError::Unauthorized {});
+            }
+            let node = NODES.update(
+                deps.storage,
+                address.clone(),
+                |node| -> Result<RegisteredNode, ContractError> {
+                    let mut node =
+                        node.ok_or_else(|| ContractError::generic_err("Node is not registered"))?;
+                    node.status = status.clone();
+                    Ok(node)
+                },
+            )?;
+
+            Ok(Response::new().add_event(
+                Event::new(format!("{}/node.update-status", env!("CARGO_PKG_NAME")))
+                    .add_attribute("address", address.as_str())
+                    .add_attribute("status", node.status.as_str()),
+            ))
+        }
+        ManagerExecuteMsg::MigrateNode {
+            address,
+            new_code_id,
+            migrate_msg,
+            new_size_weight,
+        } => {
+            let config = CONFIG.load(deps.storage)?;
+            if info.sender != config.owner {
+                return Err(ContractError::Unauthorized {});
+            }
+            validate_node_weight(new_size_weight)?;
+            let code_info = deps
+                .querier
+                .query_wasm_code_info(new_code_id)
+                .map_err(|_| {
+                    ContractError::generic_err(format!("Invalid node code ID: {new_code_id}"))
+                })?;
+            let node = NODES.update(
+                deps.storage,
+                address.clone(),
+                |node| -> Result<RegisteredNode, ContractError> {
+                    let mut node =
+                        node.ok_or_else(|| ContractError::generic_err("Node is not registered"))?;
+                    node.code_id = new_code_id;
+                    node.checksum = cosmwasm_std::HexBinary::from(code_info.checksum.as_slice());
+                    node.size_weight = new_size_weight;
+                    Ok(node)
+                },
+            )?;
+
+            Ok(Response::new()
+                .add_event(
+                    Event::new(format!("{}/node.migrate", env!("CARGO_PKG_NAME")))
+                        .add_attribute("address", address.as_str())
+                        .add_attribute("code_id", new_code_id.to_string())
+                        .add_attribute("size_weight", new_size_weight.to_string()),
+                )
+                .add_message(WasmMsg::Migrate {
+                    contract_addr: node.address.to_string(),
+                    new_code_id,
+                    msg: migrate_msg,
+                }))
+        }
     }
 }
 
@@ -410,17 +595,196 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
             to_json_binary(&strategies)
         }
         ManagerQueryMsg::Count {} => to_json_binary(&STRATEGY_COUNTER.load(deps.storage)?),
+        ManagerQueryMsg::Node { address } => to_json_binary(&NODES.load(deps.storage, address)?),
+        ManagerQueryMsg::Nodes { start_after, limit } => {
+            let nodes = NODES
+                .range(
+                    deps.storage,
+                    start_after.map(Bound::exclusive),
+                    None,
+                    Order::Ascending,
+                )
+                .take(limit.unwrap_or(30) as usize)
+                .map(|result| result.map(|(_, node)| node))
+                .collect::<StdResult<Vec<_>>>()?;
+            to_json_binary(&nodes)
+        }
     }
+}
+
+fn validate_node_weight(size_weight: u16) -> Result<(), ContractError> {
+    if size_weight == 0 {
+        return Err(ContractError::generic_err(
+            "Node size weight must be greater than zero",
+        ));
+    }
+    Ok(())
+}
+
+fn external_counts(nodes: &[Node]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for node in nodes {
+        if let Some(external) = node.external() {
+            *counts
+                .entry(external.contract_address.to_string())
+                .or_default() += 1;
+        }
+    }
+    counts
+}
+
+fn validate_external_nodes(
+    deps: Deps,
+    nodes: &[Node],
+    existing_nodes: Option<&[Node]>,
+) -> Result<(), ContractError> {
+    let existing_counts = existing_nodes.map(external_counts).unwrap_or_default();
+
+    for address in existing_counts.keys() {
+        let address = deps.api.addr_validate(address)?;
+        let registered = NODES
+            .may_load(deps.storage, address.clone())?
+            .ok_or_else(|| {
+                ContractError::generic_err(format!("Node is not registered: {address}"))
+            })?;
+        if registered.status == NodeStatus::Disabled {
+            return Err(ContractError::generic_err(format!(
+                "Disabled node prevents strategy update: {address}"
+            )));
+        }
+    }
+
+    for (address, count) in external_counts(nodes) {
+        let address = deps.api.addr_validate(&address)?;
+        let registered = NODES
+            .may_load(deps.storage, address.clone())?
+            .ok_or_else(|| {
+                ContractError::generic_err(format!("Node is not registered: {address}"))
+            })?;
+
+        match registered.status {
+            NodeStatus::Active => {}
+            NodeStatus::Deprecated => {
+                let existing = existing_counts
+                    .get(address.as_str())
+                    .copied()
+                    .unwrap_or_default();
+                if count > existing {
+                    return Err(ContractError::generic_err(format!(
+                        "Deprecated node reference count cannot increase: {address}"
+                    )));
+                }
+            }
+            NodeStatus::Disabled => {
+                return Err(ContractError::generic_err(format!(
+                    "Disabled node cannot be used: {address}"
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use cosmwasm_schema::cw_serde;
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr,
+        to_json_binary, Addr, Checksum, CodeInfoResponse, ContractResult as QueryContractResult,
+        SystemResult,
     };
 
     use super::*;
+
+    fn mock_code_info(
+        deps: &mut cosmwasm_std::OwnedDeps<
+            cosmwasm_std::testing::MockStorage,
+            cosmwasm_std::testing::MockApi,
+            cosmwasm_std::testing::MockQuerier,
+        >,
+    ) {
+        let creator = deps.api.addr_make("code-creator");
+        deps.querier.update_wasm(move |_| {
+            SystemResult::Ok(QueryContractResult::Ok(
+                to_json_binary(&CodeInfoResponse::new(
+                    7,
+                    creator.clone(),
+                    Checksum::from([7u8; 32]),
+                ))
+                .unwrap(),
+            ))
+        });
+    }
+
+    #[test]
+    fn test_instantiate_stores_explicit_registry_owner() {
+        let mut deps = mock_dependencies();
+        mock_code_info(&mut deps);
+        let sender = deps.api.addr_make("sender");
+        let owner = deps.api.addr_make("registry-owner");
+        let fee_collector = deps.api.addr_make("fee-collector");
+
+        instantiate(
+            deps.as_mut(),
+            mock_env(),
+            message_info(&sender, &[]),
+            ManagerConfig {
+                owner: owner.clone(),
+                fee_collector,
+                strategy_code_id: 7,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(CONFIG.load(deps.as_ref().storage).unwrap().owner, owner);
+        assert_eq!(NODE_COUNTER.load(deps.as_ref().storage).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_migrate_initializes_owner_once_and_keeps_it_immutable() {
+        #[cw_serde]
+        struct OldConfig {
+            fee_collector: Addr,
+            strategy_code_id: u64,
+        }
+
+        let mut deps = mock_dependencies();
+        mock_code_info(&mut deps);
+        let owner = deps.api.addr_make("registry-owner");
+        let fee_collector = deps.api.addr_make("fee-collector");
+        let replacement_owner = deps.api.addr_make("replacement-owner");
+        Item::<OldConfig>::new("config")
+            .save(
+                deps.as_mut().storage,
+                &OldConfig {
+                    fee_collector,
+                    strategy_code_id: 1,
+                },
+            )
+            .unwrap();
+
+        migrate(
+            deps.as_mut(),
+            mock_env(),
+            MigrateMsg {
+                owner: owner.clone(),
+                strategy_code_id: 7,
+            },
+        )
+        .unwrap();
+        assert_eq!(CONFIG.load(deps.as_ref().storage).unwrap().owner, owner);
+
+        assert!(migrate(
+            deps.as_mut(),
+            mock_env(),
+            MigrateMsg {
+                owner: replacement_owner,
+                strategy_code_id: 7,
+            },
+        )
+        .is_err());
+    }
 
     #[test]
     fn test_cannot_execute_inactive_strategy() {

@@ -4,10 +4,14 @@
   "type": "object",
   "required": [
     "fee_collector",
+    "owner",
     "strategy_code_id"
   ],
   "properties": {
     "fee_collector": {
+      "$ref": "#/definitions/Addr"
+    },
+    "owner": {
       "$ref": "#/definitions/Addr"
     },
     "strategy_code_id": {

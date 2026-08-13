@@ -52,6 +52,14 @@ pub enum StrategyExecuteMsg {
         operation: StrategyOperation,
         previous: Option<u16>,
     },
+    ProcessWithoutCommit {
+        operation: StrategyOperation,
+        previous: u16,
+    },
+    ProcessAt {
+        operation: StrategyOperation,
+        next: Option<u16>,
+    },
 }
 
 #[cw_serde]
@@ -90,6 +98,34 @@ impl Node {
         match self {
             Node::Action { index, .. } => *index,
             Node::Condition { index, .. } => *index,
+        }
+    }
+
+    pub fn external(&self) -> Option<&calc_node_interface::ExternalNode> {
+        match self {
+            Node::Action {
+                action: Action::External(external),
+                ..
+            }
+            | Node::Condition {
+                condition: Condition::External(external),
+                ..
+            } => Some(external),
+            _ => None,
+        }
+    }
+
+    pub fn external_mut(&mut self) -> Option<&mut calc_node_interface::ExternalNode> {
+        match self {
+            Node::Action {
+                action: Action::External(external),
+                ..
+            }
+            | Node::Condition {
+                condition: Condition::External(external),
+                ..
+            } => Some(external),
+            _ => None,
         }
     }
 
