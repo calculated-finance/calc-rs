@@ -313,11 +313,21 @@ pub fn execute(
                     .next()
                     .is_some()
             {
-                let existing = deps.querier.query_wasm_smart::<StrategyConfig>(
-                    &contract_address,
-                    &StrategyQueryMsg::Config {},
-                )?;
-                validate_external_nodes(deps.as_ref(), &nodes, Some(&existing.nodes))?;
+                let existing_counts =
+                    match deps.querier.query_wasm_smart::<Vec<cosmwasm_std::Addr>>(
+                        &contract_address,
+                        &StrategyQueryMsg::ExternalNodeReferences {},
+                    ) {
+                        Ok(addresses) => external_address_counts(&addresses),
+                        Err(_) => {
+                            let existing = deps.querier.query_wasm_smart::<StrategyConfig>(
+                                &contract_address,
+                                &StrategyQueryMsg::Config {},
+                            )?;
+                            external_counts(&existing.nodes)
+                        }
+                    };
+                validate_external_nodes(deps.as_ref(), &nodes, Some(&existing_counts))?;
             }
 
             STRATEGIES.save(
@@ -633,12 +643,20 @@ fn external_counts(nodes: &[Node]) -> BTreeMap<String, usize> {
     counts
 }
 
+fn external_address_counts(addresses: &[cosmwasm_std::Addr]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for address in addresses {
+        *counts.entry(address.to_string()).or_default() += 1;
+    }
+    counts
+}
+
 fn validate_external_nodes(
     deps: Deps,
     nodes: &[Node],
-    existing_nodes: Option<&[Node]>,
+    existing_counts: Option<&BTreeMap<String, usize>>,
 ) -> Result<(), ContractError> {
-    let existing_counts = existing_nodes.map(external_counts).unwrap_or_default();
+    let existing_counts = existing_counts.cloned().unwrap_or_default();
 
     for address in existing_counts.keys() {
         let address = deps.api.addr_validate(address)?;

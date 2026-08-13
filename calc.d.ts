@@ -569,6 +569,9 @@ export type StrategyQueryMsg =
       config: {};
     }
   | {
+      external_node_references: {};
+    }
+  | {
       balances: {};
     };
 export type StrategyExecuteMsg =
@@ -606,6 +609,7 @@ export type StrategyExecuteMsg =
       };
     };
 export type StrategyOperation = "execute" | "cancel";
+export type ArrayOf_Addr = Addr[];
 export type ArrayOf_Coin = Coin[];
 
 export interface StrategyConfig {

@@ -16,7 +16,7 @@ use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     from_json, to_json_binary, to_json_string, BankMsg, Binary, Coin, Coins, CosmosMsg, Decimal,
     Deps, DepsMut, Env, Event, MessageInfo, Reply, Response, StdError, StdResult, SubMsg,
-    SubMsgResult, WasmMsg,
+    SubMsgResponse, SubMsgResult, WasmMsg,
 };
 
 use crate::state::{
@@ -449,6 +449,35 @@ fn process_nodes(
     ))
 }
 
+fn external_node_messages(response: SubMsgResponse) -> Result<Vec<CosmosMsg>, ContractError> {
+    const EXECUTE_RESPONSE_TYPE: &str = "/cosmwasm.wasm.v1.MsgExecuteContractResponse";
+
+    #[allow(deprecated)]
+    let legacy_data = response.data;
+    let execute_response = response
+        .msg_responses
+        .into_iter()
+        .find(|response| response.type_url == EXECUTE_RESPONSE_TYPE)
+        .map(|response| response.value)
+        .or(legacy_data)
+        .ok_or_else(|| ContractError::generic_err("External node returned no response data"))?;
+
+    let data = cw_utils::parse_execute_response_data(execute_response.as_slice())
+        .map_err(|e| {
+            ContractError::generic_err(format!(
+                "External node returned malformed execute response: {e}"
+            ))
+        })?
+        .data
+        .ok_or_else(|| ContractError::generic_err("External node returned no contract data"))?;
+
+    from_json(data).map_err(|e| {
+        ContractError::generic_err(format!(
+            "External node returned malformed response data: {e}"
+        ))
+    })
+}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
     if reply.id == EXTERNAL_NODE_REPLY_ID {
@@ -460,25 +489,7 @@ pub fn reply(deps: DepsMut, env: Env, reply: Reply) -> ContractResult {
 
         return match reply.result {
             SubMsgResult::Ok(response) => {
-                #[allow(deprecated)]
-                let data = response.data.ok_or_else(|| {
-                    ContractError::generic_err("External node returned no response data")
-                })?;
-                let data = cw_utils::parse_execute_response_data(data.as_slice())
-                    .map_err(|e| {
-                        ContractError::generic_err(format!(
-                            "External node returned malformed execute response: {e}"
-                        ))
-                    })?
-                    .data
-                    .ok_or_else(|| {
-                        ContractError::generic_err("External node returned no contract data")
-                    })?;
-                let messages: Vec<CosmosMsg> = from_json(data).map_err(|e| {
-                    ContractError::generic_err(format!(
-                        "External node returned malformed response data: {e}"
-                    ))
-                })?;
+                let messages = external_node_messages(response)?;
                 let mut result = Response::new().add_event(
                     event
                         .add_attribute("status", "success")
@@ -568,6 +579,16 @@ pub fn query(deps: Deps, env: Env, msg: StrategyQueryMsg) -> StdResult<Binary> {
                 withdrawals: WITHDRAWALS.load(deps.storage)?,
             })
         }
+        StrategyQueryMsg::ExternalNodeReferences {} => to_json_binary(
+            &NODES
+                .all(deps.storage)?
+                .iter()
+                .filter_map(|node| {
+                    node.external()
+                        .map(|external| external.contract_address.clone())
+                })
+                .collect::<Vec<_>>(),
+        ),
         StrategyQueryMsg::Balances {} => {
             let revision = REVISION.load(deps.storage)?;
             let mut balances = NODES.all(deps.storage)?.iter().try_fold(
@@ -614,8 +635,44 @@ mod tests {
     };
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr, Uint128,
+        Addr, MsgResponse, Uint128,
     };
+
+    fn execute_response(data: Binary) -> Binary {
+        assert!(data.len() < 128);
+        let mut response = vec![0x0a, data.len() as u8];
+        response.extend_from_slice(data.as_slice());
+        response.into()
+    }
+
+    #[test]
+    fn external_node_messages_prefers_msg_responses() {
+        #[allow(deprecated)]
+        let response = SubMsgResponse {
+            events: vec![],
+            data: Some(Binary::from(b"malformed".as_slice())),
+            msg_responses: vec![MsgResponse {
+                type_url: "/cosmwasm.wasm.v1.MsgExecuteContractResponse".to_string(),
+                value: execute_response(to_json_binary(&Vec::<CosmosMsg>::new()).unwrap()),
+            }],
+        };
+
+        assert_eq!(external_node_messages(response).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn external_node_messages_falls_back_to_legacy_data() {
+        #[allow(deprecated)]
+        let response = SubMsgResponse {
+            events: vec![],
+            data: Some(execute_response(
+                to_json_binary(&Vec::<CosmosMsg>::new()).unwrap(),
+            )),
+            msg_responses: vec![],
+        };
+
+        assert_eq!(external_node_messages(response).unwrap(), vec![]);
+    }
 
     #[test]
     fn test_only_manager_can_invoke_update() {

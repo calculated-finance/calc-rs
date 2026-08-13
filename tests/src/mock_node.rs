@@ -1,4 +1,4 @@
-use calc_node_interface::{NodeDetailsResponse, NodeExecuteMsg, NodeQueryMsg};
+use calc_node_interface::{NodeDetailsResponse, NodeExecuteMsg};
 use calc_rs::manager::{ManagerQueryMsg, Strategy};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
@@ -21,6 +21,7 @@ pub struct MockNodeConfig {
     pub fail_execute: bool,
     pub fail_cancel: bool,
     pub fail_commit: bool,
+    pub fail_details: bool,
     pub malformed_response: bool,
 }
 
@@ -33,6 +34,7 @@ impl Default for MockNodeConfig {
             fail_execute: false,
             fail_cancel: false,
             fail_commit: false,
+            fail_details: false,
             malformed_response: false,
         }
     }
@@ -44,6 +46,30 @@ pub struct MockNodeState {
     pub execute_count: u64,
     pub cancel_count: u64,
     pub commit_count: u64,
+}
+
+#[cw_serde]
+pub enum MockNodeQueryMsg {
+    Details {
+        strategy: Addr,
+        strategy_revision: u64,
+        node_index: u16,
+    },
+    IsSatisfied {
+        strategy: Addr,
+        strategy_revision: u64,
+        node_index: u16,
+    },
+    Balances {
+        strategy: Addr,
+        strategy_revision: u64,
+        node_index: u16,
+    },
+    State {
+        strategy: Addr,
+        strategy_revision: u64,
+        node_index: u16,
+    },
 }
 
 const MANAGER: Item<Addr> = Item::new("manager");
@@ -163,19 +189,24 @@ pub fn execute(
 }
 
 #[entry_point]
-pub fn query(deps: Deps, _env: Env, msg: NodeQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, _env: Env, msg: MockNodeQueryMsg) -> StdResult<Binary> {
     let (strategy, revision, index) = match &msg {
-        NodeQueryMsg::Details {
+        MockNodeQueryMsg::Details {
             strategy,
             strategy_revision,
             node_index,
         }
-        | NodeQueryMsg::IsSatisfied {
+        | MockNodeQueryMsg::IsSatisfied {
             strategy,
             strategy_revision,
             node_index,
         }
-        | NodeQueryMsg::Balances {
+        | MockNodeQueryMsg::Balances {
+            strategy,
+            strategy_revision,
+            node_index,
+        }
+        | MockNodeQueryMsg::State {
             strategy,
             strategy_revision,
             node_index,
@@ -185,10 +216,17 @@ pub fn query(deps: Deps, _env: Env, msg: NodeQueryMsg) -> StdResult<Binary> {
     let config: MockNodeConfig = cosmwasm_std::from_json(state.config.clone())?;
 
     match msg {
-        NodeQueryMsg::Details { .. } => to_json_binary(&NodeDetailsResponse {
-            config: state.config,
-        }),
-        NodeQueryMsg::IsSatisfied { .. } => to_json_binary(&config.satisfied),
-        NodeQueryMsg::Balances { .. } => to_json_binary(&config.balances),
+        MockNodeQueryMsg::Details { .. } => {
+            if config.fail_details {
+                Err(StdError::generic_err("Mock details failure"))
+            } else {
+                to_json_binary(&NodeDetailsResponse {
+                    config: state.config,
+                })
+            }
+        }
+        MockNodeQueryMsg::IsSatisfied { .. } => to_json_binary(&config.satisfied),
+        MockNodeQueryMsg::Balances { .. } => to_json_binary(&config.balances),
+        MockNodeQueryMsg::State { .. } => to_json_binary(&state),
     }
 }

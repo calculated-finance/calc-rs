@@ -67,6 +67,8 @@ pub enum StrategyExecuteMsg {
 pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
     Config {},
+    #[returns(Vec<Addr>)]
+    ExternalNodeReferences {},
     #[returns(Vec<Coin>)]
     Balances {},
 }
@@ -129,8 +131,8 @@ impl Node {
         }
     }
 
-    pub fn next_index(&self, deps: Deps, env: &Env) -> Option<u16> {
-        match self {
+    pub fn next_index(&self, deps: Deps, env: &Env) -> StdResult<Option<u16>> {
+        Ok(match self {
             Node::Action { next, .. } => *next,
             Node::Condition {
                 condition,
@@ -138,13 +140,18 @@ impl Node {
                 on_success,
                 ..
             } => {
+                if matches!(condition, Condition::External(_)) {
+                    return Err(cosmwasm_std::StdError::generic_err(
+                        "External condition traversal must be handled by the strategy adapter",
+                    ));
+                }
                 if condition.is_satisfied(deps, env).unwrap_or(false) {
                     *on_success
                 } else {
                     *on_failure
                 }
             }
-        }
+        })
     }
 }
 
@@ -280,5 +287,32 @@ impl StatefulOperation<Node> for Node {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use calc_node_interface::ExternalNode;
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Addr, Binary,
+    };
+
+    use super::*;
+
+    #[test]
+    fn external_condition_traversal_requires_strategy_adapter() {
+        let deps = mock_dependencies();
+        let node = Node::Condition {
+            condition: Condition::External(ExternalNode {
+                contract_address: Addr::unchecked("external-node"),
+                config: Binary::default(),
+            }),
+            index: 0,
+            on_success: Some(1),
+            on_failure: Some(2),
+        };
+
+        assert!(node.next_index(deps.as_ref(), &mock_env()).is_err());
     }
 }

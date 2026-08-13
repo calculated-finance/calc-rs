@@ -91,6 +91,10 @@ pub enum NodeStatus {
 
 Strategy creation and update validate every external singleton against this registry. Runtime execution checks registry status again. Registry entries are never deleted.
 
+Manager Update reads stored external references through the strategy's non-hydrating `ExternalNodeReferences` query. This permits removal of an Active node whose `Details` query is broken while retaining Disabled-node blocking and Deprecated reference-count enforcement. Legacy strategy code falls back to `Config`.
+
+Registry approval is a security boundary. Before approving a checksum, owner must verify singleton implementation authenticates `Register` against this manager, isolates state by sender/revision/index, does not custody funds requiring old-revision recovery, and does not expose generic affiliate-bearing distribution or withdrawal behavior.
+
 ### `DeployNode`
 
 Owner-only atomic singleton deployment and approval:
