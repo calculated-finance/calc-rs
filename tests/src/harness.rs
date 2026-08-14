@@ -97,6 +97,7 @@ impl CalcTestApp {
                 manager_code_id,
                 admin.clone(),
                 &ManagerConfig {
+                    owner: admin.clone(),
                     strategy_code_id,
                     fee_collector: fee_collector_addr.clone(),
                 },

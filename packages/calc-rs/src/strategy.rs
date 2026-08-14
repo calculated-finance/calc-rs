@@ -52,6 +52,14 @@ pub enum StrategyExecuteMsg {
         operation: StrategyOperation,
         previous: Option<u16>,
     },
+    ProcessWithoutCommit {
+        operation: StrategyOperation,
+        previous: u16,
+    },
+    ProcessAt {
+        operation: StrategyOperation,
+        next: Option<u16>,
+    },
 }
 
 #[cw_serde]
@@ -59,6 +67,8 @@ pub enum StrategyExecuteMsg {
 pub enum StrategyQueryMsg {
     #[returns(StrategyConfig)]
     Config {},
+    #[returns(Vec<Addr>)]
+    ExternalNodeReferences {},
     #[returns(Vec<Coin>)]
     Balances {},
 }
@@ -93,20 +103,64 @@ impl Node {
         }
     }
 
-    pub fn next_index(&self, deps: Deps, env: &Env) -> Option<u16> {
+    pub fn external(&self) -> Option<&calc_node_interface::ExternalNode> {
         match self {
-            Node::Action { next, .. } => *next,
+            Node::Action {
+                action: Action::External(external),
+                ..
+            }
+            | Node::Condition {
+                condition: Condition::External(external),
+                ..
+            } => Some(external),
+            _ => None,
+        }
+    }
+
+    pub fn external_mut(&mut self) -> Option<&mut calc_node_interface::ExternalNode> {
+        match self {
+            Node::Action {
+                action: Action::External(external),
+                ..
+            }
+            | Node::Condition {
+                condition: Condition::External(external),
+                ..
+            } => Some(external),
+            _ => None,
+        }
+    }
+
+    pub fn next_index(&self, deps: Deps, env: &Env) -> StdResult<Option<u16>> {
+        self.next_index_with_external(deps, env, |_| {
+            Err(cosmwasm_std::StdError::generic_err(
+                "External condition traversal must be handled by the strategy adapter",
+            ))
+        })
+    }
+
+    pub fn next_index_with_external<F>(
+        &self,
+        deps: Deps,
+        env: &Env,
+        external_is_satisfied: F,
+    ) -> StdResult<Option<u16>>
+    where
+        F: FnOnce(&calc_node_interface::ExternalNode) -> StdResult<bool>,
+    {
+        match self {
+            Node::Action { next, .. } => Ok(*next),
             Node::Condition {
                 condition,
-                on_failure,
                 on_success,
+                on_failure,
                 ..
             } => {
-                if condition.is_satisfied(deps, env).unwrap_or(false) {
-                    *on_success
-                } else {
-                    *on_failure
-                }
+                let satisfied = match condition {
+                    Condition::External(external) => external_is_satisfied(external)?,
+                    _ => condition.is_satisfied(deps, env).unwrap_or(false),
+                };
+                Ok(if satisfied { *on_success } else { *on_failure })
             }
         }
     }
@@ -244,5 +298,42 @@ impl StatefulOperation<Node> for Node {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use calc_node_interface::ExternalNode;
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env},
+        Addr, Binary,
+    };
+
+    use super::*;
+
+    #[test]
+    fn external_condition_traversal_requires_strategy_adapter() {
+        let deps = mock_dependencies();
+        let node = Node::Condition {
+            condition: Condition::External(ExternalNode {
+                contract_address: Addr::unchecked("external-node"),
+                config: Binary::default(),
+            }),
+            index: 0,
+            on_success: Some(1),
+            on_failure: Some(2),
+        };
+
+        assert!(node.next_index(deps.as_ref(), &mock_env()).is_err());
+        assert_eq!(
+            node.next_index_with_external(deps.as_ref(), &mock_env(), |_| Ok(true))
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            node.next_index_with_external(deps.as_ref(), &mock_env(), |_| Ok(false))
+                .unwrap(),
+            Some(2)
+        );
     }
 }

@@ -15,6 +15,7 @@ Each strategy contract is an isolated execution environment that owns and manage
 - **Cycle Prevention:** Built-in validation ensures strategies cannot create infinite execution loops
 - **Fund Isolation:** Each strategy manages its own isolated funds with denomination tracking
 - **Dynamic Updates:** Hot-swapping of strategy logic with proper cleanup of existing state
+- **External Nodes:** Approved singleton contracts can implement actions and conditions behind existing graph interfaces
 
 ## Strategy Domain Model
 
@@ -42,6 +43,50 @@ Action nodes perform specific operations and always proceed to the next node aft
 - `Swap`: Execute a swap between two assets under certain market conditions
 - `LimitOrder`: Place a limit order with specific parameters
 - `Distribute`: Transfer funds to another address, execute another contract with funds, or execute a thorchain `MsgDeposit` with a memo
+- `External`: Execute an approved singleton action contract
+
+Both action and condition enums support:
+
+```rust
+External(ExternalNode {
+    contract_address: Addr,
+    config: Binary,
+})
+```
+
+External node configuration is opaque to strategy. Singleton owns configuration validation and mutable state.
+
+## External Singleton Execution
+
+Singleton state is isolated by `(strategy address, strategy revision, node index)`. Every successful strategy update increments revision and registers fresh external records. Old revision records remain stored but unreferenced.
+
+Registration flow:
+
+1. Manager validates singleton registry status.
+2. Strategy validates graph and registry size weight.
+3. Strategy calls singleton `Register` with opaque configuration.
+4. Singleton verifies sender exists in manager strategy registry.
+5. Any failure rolls back complete creation or update.
+
+Runtime flow:
+
+1. Strategy checks singleton is Active or Deprecated.
+2. Strategy calls singleton `Execute` or `Cancel`.
+3. Singleton updates its state and returns `Vec<CosmosMsg>` through reply data.
+4. Strategy executes returned messages as itself.
+5. Message failures are logged and swallowed, matching internal-node behavior.
+6. Strategy calls singleton `Commit` where current engine commits local nodes.
+7. External conditions use `IsSatisfied` query for graph branch selection.
+
+The current engine calls `Commit` after failed external `Execute` or `Cancel` calls, matching its local-node error path. Singleton `Commit` must therefore tolerate missing staged execution state. A successful zero-message call advances without `Commit`, also matching local-node behavior.
+
+Disabled singleton produces hard strategy failure. This also blocks Cancel, so affected strategy cannot update, pause, or archive until node is re-enabled or migrated.
+
+When a scheduler invokes a strategy containing a Disabled singleton, scheduler error handling still consumes the trigger and pays its rebate. Re-enabling the singleton does not recreate that trigger; strategy requires manual execution or trigger recreation.
+
+External node contracts receive no owner or affiliate context. Distribution and withdrawal remain internal strategy concerns. Approved singleton implementations must not expose generic user-configurable distribution or withdrawal flows that bypass those internal fee paths.
+
+Singleton state must not custody strategy funds that depend on old revision access. A failed `Cancel` is swallowed like current local-node failures, and successful update then leaves old revision state stored but unreferenced.
 
 ### Graph Structure
 
@@ -238,6 +283,16 @@ pub struct StrategyConfig {
 }
 ```
 
+External references are hydrated through singleton `Details` queries. Returned opaque configuration is directly reusable in `Update`. Any hydration failure fails entire query.
+
+### `ExternalNodeReferences`
+
+Returns stored singleton addresses without calling `Details`. Manager uses this non-hydrating query to enforce Disabled and Deprecated policies even when a singleton's configuration query is broken. Older strategy code falls back to the hydrated `Config` query.
+
+```rust
+ExternalNodeReferences {} -> Vec<Addr>
+```
+
 ### `Balances`
 
 Returns strategy balances across all holdings.
@@ -245,7 +300,8 @@ Returns strategy balances across all holdings.
 - **Returns:** `Vec<Coin>` with complete balance information
 - **Sources:**
   - Direct contract balances
-  - Balances held in external protocols (i.e. limit orders)
+- Balances held in external protocols (i.e. limit orders)
+- Balances reported by external singleton nodes
 
 ## State Management
 
@@ -255,6 +311,8 @@ Returns strategy balances across all holdings.
 - **`OWNER`:** Strategy owner address
 - **`AFFILIATES`:** Fee distribution configuration
 - **`NODES`:** Map of node index to Node data
+- **`REVISION`:** Current strategy graph generation
+- **`PENDING_EXTERNAL`:** In-flight external node execution context
 
 ### Node Storage
 
@@ -289,3 +347,6 @@ The NodeStore implements comprehensive validation:
 - **Cycle Prevention:** Graph validation prevents infinite execution loops and hanging pointers
 - **State Consistency:** Operation trait ensures consistent state transitions
 - **Size Limits:** Prevents gas exhaustion through strategy size constraints
+- **Singleton Authentication:** Approved node contracts verify `Register` sender against manager strategy registry and isolate later access by sender, revision, and node index
+- **Singleton Custody:** Approved node contracts do not custody funds that require recovery through unreferenced old revisions
+- **Affiliate Boundary:** Affiliate-bearing distributions and withdrawals remain internal strategy operations

@@ -18,6 +18,19 @@
     {
       "type": "object",
       "required": [
+        "external_node_references"
+      ],
+      "properties": {
+        "external_node_references": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
         "balances"
       ],
       "properties": {

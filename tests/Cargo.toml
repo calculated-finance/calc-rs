@@ -10,10 +10,13 @@ exclude = []
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+calc-node-interface = { workspace = true }
 calc-rs = { workspace = true }
 calc-rs-test = { workspace = true }
+cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }
 cw-multi-test = { workspace = true }
+cw-storage-plus = { workspace = true }
 calc-manager = { workspace = true }
 rujira-rs = { workspace = true }
 rujira-fin = { git = "https://gitlab.com/thorchain/rujira.git", rev = "3666e52645b9c77a4b5d5d42352527eb86f31b09", package = "rujira-fin" }

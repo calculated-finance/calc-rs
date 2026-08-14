@@ -151,6 +151,105 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "deploy_node"
+      ],
+      "properties": {
+        "deploy_node": {
+          "type": "object",
+          "required": [
+            "code_id",
+            "instantiate_msg",
+            "label",
+            "size_weight"
+          ],
+          "properties": {
+            "code_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "instantiate_msg": {
+              "$ref": "#/definitions/Binary"
+            },
+            "label": {
+              "type": "string"
+            },
+            "size_weight": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "update_node_status"
+      ],
+      "properties": {
+        "update_node_status": {
+          "type": "object",
+          "required": [
+            "address",
+            "status"
+          ],
+          "properties": {
+            "address": {
+              "$ref": "#/definitions/Addr"
+            },
+            "status": {
+              "$ref": "#/definitions/NodeStatus"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "migrate_node"
+      ],
+      "properties": {
+        "migrate_node": {
+          "type": "object",
+          "required": [
+            "address",
+            "migrate_msg",
+            "new_code_id",
+            "new_size_weight"
+          ],
+          "properties": {
+            "address": {
+              "$ref": "#/definitions/Addr"
+            },
+            "migrate_msg": {
+              "$ref": "#/definitions/Binary"
+            },
+            "new_code_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "new_size_weight": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   ],
   "definitions": {
@@ -188,6 +287,18 @@
           "properties": {
             "distribute": {
               "$ref": "#/definitions/Distribution"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "external"
+          ],
+          "properties": {
+            "external": {
+              "$ref": "#/definitions/ExternalNode"
             }
           },
           "additionalProperties": false
@@ -584,6 +695,18 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "external"
+          ],
+          "properties": {
+            "external": {
+              "$ref": "#/definitions/ExternalNode"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -667,6 +790,22 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExternalNode": {
+      "type": "object",
+      "required": [
+        "config",
+        "contract_address"
+      ],
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/Binary"
+        },
+        "contract_address": {
+          "$ref": "#/definitions/Addr"
         }
       },
       "additionalProperties": false
@@ -811,6 +950,14 @@
           },
           "additionalProperties": false
         }
+      ]
+    },
+    "NodeStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "deprecated",
+        "disabled"
       ]
     },
     "Offset": {

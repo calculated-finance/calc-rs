@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anybuf = { workspace = true }
+calc-node-interface = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 cosmwasm-schema = { workspace = true }
 cosmwasm-std = { workspace = true }

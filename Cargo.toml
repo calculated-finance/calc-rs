@@ -22,11 +22,13 @@ anybuf = "1.0"
 anyhow = "1"
 calc-rs = { path = "packages/calc-rs" }
 calc-rs-test = { path = "packages/calc-rs-test" }
+calc-node-interface = { path = "packages/calc-node-interface" }
 cosmwasm-schema = "2.2.0"
 cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_1", "stargate"] }
 cosmwasm-storage = "1.5.2"
 cw-multi-test = { version = "2", features = ["cosmwasm_2_1"] }
 cw-storage-plus = "2.0.0"
+cw-utils = "2.0.0"
 calc-manager = { path = "contracts/manager" }
 prost = "0.13"
 rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "3666e52645b9c77a4b5d5d42352527eb86f31b09", features = ["interface-fin", "query", "oracle"] }
