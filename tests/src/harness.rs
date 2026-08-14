@@ -76,6 +76,7 @@ impl CalcTestApp {
                 &InstantiateMsg {
                     denoms: Denoms::new(base_denom, quote_denom),
                     market_makers: vec![],
+                    commits: vec![],
                     oracles: None,
                     tick: Tick::new(6u8),
                     range_delta: Decimal::permille(50),

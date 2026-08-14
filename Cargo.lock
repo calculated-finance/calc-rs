@@ -259,7 +259,7 @@ dependencies = [
  "cron",
  "cw-storage-plus",
  "prost 0.13.5",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=6039721871f46cfb927d94c6d68dc1354a8cc443)",
+ "rujira-rs",
  "thiserror 1.0.69",
 ]
 
@@ -272,7 +272,7 @@ dependencies = [
  "cosmwasm-std",
  "cw-multi-test",
  "prost 0.13.5",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=6039721871f46cfb927d94c6d68dc1354a8cc443)",
+ "rujira-rs",
  "serde",
 ]
 
@@ -284,7 +284,7 @@ dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=6039721871f46cfb927d94c6d68dc1354a8cc443)",
+ "rujira-rs",
 ]
 
 [[package]]
@@ -891,7 +891,7 @@ dependencies = [
  "cosmwasm-std",
  "cw-multi-test",
  "rujira-fin",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=6039721871f46cfb927d94c6d68dc1354a8cc443)",
+ "rujira-rs",
 ]
 
 [[package]]
@@ -1207,8 +1207,8 @@ dependencies = [
 
 [[package]]
 name = "rujira-fin"
-version = "2.1.10"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=a5634d42df58da51f03c8e54eca818708d2aa2ce#6039721871f46cfb927d94c6d68dc1354a8cc443"
+version = "2.2.0"
+source = "git+https://gitlab.com/thorchain/rujira.git?rev=3666e52645b9c77a4b5d5d42352527eb86f31b09#3666e52645b9c77a4b5d5d42352527eb86f31b09"
 dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -1216,7 +1216,7 @@ dependencies = [
  "cw-utils",
  "cw2",
  "itertools 0.14.0",
- "rujira-rs 0.0.1 (git+https://gitlab.com/thorchain/rujira.git?rev=a5634d42df58da51f03c8e54eca818708d2aa2ce)",
+ "rujira-rs",
  "schemars",
  "serde",
  "thiserror 1.0.69",
@@ -1224,29 +1224,8 @@ dependencies = [
 
 [[package]]
 name = "rujira-rs"
-version = "0.0.1"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=6039721871f46cfb927d94c6d68dc1354a8cc443#6039721871f46cfb927d94c6d68dc1354a8cc443"
-dependencies = [
- "anybuf 0.5.2",
- "cosmos-sdk-proto",
- "cosmwasm-schema",
- "cosmwasm-schema-derive",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "itertools 0.14.0",
- "postcard",
- "prost 0.13.5",
- "schemars",
- "serde",
- "sha2",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "rujira-rs"
-version = "0.0.1"
-source = "git+https://gitlab.com/thorchain/rujira.git?rev=a5634d42df58da51f03c8e54eca818708d2aa2ce#6039721871f46cfb927d94c6d68dc1354a8cc443"
+version = "0.0.2"
+source = "git+https://gitlab.com/thorchain/rujira.git?rev=3666e52645b9c77a4b5d5d42352527eb86f31b09#3666e52645b9c77a4b5d5d42352527eb86f31b09"
 dependencies = [
  "anybuf 0.5.2",
  "cosmos-sdk-proto",

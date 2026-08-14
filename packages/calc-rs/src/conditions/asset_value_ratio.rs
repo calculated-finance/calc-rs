@@ -160,6 +160,7 @@ mod tests {
                         ),
                         oracles: None,
                         market_makers: vec![],
+                        commits: vec![],
                         tick: Tick::new(1),
                         range_delta: Decimal::zero(),
                         range_min: Decimal::one(),
