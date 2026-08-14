@@ -375,6 +375,7 @@ mod conditions_tests {
                         denoms: Denoms::new("rune", "x/ruji"),
                         oracles: None,
                         market_makers: vec![],
+                        commits: vec![],
                         tick: Tick::new(6),
                         range_delta: Decimal::zero(),
                         range_min: Decimal::one(),
