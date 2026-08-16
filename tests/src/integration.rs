@@ -14,7 +14,7 @@ mod integration_tests {
         },
         constants::BASE_FEE_BPS,
         core::Amount,
-        manager::{Affiliate, ManagerExecuteMsg, ManagerQueryMsg, StrategyStatus},
+        manager::{Affiliate, ManagerExecuteMsg, StrategyStatus},
         scheduler::{ConditionFilter, CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
     };
@@ -79,6 +79,19 @@ mod integration_tests {
             minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
             maximum_slippage_bps: 101,
             adjustment: SwapAmountAdjustment::Fixed,
+        }
+    }
+
+    fn default_delegated_swap_action(harness: &CalcTestApp, on_behalf_of: Addr) -> DelegatedSwap {
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
+        DelegatedSwap {
+            on_behalf_of,
+            pair_address: harness.fin_addr.clone(),
+            swap_amount: Coin::new(1000u128, fin_pair.denoms.base()),
+            minimum_receive_amount: Coin::new(1u128, fin_pair.denoms.quote()),
+            maximum_slippage_bps: 101,
+            adjustment: SwapAmountAdjustment::Fixed,
+            affiliates: None,
         }
     }
 
@@ -277,24 +290,14 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_strategy_nonce_predicts_address_before_creation() {
+    fn test_instantiate_strategy_with_nonce_matches_predicted_address() {
         let mut harness = CalcTestApp::setup();
         let owner = harness.unknown.clone();
         let nonce = Binary::from(b"external-wallet-strategy".as_slice());
 
-        let predicted = harness
-            .app
-            .wrap()
-            .query_wasm_smart::<Addr>(
-                &harness.manager_addr,
-                &ManagerQueryMsg::StrategyAddress {
-                    owner: owner.clone(),
-                    nonce: nonce.clone(),
-                },
-            )
-            .unwrap();
+        let predicted_address = harness.query_strategy_address(&owner, &nonce);
 
-        let created = harness
+        let strategy_address = harness
             .create_strategy_with_nonce(
                 &owner,
                 "Predictable strategy",
@@ -305,7 +308,7 @@ mod integration_tests {
             )
             .unwrap();
 
-        assert_eq!(created, predicted);
+        assert_eq!(strategy_address, predicted_address);
     }
 
     #[test]
@@ -806,70 +809,51 @@ mod integration_tests {
     #[test]
     fn test_instantiate_delegated_swap_uses_external_wallet_and_takes_input_fee() {
         let mut harness = CalcTestApp::setup();
-        let fin_pair = harness.query_fin_config(&harness.fin_addr);
         let on_behalf_of = harness.unknown.clone();
         let fee_collector = harness.fee_collector_addr.clone();
-        let pair_address = harness.fin_addr.clone();
-        let swap_amount = Coin::new(1_000u128, fin_pair.denoms.base());
-        let receive_denom = fin_pair.denoms.quote().to_string();
+        let swap_action = default_delegated_swap_action(&harness, on_behalf_of.clone());
 
-        let balance_before = harness
-            .app
-            .wrap()
-            .query_balance(&on_behalf_of, &swap_amount.denom)
-            .unwrap();
-        let receive_before = harness
-            .app
-            .wrap()
-            .query_balance(&on_behalf_of, &receive_denom)
-            .unwrap();
-        let fee_before = harness
-            .app
-            .wrap()
-            .query_balance(&fee_collector, &swap_amount.denom)
-            .unwrap();
+        let swap_balance_before =
+            harness.query_balance(&on_behalf_of, &swap_action.swap_amount.denom);
+        let receive_balance_before =
+            harness.query_balance(&on_behalf_of, &swap_action.minimum_receive_amount.denom);
+        let fee_balance_before =
+            harness.query_balance(&fee_collector, &swap_action.swap_amount.denom);
 
         let mut strategy = StrategyBuilder::new(&mut harness)
             .with_nodes(vec![Node::Action {
-                action: Action::DelegatedSwap(DelegatedSwap {
-                    on_behalf_of: on_behalf_of.clone(),
-                    pair_address,
-                    swap_amount: swap_amount.clone(),
-                    minimum_receive_amount: Coin::new(1u128, receive_denom.clone()),
-                    maximum_slippage_bps: 101,
-                    adjustment: SwapAmountAdjustment::Fixed,
-                    affiliates: None,
-                }),
+                action: Action::DelegatedSwap(swap_action.clone()),
                 index: 0,
                 next: None,
             }])
             .instantiate(&[]);
 
-        let balance_after = strategy
+        let swap_balance_after = strategy
             .harness
-            .app
-            .wrap()
-            .query_balance(&on_behalf_of, &swap_amount.denom)
-            .unwrap();
-        let receive_after = strategy
+            .query_balance(&on_behalf_of, &swap_action.swap_amount.denom);
+        let receive_balance_after = strategy
             .harness
-            .app
-            .wrap()
-            .query_balance(&on_behalf_of, &receive_denom)
-            .unwrap();
-        let fee_after = strategy
+            .query_balance(&on_behalf_of, &swap_action.minimum_receive_amount.denom);
+        let fee_balance_after = strategy
             .harness
-            .app
-            .wrap()
-            .query_balance(&fee_collector, &swap_amount.denom)
-            .unwrap();
+            .query_balance(&fee_collector, &swap_action.swap_amount.denom);
+
+        let fee = swap_action
+            .swap_amount
+            .amount
+            .mul_floor(Decimal::bps(BASE_FEE_BPS));
+        let expected_receive =
+            (swap_action.swap_amount.amount - fee).mul_floor(Decimal::percent(99));
 
         assert_eq!(
-            balance_before.amount - balance_after.amount,
-            Uint128::new(1_000)
+            swap_balance_before.amount - swap_balance_after.amount,
+            swap_action.swap_amount.amount
         );
-        assert_eq!(fee_after.amount - fee_before.amount, Uint128::new(2));
-        assert!(receive_after.amount > receive_before.amount);
+        assert_eq!(fee_balance_after.amount - fee_balance_before.amount, fee);
+        assert_eq!(
+            receive_balance_after.amount - receive_balance_before.amount,
+            expected_receive
+        );
         strategy.assert_strategy_balances(&[]);
     }
 

@@ -393,6 +393,19 @@ impl CalcTestApp {
             .unwrap()
     }
 
+    pub fn query_strategy_address(&self, owner: &Addr, nonce: &Binary) -> Addr {
+        self.app
+            .wrap()
+            .query_wasm_smart(
+                self.manager_addr.clone(),
+                &ManagerQueryMsg::StrategyAddress {
+                    owner: owner.clone(),
+                    nonce: nonce.clone(),
+                },
+            )
+            .unwrap()
+    }
+
     pub fn query_strategy_config(&self, strategy_addr: &Addr) -> StrategyConfig {
         self.app
             .wrap()
