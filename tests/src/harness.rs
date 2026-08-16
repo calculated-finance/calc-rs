@@ -7,7 +7,7 @@ use calc_rs::{
     },
     strategy::{Node, StrategyConfig, StrategyExecuteMsg, StrategyQueryMsg},
 };
-use cosmwasm_std::{Addr, Coin, Decimal, StdError, Uint128};
+use cosmwasm_std::{Addr, Binary, Coin, Decimal, StdError, Uint128};
 use cw_multi_test::{error::AnyResult, AppResponse, BasicAppBuilder, ContractWrapper, Executor};
 use rujira_rs::fin::{
     ConfigResponse, Denoms, ExecuteMsg, InstantiateMsg, OrdersResponse, Price, QueryMsg, Side, Tick,
@@ -280,9 +280,22 @@ impl CalcTestApp {
         nodes: Vec<Node>,
         funds: &[Coin],
     ) -> AnyResult<Addr> {
+        self.create_strategy_with_nonce(owner, label, affiliates, nodes, funds, None)
+    }
+
+    pub fn create_strategy_with_nonce(
+        &mut self,
+        owner: &Addr,
+        label: &str,
+        affiliates: Vec<Affiliate>,
+        nodes: Vec<Node>,
+        funds: &[Coin],
+        nonce: Option<Binary>,
+    ) -> AnyResult<Addr> {
         let msg = ManagerExecuteMsg::Instantiate {
             source: None,
             owner: Some(owner.clone()),
+            nonce,
             label: label.to_string(),
             affiliates,
             nodes,

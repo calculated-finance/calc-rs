@@ -4,7 +4,7 @@ mod integration_tests {
         actions::{
             distribution::{Destination, Distribution, Recipient},
             limit_orders::fin_limit_order::{Direction, Offset, StaleOrder},
-            swaps::{fin::FinRoute, thor::ThorchainRoute},
+            swaps::{delegated_swap::DelegatedSwap, fin::FinRoute, thor::ThorchainRoute},
         },
         cadence::Cadence,
         conditions::{
@@ -14,7 +14,7 @@ mod integration_tests {
         },
         constants::BASE_FEE_BPS,
         core::Amount,
-        manager::{Affiliate, ManagerExecuteMsg, StrategyStatus},
+        manager::{Affiliate, ManagerExecuteMsg, ManagerQueryMsg, StrategyStatus},
         scheduler::{ConditionFilter, CreateTriggerMsg, SchedulerExecuteMsg},
         strategy::Node,
     };
@@ -274,6 +274,38 @@ mod integration_tests {
             .with_nodes(vec![])
             .try_instantiate(&[])
             .is_ok());
+    }
+
+    #[test]
+    fn test_strategy_nonce_predicts_address_before_creation() {
+        let mut harness = CalcTestApp::setup();
+        let owner = harness.unknown.clone();
+        let nonce = Binary::from(b"external-wallet-strategy".as_slice());
+
+        let predicted = harness
+            .app
+            .wrap()
+            .query_wasm_smart::<Addr>(
+                &harness.manager_addr,
+                &ManagerQueryMsg::StrategyAddress {
+                    owner: owner.clone(),
+                    nonce: nonce.clone(),
+                },
+            )
+            .unwrap();
+
+        let created = harness
+            .create_strategy_with_nonce(
+                &owner,
+                "Predictable strategy",
+                vec![],
+                vec![],
+                &[],
+                Some(nonce),
+            )
+            .unwrap();
+
+        assert_eq!(created, predicted);
     }
 
     #[test]
@@ -769,6 +801,76 @@ mod integration_tests {
                     .mul_floor(Decimal::percent(99)),
                 swap_action.minimum_receive_amount.denom.clone(),
             )]);
+    }
+
+    #[test]
+    fn test_instantiate_delegated_swap_uses_external_wallet_and_takes_input_fee() {
+        let mut harness = CalcTestApp::setup();
+        let fin_pair = harness.query_fin_config(&harness.fin_addr);
+        let on_behalf_of = harness.unknown.clone();
+        let fee_collector = harness.fee_collector_addr.clone();
+        let pair_address = harness.fin_addr.clone();
+        let swap_amount = Coin::new(1_000u128, fin_pair.denoms.base());
+        let receive_denom = fin_pair.denoms.quote().to_string();
+
+        let balance_before = harness
+            .app
+            .wrap()
+            .query_balance(&on_behalf_of, &swap_amount.denom)
+            .unwrap();
+        let receive_before = harness
+            .app
+            .wrap()
+            .query_balance(&on_behalf_of, &receive_denom)
+            .unwrap();
+        let fee_before = harness
+            .app
+            .wrap()
+            .query_balance(&fee_collector, &swap_amount.denom)
+            .unwrap();
+
+        let mut strategy = StrategyBuilder::new(&mut harness)
+            .with_nodes(vec![Node::Action {
+                action: Action::DelegatedSwap(DelegatedSwap {
+                    on_behalf_of: on_behalf_of.clone(),
+                    pair_address,
+                    swap_amount: swap_amount.clone(),
+                    minimum_receive_amount: Coin::new(1u128, receive_denom.clone()),
+                    maximum_slippage_bps: 101,
+                    adjustment: SwapAmountAdjustment::Fixed,
+                    affiliates: None,
+                }),
+                index: 0,
+                next: None,
+            }])
+            .instantiate(&[]);
+
+        let balance_after = strategy
+            .harness
+            .app
+            .wrap()
+            .query_balance(&on_behalf_of, &swap_amount.denom)
+            .unwrap();
+        let receive_after = strategy
+            .harness
+            .app
+            .wrap()
+            .query_balance(&on_behalf_of, &receive_denom)
+            .unwrap();
+        let fee_after = strategy
+            .harness
+            .app
+            .wrap()
+            .query_balance(&fee_collector, &swap_amount.denom)
+            .unwrap();
+
+        assert_eq!(
+            balance_before.amount - balance_after.amount,
+            Uint128::new(1_000)
+        );
+        assert_eq!(fee_after.amount - fee_before.amount, Uint128::new(2));
+        assert!(receive_after.amount > receive_before.amount);
+        strategy.assert_strategy_balances(&[]);
     }
 
     #[test]
@@ -4010,6 +4112,7 @@ mod integration_tests {
                 &ManagerExecuteMsg::Instantiate {
                     source: None,
                     owner: Some(strategy_owner),
+                    nonce: None,
                     label: "Insufficient rebate strategy".to_string(),
                     affiliates: vec![],
                     nodes: vec![Node::Condition {
@@ -4092,6 +4195,7 @@ mod integration_tests {
                 &ManagerExecuteMsg::Instantiate {
                     source: None,
                     owner: Some(strategy_owner),
+                    nonce: None,
                     label: "Duplicate rebate denom strategy".to_string(),
                     affiliates: vec![],
                     nodes: vec![Node::Condition {

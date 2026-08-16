@@ -23,7 +23,7 @@ The manager implements the following affiliate fee system:
 - 25 basis points (0.25%) on all distributions
 - First 10 bps can reduce protocol fee, additional bps add to total
 - Max 200 basis points (2%) total affiliate fees allowed
-- Affiliate fees are only taken on distribute and withdrawal actions
+- Affiliate fees are taken on distribute and withdrawal actions, and from the input of Delegated FIN swaps
 
 ### Examples <a id="fee-calculation-examples"></a>
 
@@ -87,6 +87,7 @@ Creates and deploys a new strategy contract.
 ```rust
 Instantiate {
     owner: Addr,                     // Strategy owner address
+    nonce: Option<Binary>,           // Optional client nonce for precomputing address
     label: String,                   // Strategy display name (1-100 characters)
     affiliates: Vec<Affiliate>,      // Affiliate fee configuration
     nodes: Vec<Node>,                // DAG node structure (actions and conditions)
@@ -101,7 +102,7 @@ Instantiate {
 - **Logic:**
   1. **Validation:** Validates owner address, label, and affiliate fee limits
   2. **Fee Integration:** Combines provided affiliates with protocol base fee affiliate
-  3. **Salt Generation:** Creates deterministic salt from owner, ID, and block height
+  3. **Salt Generation:** Uses owner + client nonce when provided; otherwise owner + ID + block height
   4. **Address Generation:** Uses CREATE2 for deterministic contract address
   5. **Registry Update:** Saves strategy metadata to indexed storage
   6. **Contract Deployment:** Dispatches WasmMsg::Instantiate2 to deploy strategy
@@ -193,6 +194,21 @@ Config {} -> ManagerConfig
 
 - `fee_collector`: Current protocol fee recipient address
 - `strategy_code_id`: Code ID used for strategy deployment
+
+### `StrategyAddress`
+
+Predicts the address of a strategy created with a client nonce. This allows AuthZ grants to target
+the strategy before the create transaction executes.
+
+```rust
+StrategyAddress {
+    owner: Addr,
+    nonce: Binary,
+} -> Addr
+```
+
+Because strategies execute during initialization, clients should place `MsgGrant` messages before
+the manager `Instantiate` message in a combined transaction.
 
 ### `Strategy`
 

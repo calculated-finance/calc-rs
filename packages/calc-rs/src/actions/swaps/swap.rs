@@ -103,9 +103,13 @@ impl SwapQuote<New> {
     }
 
     pub fn adjust(self, deps: Deps, env: &Env) -> StdResult<SwapQuote<Adjusted>> {
+        self.adjust_for(deps, &env.contract.address)
+    }
+
+    pub fn adjust_for(self, deps: Deps, balance_address: &Addr) -> StdResult<SwapQuote<Adjusted>> {
         let swap_balance = deps
             .querier
-            .query_balance(&env.contract.address, &self.swap_amount.denom)?;
+            .query_balance(balance_address, &self.swap_amount.denom)?;
 
         let swap_amount = Coin::new(
             min(swap_balance.amount, self.swap_amount.amount),
@@ -310,6 +314,16 @@ impl Swap {
     }
 
     pub fn best_quote(&self, deps: Deps, env: &Env) -> StdResult<SwapQuote<Executable>> {
+        self.best_quote_for(deps, env, &env.contract.address, &env.contract.address)
+    }
+
+    pub fn best_quote_for(
+        &self,
+        deps: Deps,
+        env: &Env,
+        balance_address: &Addr,
+        destination: &Addr,
+    ) -> StdResult<SwapQuote<Executable>> {
         let mut best_quote = None;
         let mut best_amount = Uint128::zero();
 
@@ -322,10 +336,10 @@ impl Swap {
                 maximum_slippage_bps: self.maximum_slippage_bps,
                 adjustment: self.adjustment.clone(),
                 route: route.clone(),
-                destination: env.contract.address.clone(),
+                destination: destination.clone(),
                 state: New,
             }
-            .adjust(deps, env)
+            .adjust_for(deps, balance_address)
             .and_then(|adjusted_quote| adjusted_quote.validate(deps, env));
 
             if let Ok(validated_quote) = quote {

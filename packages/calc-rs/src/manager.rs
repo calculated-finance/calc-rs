@@ -1,5 +1,5 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, Binary};
 use cw_storage_plus::{Key, Prefixer, PrimaryKey};
 
 use crate::strategy::Node;
@@ -68,6 +68,7 @@ pub enum ManagerExecuteMsg {
     Instantiate {
         source: Option<String>,
         owner: Option<Addr>,
+        nonce: Option<Binary>,
         label: String,
         affiliates: Vec<Affiliate>,
         nodes: Vec<Node>,
@@ -94,6 +95,8 @@ pub enum ManagerExecuteMsg {
 pub enum ManagerQueryMsg {
     #[returns(ManagerConfig)]
     Config {},
+    #[returns(Addr)]
+    StrategyAddress { owner: Addr, nonce: Binary },
     #[returns(Strategy)]
     Strategy { address: Addr },
     #[returns(Vec<Strategy>)]

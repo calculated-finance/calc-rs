@@ -16,6 +16,7 @@ use cosmwasm_std::{
     Response, StdError, StdResult, WasmMsg,
 };
 use cw_storage_plus::Bound;
+use sha2::{Digest, Sha256};
 
 use crate::state::{updated_at_cursor, CONFIG, STRATEGIES, STRATEGY_COUNTER};
 
@@ -89,6 +90,36 @@ pub fn sudo(deps: DepsMut, _env: Env, msg: ManagerConfig) -> ContractResult {
 }
 
 const MAX_LABEL_LENGTH: usize = 100;
+const MAX_NONCE_LENGTH: usize = 64;
+
+fn strategy_salt(owner: &str, nonce: &Binary) -> StdResult<[u8; 32]> {
+    if nonce.is_empty() || nonce.len() > MAX_NONCE_LENGTH {
+        return Err(StdError::generic_err(format!(
+            "Strategy nonce must be between 1 and {MAX_NONCE_LENGTH} bytes"
+        )));
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update((owner.len() as u32).to_be_bytes());
+    hasher.update(owner.as_bytes());
+    hasher.update(nonce.as_slice());
+    Ok(hasher.finalize().into())
+}
+
+fn strategy_address(deps: Deps, manager: &str, salt: &[u8]) -> StdResult<cosmwasm_std::Addr> {
+    let config = CONFIG.load(deps.storage)?;
+    deps.api.addr_humanize(
+        &instantiate2_address(
+            deps.querier
+                .query_wasm_code_info(config.strategy_code_id)?
+                .checksum
+                .as_slice(),
+            &deps.api.addr_canonicalize(manager)?,
+            salt,
+        )
+        .map_err(|e| StdError::generic_err(format!("Failed to derive strategy address: {e}")))?,
+    )
+}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
@@ -101,6 +132,7 @@ pub fn execute(
         ManagerExecuteMsg::Instantiate {
             source,
             owner,
+            nonce,
             label,
             affiliates,
             nodes,
@@ -163,28 +195,23 @@ pub fn execute(
 
             let id = STRATEGY_COUNTER.update(deps.storage, |id| Ok::<u64, StdError>(id + 1))?;
 
-            let mut hash = DefaultHasher::new();
+            let salt = match nonce {
+                Some(nonce) => strategy_salt(owner.as_str(), &nonce)?.to_vec(),
+                None => {
+                    let mut hash = DefaultHasher::new();
 
-            hash.write(owner.as_bytes());
-            hash.write(&id.to_le_bytes());
-            hash.write(&env.block.height.to_le_bytes());
+                    hash.write(owner.as_bytes());
+                    hash.write(&id.to_le_bytes());
+                    hash.write(&env.block.height.to_le_bytes());
 
-            let salt = hash.finish().to_le_bytes();
+                    hash.finish().to_le_bytes().to_vec()
+                }
+            };
 
-            let contract_address = deps.api.addr_humanize(
-                &instantiate2_address(
-                    deps.querier
-                        .query_wasm_code_info(config.strategy_code_id)?
-                        .checksum
-                        .as_slice(),
-                    &deps.api.addr_canonicalize(env.contract.address.as_str())?,
-                    &salt,
-                )
-                .map_err(|e| {
-                    ContractError::generic_err(format!(
-                        "Failed to instantiate contract address: {e}"
-                    ))
-                })?,
+            let contract_address = strategy_address(
+                deps.as_ref(),
+                env.contract.address.as_str(),
+                salt.as_slice(),
             )?;
 
             STRATEGIES.save(
@@ -355,9 +382,18 @@ pub fn execute(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
     match msg {
         ManagerQueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
+        ManagerQueryMsg::StrategyAddress { owner, nonce } => {
+            deps.api.addr_validate(owner.as_str())?;
+            let salt = strategy_salt(owner.as_str(), &nonce)?;
+            to_json_binary(&strategy_address(
+                deps,
+                env.contract.address.as_str(),
+                salt.as_slice(),
+            )?)
+        }
         ManagerQueryMsg::Strategy { address } => {
             to_json_binary(&STRATEGIES.load(deps.storage, address)?)
         }
@@ -417,10 +453,37 @@ pub fn query(deps: Deps, _env: Env, msg: ManagerQueryMsg) -> StdResult<Binary> {
 mod tests {
     use cosmwasm_std::{
         testing::{message_info, mock_dependencies, mock_env},
-        Addr,
+        Addr, Binary,
     };
 
     use super::*;
+
+    #[test]
+    fn test_strategy_salt_requires_bounded_nonce() {
+        let empty = strategy_salt("owner", &Binary::default()).unwrap_err();
+        assert!(empty
+            .to_string()
+            .contains("Strategy nonce must be between 1 and 64 bytes"));
+
+        let oversized = strategy_salt("owner", &Binary::new(vec![0; 65])).unwrap_err();
+        assert!(oversized
+            .to_string()
+            .contains("Strategy nonce must be between 1 and 64 bytes"));
+    }
+
+    #[test]
+    fn test_strategy_salt_is_scoped_to_owner() {
+        let nonce = Binary::from(b"shared-nonce".as_slice());
+
+        assert_ne!(
+            strategy_salt("owner-a", &nonce).unwrap(),
+            strategy_salt("owner-b", &nonce).unwrap()
+        );
+        assert_eq!(
+            strategy_salt("owner-a", &nonce).unwrap(),
+            strategy_salt("owner-a", &nonce).unwrap()
+        );
+    }
 
     #[test]
     fn test_cannot_execute_inactive_strategy() {

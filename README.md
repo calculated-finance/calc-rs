@@ -110,12 +110,13 @@ Strategies contain a set of nodes, each representing a specific action or condit
 **Action nodes** can be:
 
 - `Swap`: Execute a swap between two assets under certain market conditions
+- `DelegatedSwap`: Execute a FIN swap from an external wallet through Cosmos AuthZ
 - `LimitOrder`: Place a limit order with specific parameters
 - `Distribute`: Transfer funds to another address, execute another contract with funds, or execute a thorchain `MsgDeposit` with a memo
 
 ## Fees
 
-The base CALC automation fee is 25 bps on any funds withdrawn or distributed from a strategy. CALC takes _**no fees**_ on swaps or limit orders executed by strategies, meaning you can set up recurring trading strategies without worrying about losing all your margins to fees.
+The base CALC automation fee is 25 bps on funds withdrawn or distributed from a strategy. Contract-funded swaps and limit orders do not take an execution fee. Delegated FIN swaps deduct configured protocol and affiliate fees from the swap input before execution because the returned funds never enter the strategy contract.
 
 ### Affiliates
 

@@ -47,6 +47,18 @@
         {
           "type": "object",
           "required": [
+            "delegated_swap"
+          ],
+          "properties": {
+            "delegated_swap": {
+              "$ref": "#/definitions/DelegatedSwap"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
             "limit_order"
           ],
           "properties": {
@@ -466,6 +478,50 @@
     "Decimal": {
       "description": "A fixed-point decimal value with 18 fractional digits, i.e. Decimal(1_000_000_000_000_000_000) == 1.0\n\nThe greatest possible value that can be represented is 340282366920938463463.374607431768211455 (which is (2^128 - 1) / 10^18)",
       "type": "string"
+    },
+    "DelegatedSwap": {
+      "type": "object",
+      "required": [
+        "adjustment",
+        "maximum_slippage_bps",
+        "minimum_receive_amount",
+        "on_behalf_of",
+        "pair_address",
+        "swap_amount"
+      ],
+      "properties": {
+        "adjustment": {
+          "$ref": "#/definitions/SwapAmountAdjustment"
+        },
+        "affiliates": {
+          "description": "Manager-controlled fee recipients. Always overwritten during node initialization.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Affiliate"
+          }
+        },
+        "maximum_slippage_bps": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "minimum_receive_amount": {
+          "$ref": "#/definitions/Coin"
+        },
+        "on_behalf_of": {
+          "$ref": "#/definitions/Addr"
+        },
+        "pair_address": {
+          "$ref": "#/definitions/Addr"
+        },
+        "swap_amount": {
+          "$ref": "#/definitions/Coin"
+        }
+      },
+      "additionalProperties": false
     },
     "Destination": {
       "type": "object",

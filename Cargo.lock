@@ -245,6 +245,7 @@ dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-storage-plus",
+ "sha2",
 ]
 
 [[package]]

@@ -40,8 +40,14 @@ Condition nodes evaluate specific conditions and determine the next node to exec
 Action nodes perform specific operations and always proceed to the next node after execution. They can generate blockchain messages and require external calls to complete.
 
 - `Swap`: Execute a swap between two assets under certain market conditions
+- `DelegatedSwap`: Execute a FIN swap from an external wallet through Cosmos AuthZ, taking configured fees from the input first
 - `LimitOrder`: Place a limit order with specific parameters
 - `Distribute`: Transfer funds to another address, execute another contract with funds, or execute a thorchain `MsgDeposit` with a memo
+
+`DelegatedSwap` requires the external wallet to grant the strategy contract both
+`/cosmos.bank.v1beta1.MsgSend` and `/cosmwasm.wasm.v1.MsgExecuteContract` authorization.
+The bank grant covers configured input-fee transfers. The Wasm grant covers the FIN pair swap.
+Use contract-execution authorization filters to restrict the Wasm grant to the intended FIN pair and swap message where chain support permits it.
 
 ### Graph Structure
 

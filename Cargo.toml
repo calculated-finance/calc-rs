@@ -33,4 +33,5 @@ rujira-rs = { git = "https://gitlab.com/thorchain/rujira.git", rev = "3666e52645
 calc-scheduler = { path = "contracts/scheduler" }
 calc-strategy = { path = "contracts/strategy" }
 serde = { version = "1.0.197", default-features = false, features = ["derive"] }
+sha2 = "0.10"
 thiserror = { version = "1.0.58" }
